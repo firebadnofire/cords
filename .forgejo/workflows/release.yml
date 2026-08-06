@@ -31,6 +31,8 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
             | sh -s -- -y --profile minimal --default-toolchain 1.97.1
           export PATH="${HOME}/.cargo/bin:${PATH}"
+          rustup component add rustfmt --toolchain 1.97.1
+          cargo fmt --version
 
           install -Dm755 /dev/null /usr/local/bin/appimagetool
           curl --proto '=https' --tlsv1.2 -fL \
@@ -46,7 +48,7 @@ jobs:
           test -n "${FORGEJO_REPOSITORY:-}" || { echo "FORGEJO_REPOSITORY is unavailable" >&2; exit 1; }
           test -n "${FORGEJO_REF_NAME:-}" || { echo "FORGEJO_REF_NAME is unavailable" >&2; exit 1; }
 
-          git init .
+          git init --initial-branch=main .
           git remote add origin "${FORGEJO_SERVER_URL}/${FORGEJO_REPOSITORY}.git"
           git -c http.extraHeader="Authorization: token ${RELEASE_TOKEN}" \
             fetch --depth=1 origin "refs/tags/${FORGEJO_REF_NAME}"

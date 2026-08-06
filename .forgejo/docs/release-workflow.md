@@ -5,6 +5,9 @@ the native Rust binary, stages a Linux AppDir, packages `Cords.AppImage`, signs
 it, verifies the signature, and publishes both files to the tag's Forgejo
 release.
 
+The job installs Rust with the minimal profile and then explicitly installs the
+`rustfmt` component used by the formatting gate.
+
 ## Required secrets
 
 - `CI_KEY`: an ASCII-armored private OpenPGP key or its base64 encoding.

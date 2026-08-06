@@ -1,0 +1,140 @@
+name: Release AppImage
+
+'on':
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  appimage:
+    name: Build, sign, and publish
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CARGO_TERM_COLOR: always
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+      RELEASE_TOKEN: ${{ forgejo.token }}
+
+    steps:
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl file git gnupg jq \
+            libgl1-mesa-dev libwayland-dev libx11-dev libxkbcommon-dev \
+            pkg-config wget
+
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+
+          install -Dm755 /dev/null /usr/local/bin/appimagetool
+          curl --proto '=https' --tlsv1.2 -fL \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -o /usr/local/bin/appimagetool
+          chmod 0755 /usr/local/bin/appimagetool
+
+      - name: Check out release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${FORGEJO_SERVER_URL:-}" || { echo "FORGEJO_SERVER_URL is unavailable" >&2; exit 1; }
+          test -n "${FORGEJO_REPOSITORY:-}" || { echo "FORGEJO_REPOSITORY is unavailable" >&2; exit 1; }
+          test -n "${FORGEJO_REF_NAME:-}" || { echo "FORGEJO_REF_NAME is unavailable" >&2; exit 1; }
+
+          git init .
+          git remote add origin "${FORGEJO_SERVER_URL}/${FORGEJO_REPOSITORY}.git"
+          git -c http.extraHeader="Authorization: token ${RELEASE_TOKEN}" \
+            fetch --depth=1 origin "refs/tags/${FORGEJO_REF_NAME}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Validate and build AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          cargo fmt --all -- --check
+          cargo test --locked
+          ./scripts/package-appimage.sh
+          test -s target/Cords.AppImage
+          file target/Cords.AppImage
+
+      - name: Import release key and sign artifacts
+        shell: bash
+        env:
+          CI_KEY: ${{ secrets.CI_KEY }}
+          CI_KEY_PASSPHRASE: ${{ secrets.CI_KEY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          test -n "${CI_KEY:-}" || { echo "Missing required secret: CI_KEY" >&2; exit 1; }
+          test -n "${CI_KEY_PASSPHRASE:-}" || { echo "Missing required secret: CI_KEY_PASSPHRASE" >&2; exit 1; }
+
+          export GNUPGHOME="$(mktemp -d)"
+          chmod 0700 "${GNUPGHOME}"
+          trap 'rm -rf "${GNUPGHOME}"' EXIT
+
+          key_file="${GNUPGHOME}/release-key"
+          umask 077
+          if printf '%s' "${CI_KEY}" | grep -q -- '-----BEGIN PGP PRIVATE KEY BLOCK-----'; then
+            printf '%s' "${CI_KEY}" > "${key_file}"
+          else
+            printf '%s' "${CI_KEY}" | base64 --decode > "${key_file}"
+          fi
+          gpg --batch --import "${key_file}"
+          rm -f "${key_file}"
+
+          signing_fingerprint="$(gpg --batch --with-colons --list-secret-keys \
+            | awk -F: '$1 == "fpr" { print $10; exit }')"
+          test -n "${signing_fingerprint}" || { echo "CI_KEY did not contain a signing key" >&2; exit 1; }
+
+          printf '%s' "${CI_KEY_PASSPHRASE}" \
+            | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+              --local-user "${signing_fingerprint}" --armor --detach-sign \
+              --output target/Cords.AppImage.asc target/Cords.AppImage
+          gpg --batch --verify target/Cords.AppImage.asc target/Cords.AppImage
+          test -s target/Cords.AppImage.asc
+
+      - name: Publish Forgejo release
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_url="${FORGEJO_API_URL:-${FORGEJO_SERVER_URL}/api/v1}"
+          tag="${FORGEJO_REF_NAME}"
+          repository="${FORGEJO_REPOSITORY}"
+          auth_header="Authorization: token ${RELEASE_TOKEN}"
+
+          release_json="$(curl --proto '=https' --tlsv1.2 -fsS \
+            -H "${auth_header}" \
+            "${api_url}/repos/${repository}/releases/tags/${tag}" || true)"
+          release_id="$(printf '%s' "${release_json}" | jq -r '.id // empty')"
+
+          if [ -z "${release_id}" ]; then
+            payload="$(jq -n --arg tag "${tag}" \
+              '{tag_name: $tag, name: $tag, body: "Signed Cords AppImage release.", draft: false, prerelease: false}')"
+            release_json="$(curl --proto '=https' --tlsv1.2 -fsS \
+              -X POST -H "${auth_header}" -H 'Content-Type: application/json' \
+              --data "${payload}" "${api_url}/repos/${repository}/releases")"
+            release_id="$(printf '%s' "${release_json}" | jq -er '.id')"
+          fi
+
+          for artifact in target/Cords.AppImage target/Cords.AppImage.asc; do
+            asset_name="$(basename "${artifact}")"
+            existing_asset_id="$(curl --proto '=https' --tlsv1.2 -fsS \
+              -H "${auth_header}" \
+              "${api_url}/repos/${repository}/releases/${release_id}/assets" \
+              | jq -r --arg name "${asset_name}" '.[] | select(.name == $name) | .id' \
+              | head -n 1)"
+            if [ -n "${existing_asset_id}" ]; then
+              curl --proto '=https' --tlsv1.2 -fsS -X DELETE \
+                -H "${auth_header}" \
+                "${api_url}/repos/${repository}/releases/${release_id}/assets/${existing_asset_id}"
+            fi
+            curl --proto '=https' --tlsv1.2 -fsS \
+              -X POST -H "${auth_header}" -H 'Content-Type: application/octet-stream' \
+              --data-binary "@${artifact}" \
+              "${api_url}/repos/${repository}/releases/${release_id}/assets?name=${asset_name}"
+          done

@@ -1,0 +1,15 @@
+[package]
+name = "cords"
+version = "0.1.0"
+edition = "2024"
+description = "A native, text-first desktop chat UI mockup"
+license = "AGPL-3.0-only"
+
+[dependencies]
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+

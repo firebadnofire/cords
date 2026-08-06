@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Cords
+Comment=A text-first desktop chat experience
+Exec=cords
+Icon=cords
+Categories=Network;InstantMessaging;
+Terminal=false
+StartupWMClass=cords
+

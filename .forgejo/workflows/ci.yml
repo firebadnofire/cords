@@ -1,0 +1,95 @@
+name: Phase 0 checks
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust-and-frontend:
+    runs-on: ubuntu-22.04
+    container:
+      image: node:24-bookworm
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: cords
+          POSTGRES_USER: cords
+          POSTGRES_PASSWORD: cords-ci
+    env:
+      DATABASE_URL: postgres://cords:cords-ci@postgres:5432/cords
+    steps:
+      - name: Install toolchains and checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates curl git jq libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev pkg-config wget
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          rustup component add rustfmt clippy
+          cargo install cargo-deny --locked
+          test -n "${FORGEJO_SERVER_URL:-}"
+          test -n "${FORGEJO_REPOSITORY:-}"
+          git init --initial-branch=main .
+          git remote add origin "${FORGEJO_SERVER_URL}/${FORGEJO_REPOSITORY}.git"
+          git fetch --depth=1 origin "${FORGEJO_REF:-refs/heads/main}"
+          git checkout --detach FETCH_HEAD
+      - name: Rust checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+          cargo deny check
+      - name: Frontend checks
+        working-directory: bins/cords-client/ui
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run format:check
+          npm run check
+          npm run lint
+          npm test
+          npm run build
+
+  containers:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start supported topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose up --build --wait
+          curl --fail --silent http://127.0.0.1:4849/health/ready
+          curl --fail --silent http://127.0.0.1:4849/.well-known/cords/server | jq -e '.protocol_min == 1 and .signature != ""'
+      - name: Stop topology
+        if: always()
+        run: docker compose down --volumes
+
+  client-platform-check:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: bins/cords-client/ui/package-lock.json
+      - name: Install Linux Tauri prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - working-directory: bins/cords-client/ui
+        run: npm ci
+      - run: cargo check -p cords-client

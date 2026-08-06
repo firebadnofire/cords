@@ -1,0 +1,15 @@
+[package]
+name = "cords-client-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cords-protocol.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+

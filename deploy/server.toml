@@ -1,0 +1,9 @@
+[server]
+listen = "0.0.0.0:4848"
+public_origin = "https://localhost:4848"
+name = "Cords Development Server"
+data_dir = "/var/lib/cords"
+
+[database]
+url = "postgres://cords:cords@postgres:5432/cords"
+migrations_dir = "/opt/cords/migrations/postgres"

@@ -1,0 +1,8 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${CORDS_POSTGRES_PASSWORD:?set CORDS_POSTGRES_PASSWORD}
+
+  cords-server:
+    environment:
+      CORDS_DATABASE__URL: ${CORDS_DATABASE__URL:?set a URL-encoded CORDS_DATABASE__URL}

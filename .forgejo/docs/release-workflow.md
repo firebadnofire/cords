@@ -1,9 +1,8 @@
 # Cords release workflow
 
 `.forgejo/workflows/release.yml` runs for version tags matching `v*`. It builds
-the native Rust binary, stages a Linux AppDir, packages `Cords.AppImage`, signs
-it, verifies the signature, and publishes both files to the tag's Forgejo
-release.
+the Tauri v2 client and Svelte frontend, packages `Cords.AppImage`, signs it,
+verifies the signature, and publishes both files to the tag's Forgejo release.
 
 The job installs Rust with the minimal profile and then explicitly installs the
 `rustfmt` component used by the formatting gate.

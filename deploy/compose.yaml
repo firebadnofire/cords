@@ -1,0 +1,56 @@
+name: cords
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: cords
+      POSTGRES_USER: cords
+      POSTGRES_PASSWORD: cords-development-only
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cords -d cords"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  cords-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        VCS_REF: ${CORDS_VCS_REF:-development}
+        VERSION: ${CORDS_VERSION:-0.1.0}
+    environment:
+      CORDS_SERVER__LISTEN: 0.0.0.0:4848
+      CORDS_SERVER__PUBLIC_ORIGIN: ${CORDS_SERVER__PUBLIC_ORIGIN:-https://localhost:4848}
+      CORDS_SERVER__NAME: ${CORDS_SERVER__NAME:-Cords Development Server}
+      CORDS_SERVER__DATA_DIR: /var/lib/cords
+      CORDS_DATABASE__URL: postgres://cords:cords-development-only@postgres:5432/cords
+      CORDS_DATABASE__MIGRATIONS_DIR: /opt/cords/migrations/postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - server-data:/var/lib/cords
+    ports:
+      - "127.0.0.1:4849:4848"
+
+  caddy:
+    image: caddy:2.10-alpine
+    profiles: ["proxy"]
+    environment:
+      CORDS_PUBLIC_HOST: ${CORDS_PUBLIC_HOST:-localhost}
+    depends_on:
+      cords-server:
+        condition: service_healthy
+    ports:
+      - "4848:4848"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  postgres-data:
+  server-data:
+  caddy-data:

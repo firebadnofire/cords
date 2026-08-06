@@ -1,45 +1,61 @@
 # Cords
 
-Cords is a native Rust desktop UI mockup for a text-first chat application. It borrows the density and familiar three-pane organization of modern community messengers while keeping the product surface deliberately focused: workspaces, direct conversations, messages, composing, search, and contact details.
+*Right on the wire*
 
-The current data is local fixture data. The project is structured as a reusable UI base rather than a finished messaging client:
+Cords is a self-hosted communication system designed to keep message and attachment plaintext on authorized client devices. This repository currently implements **Phase 0 only**: a Tauri v2/Svelte desktop shell, signed server discovery, protocol negotiation, storage adapters, and Docker-first server startup.
 
-- `src/app.rs` owns screen composition and interaction state.
-- `src/model.rs` contains backend-replaceable view models and fixtures.
-- `src/theme.rs` is the central design-token layer.
-- `src/widgets.rs` contains reusable visual primitives.
-- `packaging/` and `scripts/package-appimage.sh` provide Linux desktop and AppImage staging.
+The conversation timeline is deliberately fixture-backed and carries a persistent **Local UI demo** label. Cords does not yet implement accounts, membership, server-key pinning, messaging, MLS, attachments, or calls.
 
-## Run locally
+## Repository
 
-```sh
-cargo run
-```
+- `bins/cords-client`: Tauri v2 desktop client and Svelte/TypeScript UI.
+- `bins/cords-server`: Axum server executable and configuration.
+- `crates/cords-protocol`: public schemas and deterministic signed encoding.
+- `crates/cords-client-core`: TLS discovery and UI-facing view models.
+- `crates/cords-server-core`: persistent server identity and HTTP services.
+- `crates/cords-storage`: PostgreSQL and SQLite lifecycle adapters.
+- `docs/adr`: architecture decisions; `AGENTS.md` is the normative product specification.
 
-The mockup supports conversation selection and filtering, workspace selection, an optional details panel, and locally appending messages through the composer.
-
-## Build
+## Run the server
 
 ```sh
-cargo build --release
+docker compose up --build --wait
+curl -i http://127.0.0.1:4849/health/ready
 ```
 
-The release binary is written to `target/release/cords`.
-
-## Package as an AppImage
-
-Install `appimagetool`, then run:
+The base Compose topology exposes internal HTTP on loopback port 4849 for health diagnostics. It is not a client origin. Run the optional Caddy profile for local HTTPS:
 
 ```sh
-./scripts/package-appimage.sh
+docker compose --profile proxy up --build --wait
 ```
 
-Set `APPIMAGETOOL=/path/to/appimagetool` when it is not on `PATH`. The script stages a standard `Cords.AppDir` under `target/appimage/` and writes `target/Cords.AppImage`.
+Caddy uses its internal CA for this local example. Trust that CA explicitly before inspecting `https://localhost:4848`; Cords never disables normal TLS validation. Production deployments should use a publicly trusted certificate and set `CORDS_SERVER__PUBLIC_ORIGIN` to the matching HTTPS origin.
 
-To build and inspect the AppDir without requiring `appimagetool`, run:
+The Compose file uses a conspicuous development-only PostgreSQL password. A deployment must apply `deploy/compose.production.example.yaml` as an override and provide a matching, URL-encoded `CORDS_DATABASE__URL`; do not reuse the development credential publicly.
+
+## Run the desktop client
+
+Install the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), then:
 
 ```sh
-./scripts/package-appimage.sh --stage-only
+cd bins/cords-client/ui
+npm ci
+npm run tauri dev
 ```
 
-AppImage packaging is Linux-only. The native binary depends on the ordinary graphics/windowing libraries expected by `eframe` (X11 or Wayland); application code and assets do not require a webview or external runtime.
+## Checks
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cd bins/cords-client/ui
+npm run format:check
+npm run check
+npm run lint
+npm test
+```
+
+## Validation boundary
+
+Unit tests prove protocol and state invariants. Compose readiness proves that the container, PostgreSQL migration, persistent identity, and HTTP process start together. A successful Tauri build proves packaging on that build platform. None of these claims prove encrypted messaging, identity enrollment, a data plane, cross-platform signing, or a published release.

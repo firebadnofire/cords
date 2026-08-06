@@ -1,0 +1,5 @@
+{$CORDS_PUBLIC_HOST:localhost}:4848 {
+    tls internal
+    reverse_proxy cords-server:4848
+}
+

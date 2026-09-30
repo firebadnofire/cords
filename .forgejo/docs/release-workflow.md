@@ -38,7 +38,7 @@ repository scope.
 Each release contains:
 
 - Linux x86_64 and aarch64 client `.tar.gz` archives;
-- Windows x86_64 and ARM64 client `.tar.gz` archives;
+- Windows x86_64 and ARM64 client `.zip` archives;
 - a macOS aarch64 client `.pkg` installer;
 - a basename-only `.sha256` file for every client package;
 - `cosign.pub` for container verification;

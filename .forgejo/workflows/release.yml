@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           apt-get update
-          apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils
+          apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils zip
           curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
           export PATH="${HOME}/.cargo/bin:${PATH}"
           rustup target add "${{ matrix.target }}"
@@ -142,7 +142,7 @@ jobs:
         with:
           name: client-windows-${{ matrix.architecture }}
           path: |
-            release/*.tar.gz
+            release/*.zip
             release/*.sha256
           if-no-files-found: error
           retention-days: 7
@@ -326,7 +326,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find release -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 4
+          test "$(find release -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 2
+          test "$(find release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 2
           test "$(find release -maxdepth 1 -type f -name '*.pkg' | wc -l)" -eq 1
           test "$(find release -maxdepth 1 -type f -name '*.sha256' | wc -l)" -eq 5
           test -s release/cosign.pub

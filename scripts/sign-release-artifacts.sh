@@ -48,7 +48,7 @@ signing_fingerprint="$(
 
 mapfile -d '' signed_inputs < <(
   find "${release_directory}" -maxdepth 1 -type f \
-    \( -name '*.tar.gz' -o -name '*.pkg' -o -name '*.sha256' -o -name 'cosign.pub' \) \
+    \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg' -o -name '*.sha256' -o -name 'cosign.pub' \) \
     -print0 | sort -z
 )
 (( ${#signed_inputs[@]} > 0 )) || {

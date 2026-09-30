@@ -124,7 +124,7 @@ jobs:
         run: |
           set -euo pipefail
           apt-get update
-          apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils
+          apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils zip
           curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
           export PATH="${HOME}/.cargo/bin:${PATH}"
           rustup target add "${{ matrix.target }}"

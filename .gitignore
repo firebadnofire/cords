@@ -3,8 +3,8 @@
 /bins/cords-client/ui/node_modules/
 /bins/cords-client/ui/dist/
 /bins/cords-client/src-tauri/gen/
+/bins/*
 /.env
 *.db
 *.db-shm
 *.db-wal
-/bins/*

@@ -30,9 +30,7 @@ function Invoke-Native {
     }
 }
 
-if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-    [Runtime.InteropServices.OSPlatform]::Windows
-)) {
+if ($env:OS -ne 'Windows_NT') {
     throw 'windows-client.ps1 requires a Windows host'
 }
 
@@ -49,10 +47,18 @@ if (-not $versionMatch.Success -or $versionMatch.Groups[1].Value -notmatch '^[0-
 }
 $version = $versionMatch.Groups[1].Value
 
-$architecture = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
-    'X64' { 'x86_64' }
-    'Arm64' { 'aarch64' }
-    default { throw "Unsupported Windows architecture: $_" }
+$nativeArchitecture = if (-not [string]::IsNullOrWhiteSpace($env:PROCESSOR_ARCHITEW6432)) {
+    $env:PROCESSOR_ARCHITEW6432
+} else {
+    $env:PROCESSOR_ARCHITECTURE
+}
+if ([string]::IsNullOrWhiteSpace($nativeArchitecture)) {
+    throw 'Windows did not expose PROCESSOR_ARCHITECTURE'
+}
+$architecture = switch ($nativeArchitecture.ToUpperInvariant()) {
+    'AMD64' { 'x86_64' }
+    'ARM64' { 'aarch64' }
+    default { throw "Unsupported Windows architecture: $nativeArchitecture" }
 }
 $rustTarget = switch ($architecture) {
     'x86_64' { 'x86_64-pc-windows-msvc' }
@@ -62,7 +68,7 @@ $rustTarget = switch ($architecture) {
 Require-Command cargo 'install the Rust toolchain declared by rust-toolchain.toml'
 Require-Command rustc 'install the Rust toolchain declared by rust-toolchain.toml'
 Require-Command 'npm.cmd' 'install Node.js 24 and npm'
-Require-Command tar.exe 'enable the Windows tar utility'
+Require-Command tar.exe 'enable the Windows archive utility'
 
 $rustVersion = (& rustc -vV) -join "`n"
 if ($LASTEXITCODE -ne 0 -or $rustVersion -notmatch "(?m)^host: $([regex]::Escape($rustTarget))$") {
@@ -93,7 +99,7 @@ try {
 
     Invoke-Native -Command cargo -Arguments @(
         'build', '--locked', '--release', '--manifest-path', $cargoToml,
-        '--target', $rustTarget, '-p', 'cords-client'
+        '--target', $rustTarget, '-p', 'cords-client', '--features', 'custom-protocol'
     )
     $client = Join-Path $repositoryRoot "target\$rustTarget\release\cords-client.exe"
     if (-not (Test-Path -LiteralPath $client -PathType Leaf) -or (Get-Item -LiteralPath $client).Length -eq 0) {
@@ -104,11 +110,13 @@ try {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.md') -Destination $packageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination $packageRoot
 
-    $artifact = Join-Path $distDirectory "cords-client-windows-$architecture-$version.tar.gz"
+    $artifact = Join-Path $distDirectory "cords-client-windows-$architecture-$version.zip"
     $checksum = "$artifact.sha256"
+    $legacyArtifact = Join-Path $distDirectory "cords-client-windows-$architecture-$version.tar.gz"
     Remove-Item -LiteralPath $artifact, $checksum -Force -ErrorAction SilentlyContinue
-    Write-Step "Packaging portable Windows client archive"
-    Invoke-Native -Command tar.exe -Arguments @('-C', $temporaryRoot, '-czf', $artifact, $packageName)
+    Remove-Item -LiteralPath $legacyArtifact, "$legacyArtifact.sha256" -Force -ErrorAction SilentlyContinue
+    Write-Step "Packaging portable Windows client ZIP"
+    Invoke-Native -Command tar.exe -Arguments @('-a', '-C', $temporaryRoot, '-cf', $artifact, $packageName)
     if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or (Get-Item -LiteralPath $artifact).Length -eq 0) {
         throw "Windows client archive was not produced: $artifact"
     }

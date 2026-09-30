@@ -16,7 +16,7 @@ sign releases with repository secrets, or perform notarization.
 
 | Script | Host | Output |
 |---|---|---|
-| `windows-client.ps1` | Native Windows x64 or ARM64 | `cords-client-windows-<arch>-<version>.tar.gz` |
+| `windows-client.ps1` | Native Windows x64 or ARM64 | `cords-client-windows-<arch>-<version>.zip` |
 | `linux-windows-client-crosscomp.sh` | Linux x64 or ARM64 | The same portable Windows archive as the native script |
 | `linux-client-tar.sh` | Linux x64 or ARM64 | `cords-client-linux-<arch>-<version>.tar.gz`, containing `Cords.AppImage` |
 | `linux-server-tar.sh` | Linux x64 or ARM64 | `cords-server-linux-<arch>-<version>.tar.gz` |
@@ -46,14 +46,14 @@ Node.js/npm, and the Windows `tar.exe` utility:
 & C:\path\to\cords\build-scripts\windows-client.ps1
 ```
 
-The result is a portable archive containing `Cords.exe`, `README.md`, and the
+The result is a portable ZIP containing `Cords.exe`, `README.md`, and the
 license. Cords uses the system WebView2 runtime; it does not copy a WebView2
 runtime into the archive. This script builds only the client.
 
 ## Linux-built Windows client
 
 The CI-preferred Windows path requires Bash, `cargo-xwin` 0.23.1, Clang,
-`lld-link`, Rust's matching Windows MSVC target, Node.js/npm, and archive tools.
+`lld-link`, Rust's matching Windows MSVC target, Node.js/npm, and `zip`.
 When a Linux distribution exposes `clang` but not the `clang-cl` driver name,
 the script creates a private temporary `clang-cl` symlink and removes it after
 the build; it does not modify the host toolchain.

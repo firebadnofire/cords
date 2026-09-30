@@ -42,7 +42,11 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 mkdir -p "${output_directory}"
 output_directory="$(cd "${output_directory}" && pwd)"
-archive_name="cords-client-${platform}-${architecture}-${release_id}.tar.gz"
+if [[ "${platform}" == windows ]]; then
+  archive_name="cords-client-${platform}-${architecture}-${release_id}.zip"
+else
+  archive_name="cords-client-${platform}-${architecture}-${release_id}.tar.gz"
+fi
 archive_path="${output_directory}/${archive_name}"
 staging_root="$(mktemp -d)"
 trap 'rm -rf -- "${staging_root}"' EXIT
@@ -69,7 +73,15 @@ install -m 0644 "${repo_dir}/README.md" "${package_root}/README.md"
 install -m 0644 "${repo_dir}/LICENSE" "${package_root}/LICENSE"
 
 rm -f -- "${archive_path}"
-if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+if [[ "${platform}" == windows ]]; then
+  command -v zip >/dev/null 2>&1 || {
+    echo "error: zip is required to package the Windows client" >&2
+    exit 1
+  }
+  legacy_archive="${output_directory}/cords-client-${platform}-${architecture}-${release_id}.tar.gz"
+  rm -f -- "${legacy_archive}" "${legacy_archive}.sha256"
+  (cd "${staging_root}" && zip -X -q -r "${archive_path}" "$(basename "${package_root}")")
+elif tar --version 2>/dev/null | grep -q 'GNU tar'; then
   source_date_epoch="${SOURCE_DATE_EPOCH:-0}"
   [[ "${source_date_epoch}" =~ ^[0-9]+$ ]] || {
     echo "error: SOURCE_DATE_EPOCH must be an integer" >&2

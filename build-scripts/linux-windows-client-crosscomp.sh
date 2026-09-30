@@ -27,7 +27,7 @@ target_architecture="${target_architecture:-$(host_architecture)}"
 host_arch="$(host_architecture)"
 [[ "${target_architecture}" == "${host_arch}" ]] || \
   die "Windows ${target_architecture} builds require a matching ${target_architecture} Linux runner; the current host is ${host_arch}"
-for command_name in cargo cargo-xwin clang lld-link ln npm rustup tar install; do
+for command_name in cargo cargo-xwin clang lld-link ln npm rustup zip install; do
   require_command "${command_name}"
 done
 
@@ -63,14 +63,14 @@ build_frontend
 
 log "Cross-compiling Cords Windows client ${version} for ${target_architecture}"
 cargo xwin build --locked --release --manifest-path "${REPO_ROOT}/Cargo.toml" \
-  --target "${rust_target}" -p cords-client
+  --target "${rust_target}" -p cords-client --features custom-protocol
 client="${REPO_ROOT}/target/${rust_target}/release/cords-client.exe"
 [[ -s "${client}" ]] || die "Windows client was not produced: ${client}"
 
 log "Packaging portable Windows client archive"
 bash "${REPO_ROOT}/scripts/package-client-tarball.sh" \
   windows "${target_architecture}" "${version}" "${client}" "${DIST_DIR}"
-artifact="${DIST_DIR}/cords-client-windows-${target_architecture}-${version}.tar.gz"
+artifact="${DIST_DIR}/cords-client-windows-${target_architecture}-${version}.zip"
 [[ -s "${artifact}" ]] || die "Windows client archive was not produced: ${artifact}"
 write_sha256 "${artifact}"
 log "Created ${artifact}"

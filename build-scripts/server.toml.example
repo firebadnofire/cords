@@ -1,0 +1,10 @@
+[server]
+listen = "0.0.0.0:4848"
+public_origin = "https://cords.example.com:4848"
+name = "Cords Server"
+data_dir = "./data"
+
+[database]
+url = "postgres://cords:replace-me@127.0.0.1:5432/cords"
+migrations_dir = "./migrations/postgres"
+

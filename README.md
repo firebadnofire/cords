@@ -35,12 +35,12 @@ The Compose file uses a conspicuous development-only PostgreSQL password. A depl
 
 ## Run the desktop client
 
-Install the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), then:
+Install Node.js 24 and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), then:
 
 ```sh
 cd bins/cords-client/ui
 npm ci
-npm run tauri dev
+npm run tauri:dev
 ```
 
 ## Checks
@@ -49,12 +49,33 @@ npm run tauri dev
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo deny check
 cd bins/cords-client/ui
 npm run format:check
 npm run check
 npm run lint
 npm test
 ```
+
+## Releases and containers
+
+Forgejo Actions builds signed client packages for Linux, Windows, and macOS and
+publishes a Cosign-signed multi-architecture server image. Forgejo is canonical;
+the workflow mirrors source, release files, and the container to
+`firebadnofire/cords` on GitHub. See
+`.forgejo/docs/release-workflow.md` for runner assignments, required secrets,
+artifact names, signature verification, and the hosted-validation boundary.
+
+The public GitHub container is pulled with:
+
+```sh
+docker pull ghcr.io/firebadnofire/cords
+```
+
+Local native and cross-platform release builders are documented in
+[`build-scripts/README.md`](build-scripts/README.md). They produce client and
+server file artifacts under `dist/`, plus a locally loaded server container
+image, without publishing anything.
 
 ## Validation boundary
 

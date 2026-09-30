@@ -74,9 +74,17 @@ jobs:
 
   client-platform-check:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+          - runner: arm-ubuntu-22.04
+            platform: linux-aarch64
+          - runner: macos-latest
+            platform: macos-aarch64
+    name: Client check (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -93,3 +101,37 @@ jobs:
       - working-directory: bins/cords-client/ui
         run: npm ci
       - run: cargo check -p cords-client
+
+  windows-cross-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            architecture: x86_64
+            target: x86_64-pc-windows-msvc
+          - runner: arm-ubuntu-22.04
+            architecture: aarch64
+            target: aarch64-pc-windows-msvc
+    name: Windows cross-check (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compilation toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          rustup target add "${{ matrix.target }}"
+          cargo install cargo-xwin --locked --version 0.23.1
+      - name: Build frontend and check Windows client
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          bash build-scripts/linux-windows-client-crosscomp.sh --target "${{ matrix.architecture }}"

@@ -109,11 +109,13 @@ fn validate_private_permissions(path: &Path) -> Result<(), IdentityError> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // Matches the Unix validation contract at the shared call site.
 fn validate_private_permissions(_path: &Path) -> Result<(), IdentityError> {
     Ok(())
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // Matches the Unix permission-setting contract.
 fn set_private_permissions(_path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
@@ -124,6 +126,7 @@ fn sync_directory(path: &Path) -> Result<(), std::io::Error> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // Matches the Unix durability contract at the shared call site.
 fn sync_directory(_path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }

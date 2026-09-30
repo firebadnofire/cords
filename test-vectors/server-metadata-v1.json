@@ -1,0 +1,16 @@
+{
+  "description": "Phase 0 deterministic server metadata signing bytes",
+  "domain": "CORDS-SERVER-METADATA-V1",
+  "metadata": {
+    "protocol_min": 1,
+    "protocol_max": 1,
+    "server_id": "_oEsEvOrTOasXbaaw1L5BssbEe9D-zPiUu9_9VImOIk",
+    "server_name": "Test Cords",
+    "api_base": "/api/v1",
+    "websocket_path": "/api/v1/events",
+    "server_signing_key": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "join_policy": [],
+    "features": []
+  },
+  "signing_bytes_hex": "434f5244532d5345525645522d4d455441444154412d5631890101782b5f6f457345764f72544f61735862616177314c3542737362456539442d7a50695575395f3956496d4f496b6a5465737420436f726473672f6170692f76316e2f6170692f76312f6576656e7473782b366b7073592d4b635567712d39564237457937462d5a56486471362d766e755351683771615252473069778080"
+}

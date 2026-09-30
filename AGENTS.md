@@ -4,8 +4,8 @@
 
 ## Software Product and Technical Specification
 
-**Document version:** 0.1 Draft  
-**Date:** August 5, 2026  
+**Document version:** 0.2 Draft  
+**Date:** September 29, 2026  
 **Primary audience:** Codex and human contributors  
 **Repository model:** Rust monorepo  
 **Status:** Architecture baseline for initial implementation
@@ -30,7 +30,24 @@ Codex and human contributors MUST treat this specification as normative unless a
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** express requirement strength.
 
-## 1.1 Design summary
+## 1.1 Document authority and companion specifications
+
+Cords keeps durable architecture, implementation maturity, and transient repository observations separate.
+
+The normative document set is:
+
+1. **`AGENTS.md`** defines the product architecture, security boundaries, protocol responsibilities, repository boundaries, deployment model, Cords-specific implementation phases, and contributor execution contract.
+2. **`KEY-SYSTEM.md`** defines the long-lived cryptographic identity and key architecture: key roles, authority, separation, certification, enrollment, revocation, recovery, rotation, compromise boundaries, and lifecycle requirements.
+3. **Accepted ADRs** record scoped architectural decisions and may supersede a specific requirement in `AGENTS.md` or `KEY-SYSTEM.md` when the superseded requirement is identified explicitly.
+4. **`CHECKPOINT.md`** is the ordered implementation-maturity checklist for an Internet Messaging Service. It does not replace the Cords architecture or phase roadmap. Cords SHOULD satisfy its applicable checkpoints in order unless a documented dependency or product decision justifies otherwise.
+
+Repository dissections, status reports, generated onboarding maps, issue descriptions, and implementation notes are descriptive snapshots. They are not normative merely because they describe current code.
+
+When requirements overlap, contributors MUST read the most specific normative document before implementation. A contributor MUST NOT resolve a disagreement between normative documents silently. The conflict MUST be reconciled in the same change, or an ADR MUST record the intended authority and migration.
+
+A checkbox in `CHECKPOINT.md` MUST NOT be considered satisfied merely because a type, endpoint, screen, placeholder, or partial implementation exists. Completion requires the behavior to work across the applicable client/server boundary, persist correctly where required, fail safely, enforce its security boundary, and have appropriate validation.
+
+## 1.2 Design summary
 
 | Area | Initial decision |
 |---|---|
@@ -53,7 +70,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ex
 | Attachment storage | Encrypted blobs in local persistent storage initially, with an object-storage abstraction |
 | Supported server hosting | Official Docker image and Docker Compose configuration |
 | Default server port | 4848 |
-| Proposed license | GPL-2.0-only, pending final project-owner confirmation |
+| License | AGPL-3.0-only |
 
 # 2. Product vision
 
@@ -216,6 +233,12 @@ The initial architecture does not fully hide:
 The UI and documentation MUST describe these limitations accurately. Marketing MUST NOT claim complete anonymity or metadata protection.
 
 # 7. Identity and key hierarchy
+
+`KEY-SYSTEM.md` is the normative authority for Cords cryptographic identity and key-system architecture. This section summarizes product-facing requirements and protocol expectations that depend on that architecture; it MUST be read together with `KEY-SYSTEM.md`.
+
+If this section and `KEY-SYSTEM.md` disagree about a key role, authority relationship, private-key reuse rule, enrollment or recovery authority, revocation semantics, compromise boundary, or key lifecycle, contributors MUST NOT choose whichever text is easier to implement. The documents MUST be reconciled or an ADR MUST explicitly supersede the affected requirement.
+
+Concrete wire encodings, database representations, and cryptographic-library APIs remain owned by their versioned protocol definitions, crate interfaces, test vectors, and ADRs. They MUST preserve the role separation and authority model defined by `KEY-SYSTEM.md`.
 
 ## 7.1 Key separation
 
@@ -1475,6 +1498,12 @@ A protocol compatibility window MUST be documented. A client MUST not assume tha
 
 # 34. Implementation phases
 
+The phases below are the Cords-specific implementation roadmap. `CHECKPOINT.md` is the broader ordered maturity checklist and SHOULD be used as a cross-check when planning, implementing, or declaring a phase complete.
+
+Phase numbering does not waive an earlier applicable checkpoint. If later-phase work exposes an unmet higher-priority checkpoint, contributors SHOULD address the earlier dependency first unless the task explicitly documents why doing so is unsafe or out of scope.
+
+`CHECKPOINT.md` MUST NOT be edited merely to make current implementation progress appear complete. Checkboxes represent demonstrated capability, not intent.
+
 ## Phase 0: Repository foundation
 
 Deliverables:
@@ -1610,14 +1639,15 @@ A feature is not complete until:
 - The Docker deployment still passes its smoke test.
 - Client UI communicates relevant security state.
 - Documentation and examples are updated.
+- Applicable `CHECKPOINT.md` milestones affected by the feature are reviewed and are marked complete only when their completion standard is actually met.
 - `cargo fmt`, Clippy, tests, dependency checks, and frontend checks pass.
 
 # 36. Codex execution contract
 
 Codex MUST follow this workflow when implementing Cords:
 
-1. Read this specification and all relevant ADRs before modifying code.
-2. Identify the current implementation phase and avoid silently building later-phase features.
+1. Read this specification, the relevant portions of `KEY-SYSTEM.md` and `CHECKPOINT.md`, and all relevant ADRs before modifying code. `KEY-SYSTEM.md` is mandatory reading for changes involving identity, keys, enrollment, recovery, revocation, MLS credential binding, or trust transitions.
+2. Identify the current implementation phase and the earliest applicable incomplete checkpoint; avoid silently building later-phase features around unmet foundational requirements.
 3. Write a short implementation plan in the task or pull request description.
 4. Modify the smallest appropriate crate boundary.
 5. Reuse protocol and identity types rather than cloning similar structures.
@@ -1661,20 +1691,27 @@ Codex MUST NOT:
 
 The following decisions remain intentionally open and require an ADR before production release:
 
-1. Confirm `GPL-2.0-only` versus another GPL identifier.
-2. Select OpenMLS or another RFC 9420 implementation after a focused prototype and persistence review.
-3. Select the deterministic CBOR Rust library and lock its encoding profile with vectors.
-4. Select the local credential-store abstraction across Linux, Windows, and macOS.
-5. Define default MLS self-update time and message-count thresholds.
-6. Define the exact compatibility window between client and server protocol versions.
-7. Define backup format and recovery UX.
-8. Select an audited Rust OPAQUE implementation before enabling password admission.
-9. Decide whether the first public release includes video or audio only.
-10. Define the privacy design for per-server personas without cross-server linkability.
+1. Select OpenMLS or another RFC 9420 implementation after a focused prototype and persistence review.
+2. Select the deterministic CBOR Rust library and lock its encoding profile with vectors.
+3. Select the local credential-store abstraction across Linux, Windows, and macOS.
+4. Define default MLS self-update time and message-count thresholds.
+5. Define the exact compatibility window between client and server protocol versions.
+6. Define backup format and recovery UX consistent with `KEY-SYSTEM.md`.
+7. Select an audited Rust OPAQUE implementation before enabling password admission.
+8. Decide whether the first public release includes video or audio only.
+9. Define the privacy design for per-server personas without cross-server linkability.
 
 # 38. Authoritative references
 
 The implementation SHOULD consult the current published standards and official project documentation rather than secondary tutorials.
+
+Project-local normative references:
+
+1. `KEY-SYSTEM.md`, *Cords Key System Architecture*.
+2. `CHECKPOINT.md`, *IMS Implementation Checkpoints*.
+3. Accepted records in `docs/adr/`.
+
+External standards and implementation references:
 
 1. RFC 9420, *The Messaging Layer Security Protocol*.
 2. RFC 9750, *The Messaging Layer Security Architecture*.
@@ -1692,7 +1729,7 @@ The implementation SHOULD consult the current published standards and official p
 
 Cords is one Rust monorepo containing a client, server, administration CLI, shared protocol crates, cryptographic adapters, test vectors, and Docker deployment files.
 
-The client connects to independent HTTPS server origins shown in a Discord-like sidebar. Servers control communities and relay ciphertext. Accounts and devices control identity. MLS groups control who can decrypt channels and direct messages. OpenPGP may attest a Cords account but does not encrypt chat traffic. Docker is the only initially supported server-hosting method, while standalone binaries remain available for unsupported custom deployments.
+The client connects to independent HTTPS server origins shown in a Discord-like sidebar. Servers control communities and relay ciphertext. Accounts and devices control identity. The durable authority and separation rules for those identities are defined in `KEY-SYSTEM.md`. MLS groups control who can decrypt channels and direct messages. OpenPGP may attest a Cords account but does not encrypt chat traffic. Docker is the only initially supported server-hosting method, while standalone binaries remain available for unsupported custom deployments. `CHECKPOINT.md` provides the ordered maturity checklist used to verify that the surrounding IMS capabilities are actually complete rather than merely represented in source.
 
 The product promise is narrow and testable:
 

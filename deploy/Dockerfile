@@ -12,7 +12,7 @@ FROM debian:bookworm-slim AS runtime
 ARG VCS_REF=unknown
 ARG VERSION=0.1.0
 LABEL org.opencontainers.image.title="Cords Server" \
-      org.opencontainers.image.source="https://github.com/cords-chat/cords" \
+      org.opencontainers.image.source="https://github.com/firebadnofire/cords" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="AGPL-3.0-only"

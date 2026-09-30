@@ -218,6 +218,13 @@ impl<E> From<minicbor::encode::Error<E>> for ProtocolError {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer as _, SigningKey};
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct MetadataVector {
+        metadata: ServerMetadataV1,
+        signing_bytes_hex: String,
+    }
 
     fn metadata() -> ServerMetadataV1 {
         let key = SigningKey::from_bytes(&[7; 32]);
@@ -269,13 +276,15 @@ mod tests {
 
     #[test]
     fn deterministic_encoding_is_stable() -> Result<(), ProtocolError> {
-        let first = metadata().signing_bytes()?;
-        let second = metadata().signing_bytes()?;
+        let vector: MetadataVector = serde_json::from_str(include_str!(
+            "../../../test-vectors/server-metadata-v1.json"
+        ))
+        .map_err(|_| ProtocolError::Encoding)?;
+        let first = vector.metadata.signing_bytes()?;
+        let second = vector.metadata.signing_bytes()?;
+        assert_eq!(vector.metadata, metadata());
         assert_eq!(first, second);
-        assert_eq!(
-            hex::encode(first),
-            "434f5244532d5345525645522d4d455441444154412d5631890101782b5f6f457345764f72544f61735862616177314c3542737362456539442d7a50695575395f3956496d4f496b6a5465737420436f726473672f6170692f76316e2f6170692f76312f6576656e7473782b366b7073592d4b635567712d39564237457937462d5a56486471362d766e755351683771615252473069778080"
-        );
+        assert_eq!(hex::encode(first), vector.signing_bytes_hex);
         Ok(())
     }
 

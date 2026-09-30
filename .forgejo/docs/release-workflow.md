@@ -1,48 +1,90 @@
 # Cords release workflow
 
-`.forgejo/workflows/release.yml` runs for version tags matching `v*`. It builds
-the Tauri v2 client and Svelte frontend, packages `Cords.AppImage`, signs it,
-verifies the signature, and publishes both files to the tag's Forgejo release.
+`.forgejo/workflows/release.yml` is the privileged Cords publication path. It
+runs for `main` pushes, `v*` tags, and manual dispatches. Pull requests never
+receive release or registry credentials.
 
-The job installs Rust with the minimal profile and then explicitly installs the
-`rustfmt` component used by the formatting gate.
+Forgejo remains canonical. A successful run also mirrors the source revision,
+release assets, and server container to `firebadnofire/cords` on GitHub.
+
+## Runner assignment
+
+| Runner label | Native work | Cross-compiled work |
+|---|---|---|
+| `ubuntu-22.04` | Linux x86_64 client and linux/amd64 server image | Windows x86_64 client |
+| `arm-ubuntu-22.04` | Linux aarch64 client and linux/arm64 server image | Windows ARM64 client |
+| `macos-latest` | macOS aarch64 client | None |
+
+The offline `windows-latest` runner is intentionally not part of this path.
+Windows clients are built with pinned `cargo-xwin 0.23.1` and Rust 1.97.1.
 
 ## Required secrets
 
-- `CI_KEY`: an ASCII-armored private OpenPGP key or its base64 encoding.
-- `CI_KEY_PASSPHRASE`: the private key passphrase.
+- `CI_KEY_B64`: the OpenPGP private key, base64-encoded exactly once.
+- `CI_KEY_PASSPHRASE`: passphrase for that OpenPGP key.
+- `COSIGN_B64`: the password-protected Cosign private key, base64-encoded
+  exactly once.
+- `COSIGN_PASSWORD`: passphrase for the Cosign private key.
+- `GH_KEY`: a classic GitHub PAT able to push repository contents, publish
+  releases, and write packages for `firebadnofire/cords`.
 
-The workflow uses Forgejo's built-in workflow token for authenticated checkout
-and release publication. That token must have repository content and release
-write permission.
+The workflow decodes only the secrets explicitly named `*_B64`. Encoded and
+decoded key material is never printed. Forgejo checkout, releases, and package
+publication use the built-in `${{ forgejo.token }}` with least-privilege
+repository scope.
 
-## Release assets
+## Client release assets
 
-- `Cords.AppImage`
-- `Cords.AppImage.asc` (armored detached OpenPGP signature)
+Each release contains:
 
-Verify a downloaded release with:
+- Linux x86_64 and aarch64 client `.tar.gz` archives;
+- Windows x86_64 and ARM64 client `.tar.gz` archives;
+- a macOS aarch64 client `.pkg` installer;
+- a basename-only `.sha256` file for every client package;
+- `cosign.pub` for container verification;
+- an armored detached `.asc` signature for every package, per-package checksum,
+  and `cosign.pub`;
+- `SHA256SUMS` covering those packages, checksum files, and `cosign.pub`; and
+- `SHA256SUMS.asc`.
 
-```sh
-gpg --verify Cords.AppImage.asc Cords.AppImage
+All detached signatures and checksums are verified before upload. Reruns replace
+assets with the same name rather than silently accumulating duplicates.
+
+## Server container
+
+The server image is built natively for `linux/amd64` and `linux/arm64`, then
+assembled as one multi-architecture manifest. The workflow publishes identical
+digests to:
+
+```text
+pubcode.archuser.org/firebadnofire/cords
+ghcr.io/firebadnofire/cords
 ```
 
-## Triggering a release
+Both registries receive a traceability tag, the release tag, and `latest`.
+Cosign signs and verifies the digest independently in each registry. The GitHub
+package's public/private visibility remains a GitHub repository setting; the
+workflow updates the package but does not change that setting.
 
-After local validation, create and push a version tag:
+Examples:
 
 ```sh
-git tag -s v0.1.0
-git push origin v0.1.0
+docker pull ghcr.io/firebadnofire/cords
+docker pull ghcr.io/firebadnofire/cords:latest
+cosign verify --key cosign.pub ghcr.io/firebadnofire/cords@sha256:<digest>
 ```
 
-The local tag signature and the detached AppImage signature are separate. The
-workflow creates the latter from `CI_KEY`.
+## Release identities
+
+- A `v*` tag uses that tag for releases and container tags.
+- A `main` push or manual branch dispatch uses `build-<full-commit-sha>`.
+- Every container also receives `sha-<full-commit-sha>`.
+- Releases are regular releases, not prereleases.
 
 ## Validation boundary
 
-Local `cargo test` validates the Rust project. A successful packaging script
-validates AppDir staging and AppImage creation on that machine. The Forgejo
-workflow itself still requires a configured `ubuntu-22.04` runner with outbound
-HTTPS access and sufficient token permissions; those infrastructure details are
-not proven by repository-local checks.
+Local YAML parsing, shell parsing, packaging tests, and event simulations verify
+the repository contract. They do not prove runner availability, secret scopes,
+registry permissions, GitHub package visibility, hosted cross-compilation, or
+live publication. Those require a successful Forgejo Actions run followed by
+independent release, signature, and container-pull checks.

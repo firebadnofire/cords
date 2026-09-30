@@ -6,7 +6,7 @@ ui_dir="${repo_dir}/bins/cords-client/ui"
 
 cd "${ui_dir}"
 npm ci
-npm run tauri build -- --bundles appimage
+npm run tauri:build -- --bundles appimage
 
 artifact="$(find "${repo_dir}/target/release/bundle/appimage" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
 test -n "${artifact}" || { echo "Tauri did not produce an AppImage" >&2; exit 1; }

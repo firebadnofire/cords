@@ -47,7 +47,7 @@ services:
     ports:
       - "4848:4848"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,Z
       - caddy-data:/data
 
 volumes:

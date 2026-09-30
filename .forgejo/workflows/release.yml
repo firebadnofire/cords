@@ -3,7 +3,7 @@ name: Build, sign, publish, and mirror Cords
 'on':
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["v*", "V*"]
   workflow_dispatch:
 
 concurrency:
@@ -20,6 +20,8 @@ jobs:
   prepare:
     name: Select immutable release identity
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
     outputs:
       release_tag: ${{ steps.identity.outputs.release_tag }}
       release_name: ${{ steps.identity.outputs.release_name }}
@@ -37,7 +39,7 @@ jobs:
           trace_tag="sha-${GITHUB_SHA}"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             ref_name="${GITHUB_REF#refs/tags/}"
-            [[ "${ref_name}" =~ ^v[0-9A-Za-z._-]+$ ]] || {
+            [[ "${ref_name}" =~ ^[vV][0-9A-Za-z._-]+$ ]] || {
               echo "error: release tag is not safe: ${ref_name}" >&2
               exit 1
             }
@@ -74,7 +76,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install Linux client toolchain
         shell: bash
         run: |
@@ -90,7 +92,7 @@ jobs:
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
           CORDS_DIST_DIR=release bash build-scripts/linux-client-tar.sh
-      - uses: actions/upload-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: client-linux-${{ matrix.architecture }}
           path: |
@@ -119,7 +121,7 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install Windows cross-compilation toolchain
         shell: bash
         run: |
@@ -138,7 +140,7 @@ jobs:
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
           CORDS_DIST_DIR=release bash build-scripts/linux-windows-client-crosscomp.sh --target "${{ matrix.architecture }}"
-      - uses: actions/upload-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: client-windows-${{ matrix.architecture }}
           path: |
@@ -154,13 +156,13 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: bins/cords-client/ui/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
       - name: Build and package macOS client
@@ -170,7 +172,7 @@ jobs:
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
           CORDS_DIST_DIR=release bash build-scripts/mac-client-pkg.sh
-      - uses: actions/upload-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: client-macos-aarch64
           path: |
@@ -193,11 +195,19 @@ jobs:
             platform: linux/arm64
             suffix: arm64
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
     env:
       FORGEJO_TOKEN: ${{ forgejo.token }}
       FORGEJO_USER: ${{ github.actor }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Validate Docker build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version || { echo 'error: Docker daemon unavailable; configure the isolated Forgejo runner Docker access described in .forgejo/docs/release-workflow.md' >&2; exit 1; }
+          docker buildx version
       - name: Authenticate to canonical container registry
         shell: bash
         run: |
@@ -226,6 +236,8 @@ jobs:
     name: Assemble, sign, and mirror server container
     needs: [prepare, container-architecture]
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
     outputs:
       container_digest: ${{ steps.publish.outputs.container_digest }}
       canonical_reference: ${{ steps.publish.outputs.canonical_reference }}
@@ -234,7 +246,7 @@ jobs:
       FORGEJO_TOKEN: ${{ forgejo.token }}
       FORGEJO_USER: ${{ github.actor }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install pinned publication tools
         shell: bash
         run: |
@@ -274,7 +286,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           TRACE_TAG: ${{ needs.prepare.outputs.trace_tag }}
         run: bash scripts/publish-container.sh
-      - uses: actions/upload-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: cosign-public-key
           path: release/cosign.pub
@@ -291,26 +303,28 @@ jobs:
     name: Sign release files and publish both releases
     needs: [prepare, client-linux, client-windows, client-macos, publish-container]
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
     env:
       FORGEJO_TOKEN: ${{ forgejo.token }}
       RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       SOURCE_REVISION: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with: {name: client-linux-x86_64, path: release}
-      - uses: actions/download-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with: {name: client-linux-aarch64, path: release}
-      - uses: actions/download-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with: {name: client-windows-x86_64, path: release}
-      - uses: actions/download-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with: {name: client-windows-aarch64, path: release}
-      - uses: actions/download-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with: {name: client-macos-aarch64, path: release}
-      - uses: actions/download-artifact@v4
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
         with: {name: cosign-public-key, path: release}
       - name: Install release tools
         shell: bash

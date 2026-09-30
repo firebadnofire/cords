@@ -3,6 +3,7 @@ name: Phase 0 checks
 'on':
   push:
     branches: [main]
+    tags: ["v*", "V*"]
   pull_request:
 
 jobs:
@@ -59,12 +60,16 @@ jobs:
 
   containers:
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Build and start supported topology
         shell: bash
         run: |
           set -euo pipefail
+          docker version || { echo 'error: Docker daemon unavailable; see .forgejo/docs/release-workflow.md for isolated runner configuration' >&2; exit 1; }
+          docker compose version
           docker compose up --build --wait
           curl --fail --silent http://127.0.0.1:4849/health/ready
           curl --fail --silent http://127.0.0.1:4849/.well-known/cords/server | jq -e '.protocol_min == 1 and .signature != ""'
@@ -79,15 +84,20 @@ jobs:
         include:
           - runner: ubuntu-22.04
             platform: linux-x86_64
+            image: ghcr.io/catthehacker/ubuntu:act-22.04
           - runner: arm-ubuntu-22.04
             platform: linux-aarch64
+            image: ghcr.io/catthehacker/ubuntu:act-22.04
           - runner: macos-latest
             platform: macos-aarch64
+            image: ""
     name: Client check (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
@@ -95,7 +105,7 @@ jobs:
       - name: Install Linux Tauri prerequisites
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
       - working-directory: bins/cords-client/ui
@@ -118,7 +128,7 @@ jobs:
     container:
       image: node:24-bookworm
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install cross-compilation toolchain
         shell: bash
         run: |

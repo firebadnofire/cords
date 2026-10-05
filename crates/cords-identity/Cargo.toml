@@ -3,6 +3,17 @@ name = "cords-identity"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+[dependencies]
+cords-protocol.workspace = true
+ed25519-dalek.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+uuid.workspace = true
 [lints]
 workspace = true
 

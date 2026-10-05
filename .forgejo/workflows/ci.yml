@@ -1,4 +1,4 @@
-name: Phase 0 checks
+name: Cords checks
 
 'on':
   push:
@@ -20,6 +20,7 @@ jobs:
           POSTGRES_PASSWORD: cords-ci
     env:
       DATABASE_URL: postgres://cords:cords-ci@postgres:5432/cords
+      CORDS_TEST_DATABASE_URL: postgres://cords:cords-ci@postgres:5432/cords
     steps:
       - name: Install toolchains and checkout
         shell: bash
@@ -45,6 +46,7 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets --all-features -- -D warnings
           cargo test --workspace --all-features
+          cargo test -p cords-server-core -- --ignored --test-threads=1
           cargo deny check
       - name: Frontend checks
         working-directory: bins/cords-client/ui
@@ -52,6 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
+          npm audit --audit-level=high
           npm run format:check
           npm run check
           npm run lint
@@ -64,6 +67,11 @@ jobs:
       image: ghcr.io/catthehacker/ubuntu:act-22.04
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Scan source for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -v "$PWD:/source:ro" ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f dir /source --config /source/.gitleaks.toml --redact --no-banner
       - name: Build and start supported topology
         shell: bash
         run: |

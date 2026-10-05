@@ -1,5 +1,38 @@
 # Cords project dissection
 
+## Encrypted milestone working-tree update — October 3, 2026
+
+The historical snapshot below is preserved. Start with the current
+[guide](docs/encrypted-milestone.md), [report](docs/reports/encrypted-milestone.md)
+and ADR 0002 for the encrypted-channel slice. Sources under `bins/` are no longer
+hidden by a blanket ignore rule. This work is uncommitted, not a released or
+hosted-CI-validated revision.
+
+`cords-protocol/src/messaging.rs` owns signed identity/authentication/channel
+contracts; `cords-identity` owns root/device authority; `cords-crypto` owns MLS
+and local AEAD protection. `cords-client-core/src/client.rs` provides the shared
+native installation, durable outbox and synchronization implementation.
+`cords-server-core/src/messaging.rs` and `messaging/lifecycle.rs` implement
+PostgreSQL-backed authentication, memberships, coordination, history and WSS.
+`bins/cords-dev` orchestrates this core without reimplementing the protocol.
+Tauri's `conversation.rs` and `App.svelte` show real conversations; the previous
+UI is preserved as `Discovery.svelte`.
+
+PostgreSQL migrations advance through schema 5: identity binding, messaging,
+revocation/epoch snapshots and queued policy removals. SQLite schema 2 contains
+protected installation state and separately encrypted cache records.
+`scripts/encrypted-acceptance.py` performs actual client/server/PostgreSQL restarts
+and dump scans. `scripts/lifecycle-acceptance.py` verifies offline epoch processing,
+member removal and root revocation. No broad implementation phase is implied complete.
+
+Both requested native build scripts were exercised: the Linux OCI script on `.54`
+and the Windows portable ZIP script locally. The ZIP now carries SQLite migrations
+and its extracted release application exchanged real MLS messages through the
+script-built server image. The 22-part report records artifact hashes and separates
+this UI proof from the full CLI restart/marker-scan acceptance. Frontend audit is
+clean after a compatible lint dependency update; the Rust advisory gate still
+rejects the unmaintained transitive `proc-macro-error2` dependency.
+
 This document is an onboarding map for agents and contributors working in the Cords repository. It describes the repository at commit `baaff7f` (`main`, tagged `v0.0.2`) as it actually exists on September 29, 2026, then relates that implementation to the long-term product specification in `AGENTS.md`.
 
 The most important rule when using this document is to distinguish three different kinds of truth:

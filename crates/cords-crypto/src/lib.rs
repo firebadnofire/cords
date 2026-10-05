@@ -1,2 +1,4 @@
-//! Reserved Phase 2 boundary for the MLS adapter and attachment encryption.
+//! MLS and independent authenticated local-storage protection.
 #![forbid(unsafe_code)]
+pub mod conversation;
+pub mod protection;

@@ -1,0 +1,12 @@
+{
+  "origin": "https://192.168.86.54:5848",
+  "server_id": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU",
+  "route": "01a10301-e5cd-7f00-939a-8d277659373a",
+  "desktop_device": "01a10301-0ed4-7541-adde-410ba0bde8a4",
+  "desktop_message_id": "01a10302-fa5a-7bb1-979a-e8c6ede4d2d5",
+  "peer_reply_id": "01a10302-fe19-7aa1-9e56-59d9c72f9336",
+  "desktop_message_decrypted_once": true,
+  "reply_visibly_observed_in_packaged_ui": true,
+  "portable_zip_sha256": "6f5321bec2310aa2ab02acb6068147248b3a57c2c9c7673dfce2ba97172cf011",
+  "bundled_migrations_without_override": true
+}

@@ -1,28 +1,33 @@
 # Cords release workflow
 
 `.forgejo/workflows/release.yml` is the privileged Cords publication path. It
-runs for `main` pushes, `v*` and `V*` tags, and manual dispatches. Pull requests never
-receive release or registry credentials.
+runs for `v*` and `V*` tag pushes, including the planned `v0.1.0`, and explicit
+manual dispatches. Ordinary branch commits and pull requests never start this
+publication workflow or receive release or registry credentials.
 
-Forgejo remains canonical. A successful run also mirrors the source revision,
-release assets, and server container to `firebadnofire/cords` on GitHub.
+Forgejo remains canonical. The GitHub mirror job depends on successful Pubcode
+container publication and successful Forgejo release publication, so it cannot
+mutate GitHub first. It then mirrors the source revision, the exact signed
+release payload, and the exact container digest to `firebadnofire/cords`.
 
 ## Runner assignment
 
-| Runner label | Native work | Cross-compiled work |
-|---|---|---|
-| `ubuntu-22.04` | Linux x86_64 client and linux/amd64 server image | Windows x86_64 client |
-| `arm-ubuntu-22.04` | Linux aarch64 client and linux/arm64 server image | Windows ARM64 client |
-| `macos-latest` | macOS aarch64 client | None |
+| Runner label       | Native work                                                        | Cross-compiled work                |
+| ------------------ | ------------------------------------------------------------------ | ---------------------------------- |
+| `ubuntu-22.04`     | Linux x86_64 client, server tarball, and linux/amd64 server image  | Windows x86_64 client              |
+| `arm-ubuntu-22.04` | Linux aarch64 client, server tarball, and linux/arm64 server image | Windows ARM64 client               |
+| `macos-latest`     | Universal macOS client DMG                                         | Intel half of the universal binary |
 
 The offline `windows-latest` runner is intentionally not part of this path.
 Windows clients are built with pinned `cargo-xwin 0.23.1` and Rust 1.97.1.
 
 ### Action resolution and Docker access
 
-Actions use explicit HTTPS repository URLs rather than the instance's default
-action host. Artifact transfer uses Forgejo's patched `upload-artifact@v4` and
-`download-artifact@v4`, required for Forgejo artifact compatibility.
+Checkout and Node setup use the mirrors in
+`https://pubcode.archuser.org/actions`. That organization does not currently
+mirror the artifact actions, so artifact transfer uses Forgejo's patched
+`upload-artifact@v4` and `download-artifact@v4`, required for Forgejo artifact
+compatibility.
 See [Forgejo artifact documentation](https://forgejo.org/docs/v15.0/user/actions/advanced-features/#artifacts).
 
 Docker jobs explicitly select `ghcr.io/catthehacker/ubuntu:act-22.04` to provide
@@ -63,22 +68,23 @@ decoded key material is never printed. Forgejo checkout, releases, and package
 publication use the built-in `${{ forgejo.token }}` with least-privilege
 repository scope.
 
-## Client release assets
+## File release assets
 
 Each release contains:
 
 - Linux x86_64 and aarch64 client `.tar.gz` archives;
 - Windows x86_64 and ARM64 client `.zip` archives;
-- a macOS aarch64 client `.pkg` installer;
-- a basename-only `.sha256` file for every client package;
+- a universal macOS client `.dmg`;
+- Linux x86_64 and aarch64 server `.tar.gz` archives;
+- a basename-only `.sha256` file for every client and server package;
 - `cosign.pub` for container verification;
-- an armored detached `.asc` signature for every package, per-package checksum,
-  and `cosign.pub`;
-- `SHA256SUMS` covering those packages, checksum files, and `cosign.pub`; and
-- `SHA256SUMS.asc`.
+- `SHA256SUMS` covering every package, per-package checksum, and `cosign.pub`;
+  and
+- the detached OpenPGP signature `SHA256SUMS.sig`.
 
-All detached signatures and checksums are verified before upload. Reruns replace
-assets with the same name rather than silently accumulating duplicates.
+The checksum manifest signature and all checksums are verified before upload.
+Reruns replace assets with the same name rather than silently accumulating
+duplicates.
 
 ## Server container
 
@@ -92,9 +98,12 @@ ghcr.io/firebadnofire/cords
 ```
 
 Both registries receive a traceability tag, the release tag, and `latest`.
-Cosign signs and verifies the digest independently in each registry. The GitHub
-package's public/private visibility remains a GitHub repository setting; the
-workflow updates the package but does not change that setting.
+Pubcode receives and verifies the multi-architecture manifest and its Cosign
+signature first. After the Forgejo file release succeeds, the mirror job copies
+that manifest with preserved digests, rejects any digest difference, and signs
+and verifies the GHCR location. The GitHub package's public/private visibility
+remains a GitHub repository setting; the workflow updates the package but does
+not change that setting.
 
 Examples:
 
@@ -109,7 +118,7 @@ cosign verify --key cosign.pub ghcr.io/firebadnofire/cords@sha256:<digest>
 - A `v*` or `V*` tag uses that tag for releases and container tags. Release tags
   must have a suffix containing only ASCII letters, digits, dots, underscores,
   or hyphens; unsafe names fail before publication.
-- A `main` push or manual branch dispatch uses `build-<full-commit-sha>`.
+- A manual branch dispatch uses `build-<full-commit-sha>`.
 - Every container also receives `sha-<full-commit-sha>`.
 - Releases are regular releases, not prereleases.
 

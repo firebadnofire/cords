@@ -1,0 +1,73 @@
+{
+  "origin": "https://192.168.86.54:5848",
+  "checks": [
+    "pending_mls_commit_recovered_after_server_ack",
+    "bidirectional_realtime_and_idempotency",
+    "websocket_interruption_http_exactly_once",
+    "client_process_kill_restart_identity_pin_cursor_cache_mls",
+    "server_kill_restart_same_fingerprint_history_realtime",
+    "crash_recovered_outbox_persisted.application",
+    "crash_recovered_response_received.application",
+    "postgres_restart_complete_history_and_continued_mls",
+    "database_raw_utf8_base64_hex_json_sql_bytea_marker_scan"
+  ],
+  "fingerprint_before": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU",
+  "client_a": {
+    "account_id": "7kXEqGbtGx_YjP1SuNIjyPnG6w7_RKUdEFki7lWLNJA",
+    "cursors": {},
+    "device_id": "01a102fe-bbc4-7042-be0a-04da94e5db09",
+    "origin": "",
+    "server_id": ""
+  },
+  "client_b": {
+    "account_id": "2CvDQfs4fZF-dWezCpodn4MpR6awMVRkCI4G2v6DKGE",
+    "cursors": {},
+    "device_id": "01a102fe-c195-7d10-80f6-2a85e52b4c64",
+    "origin": "",
+    "server_id": ""
+  },
+  "route": "01a102fe-c209-7df0-967b-0982576880bf",
+  "offline_http_fetched": 1,
+  "fingerprint_after_server_restart": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU",
+  "fingerprint_after_postgres_restart": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU",
+  "recovered_events": [
+    {
+      "event_id": "01a102ff-170c-7aa1-b927-1fda0ec8ce0d",
+      "sequence": 9
+    },
+    {
+      "event_id": "01a102ff-2374-7b92-9a68-6db1757d3201",
+      "sequence": 10
+    }
+  ],
+  "database_marker_match_counts": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "final_a": {
+    "account_id": "7kXEqGbtGx_YjP1SuNIjyPnG6w7_RKUdEFki7lWLNJA",
+    "cursors": {
+      "01a102fe-c209-7df0-967b-0982576880bf": 10
+    },
+    "device_id": "01a102fe-bbc4-7042-be0a-04da94e5db09",
+    "origin": "https://192.168.86.54:5848",
+    "server_id": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU"
+  },
+  "final_b": {
+    "account_id": "2CvDQfs4fZF-dWezCpodn4MpR6awMVRkCI4G2v6DKGE",
+    "cursors": {
+      "01a102fe-c209-7df0-967b-0982576880bf": 10
+    },
+    "device_id": "01a102fe-c195-7d10-80f6-2a85e52b4c64",
+    "origin": "https://192.168.86.54:5848",
+    "server_id": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU"
+  },
+  "passed": true
+}

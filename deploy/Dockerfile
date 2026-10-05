@@ -4,6 +4,7 @@ WORKDIR /source
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY bins/cords-server ./bins/cords-server
+COPY bins/cords-dev ./bins/cords-dev
 COPY bins/cords-client/src-tauri ./bins/cords-client/src-tauri
 COPY migrations ./migrations
 RUN cargo build --locked --release --bin cords-server
@@ -23,8 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && install -d -o 4848 -g 4848 /var/lib/cords /opt/cords/migrations/postgres \
     && rm -rf /usr/bin/apt* /usr/bin/dpkg* /usr/lib/apt /var/lib/dpkg
 COPY --from=builder /source/target/release/cords-server /usr/local/bin/cords-server
-COPY --from=builder /source/migrations/postgres /opt/cords/migrations/postgres
-COPY deploy/server.toml /opt/cords/server.toml
+COPY --from=builder --chmod=0755 /source/migrations/postgres /opt/cords/migrations/postgres
+COPY --chmod=0644 deploy/server.toml /opt/cords/server.toml
 USER 4848:4848
 VOLUME ["/var/lib/cords"]
 EXPOSE 4848

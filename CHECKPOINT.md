@@ -8,6 +8,8 @@ The checkpoints are ordered primarily by dependency, security importance, and op
 
 Where a product intentionally omits a feature, document the decision and its consequences rather than silently treating the checkpoint as complete.
 
+Checked items were verified for the encrypted-channel working-tree slice on October 3, 2026; see [the evidence report](docs/reports/encrypted-milestone.md). Unchecked items and whole phases remain incomplete. Build-script and LAN acceptance evidence is not hosted CI or production release proof.
+
 ## Completion standard
 
 A milestone is complete only when:
@@ -32,12 +34,12 @@ Nothing higher in the stack matters if a clean checkout cannot be built, tested,
 
 - [ ] A clean checkout contains every source file, migration, schema, fixture, and build manifest required to build the supported server and client.
 - [ ] Server and client builds are reproducible from documented commands.
-- [ ] Dependency versions are locked or otherwise reproducibly resolved.
-- [ ] Supported runtime and toolchain versions are explicitly documented.
+- [x] Dependency versions are locked or otherwise reproducibly resolved.
+- [x] Supported runtime and toolchain versions are explicitly documented.
 - [ ] CI builds and tests the server and every supported client platform.
 - [ ] Formatting, linting, unit tests, integration tests, dependency/security checks, and secret scanning are automated.
 - [ ] Release artifacts are built from identifiable source revisions and can be independently verified against them.
-- [ ] Architecture and trust-boundary changes have a durable decision-record process.
+- [x] Architecture and trust-boundary changes have a durable decision-record process.
 
 ### Baseline security
 
@@ -57,19 +59,19 @@ The first useful milestone is a client being able to locate a server, establish 
 ### Server
 
 - [ ] The server starts from a documented configuration with safe defaults.
-- [ ] The server exposes liveness and readiness information.
-- [ ] Readiness is not reported until required persistent storage and critical dependencies are usable.
-- [ ] The server has a persistent application identity distinct from its TLS certificate where the protocol requires long-lived server identity.
-- [ ] The server publishes protocol/version/capability metadata in a deterministic, authenticated form.
+- [x] The server exposes liveness and readiness information.
+- [x] Readiness is not reported until required persistent storage and critical dependencies are usable.
+- [x] The server has a persistent application identity distinct from its TLS certificate where the protocol requires long-lived server identity.
+- [x] The server publishes protocol/version/capability metadata in a deterministic, authenticated form.
 - [ ] Server identity rotation has a defined authenticated transition mechanism.
 - [ ] Graceful shutdown stops accepting new work and safely finishes or aborts in-flight state changes.
 
 ### Client
 
-- [ ] The client accepts or discovers a server endpoint without disabling normal TLS certificate validation.
+- [x] The client accepts or discovers a server endpoint without disabling normal TLS certificate validation.
 - [ ] The client can retrieve and validate server metadata before authentication.
 - [ ] The client rejects malformed, unauthenticated, incompatible, or cryptographically invalid server metadata.
-- [ ] The client records the server identity it has trusted and detects unexpected identity changes.
+- [x] The client records the server identity it has trusted and detects unexpected identity changes.
 - [ ] A server identity change produces an explicit trust transition rather than silent acceptance.
 - [ ] The client can distinguish connection failure, TLS failure, server-identity failure, protocol incompatibility, and temporary server unavailability.
 
@@ -83,18 +85,18 @@ Messaging software is a distributed state machine wearing a chat bubble as a dis
 
 - [ ] Persistent server state is stored behind a defined storage abstraction.
 - [ ] Database/schema migrations are versioned, ordered, restart-safe, and tested from supported upgrade points.
-- [ ] Server identity survives restart and cannot be silently regenerated over existing state.
+- [x] Server identity survives restart and cannot be silently regenerated over existing state.
 - [ ] Critical mutations support idempotency or equivalent duplicate suppression.
-- [ ] Replaying a successfully completed request does not create duplicate durable state.
+- [x] Replaying a successfully completed request does not create duplicate durable state.
 - [ ] Partial failures cannot leave security-critical state in an ambiguous half-committed condition.
 - [ ] Backup and restore procedures exist for server-owned durable state.
 
 ### Client
 
-- [ ] Client state uses durable local storage rather than UI state as its source of truth.
+- [x] Client state uses durable local storage rather than UI state as its source of truth.
 - [ ] Local schema migrations are versioned and tested.
-- [ ] Account, device, trust, conversation, synchronization, and retry state survive restart as appropriate.
-- [ ] Security-sensitive local state is encrypted at rest using a key not simply stored beside the encrypted database.
+- [x] Account, device, trust, conversation, synchronization, and retry state survive restart as appropriate.
+- [x] Security-sensitive local state is encrypted at rest using a key not simply stored beside the encrypted database.
 - [ ] Interrupted writes and interrupted synchronization can recover without corrupting identity or conversation state.
 - [ ] The client can detect an incompatible or corrupted local database and fail safely.
 
@@ -114,8 +116,8 @@ An IMS must know the difference between an account, a device, a server, and a co
 
 ### Device authority
 
-- [ ] Every client installation has a unique device identity.
-- [ ] Device authorization is cryptographically bound to the owning account or equivalently authenticated.
+- [x] Every client installation has a unique device identity.
+- [x] Device authorization is cryptographically bound to the owning account or equivalently authenticated.
 - [ ] Device authorization statements are replay-resistant and versioned/generation-aware where necessary.
 - [ ] A newly authorized device can authenticate independently without copying another device's routine private keys.
 - [ ] Device revocation is supported.
@@ -126,7 +128,7 @@ An IMS must know the difference between an account, a device, a server, and a co
 
 - [ ] Account, device, server, transport, conversation, attachment, recovery, and external-attestation key roles are explicitly separated.
 - [ ] Private key material is not reused across cryptographic roles merely because algorithms or key formats are compatible.
-- [ ] Signed structures use domain separation and deterministic signing encodings.
+- [x] Signed structures use domain separation and deterministic signing encodings.
 - [ ] Key rotation semantics are defined for every long-lived key class.
 - [ ] Compromise of one key class has a documented and bounded effect on the others.
 
@@ -138,9 +140,9 @@ Possessing an account is not the same thing as being allowed into a particular s
 
 ### Authentication
 
-- [ ] The server authenticates possession of an authorized device identity using a replay-resistant challenge or comparably strong mechanism.
+- [x] The server authenticates possession of an authorized device identity using a replay-resistant challenge or comparably strong mechanism.
 - [ ] Authentication does not transmit reusable private credentials in plaintext.
-- [ ] Authentication challenges expire and cannot be reused.
+- [x] Authentication challenges expire and cannot be reused.
 - [ ] Session credentials are scoped, expiring, revocable, and securely stored by the client.
 - [ ] Logout/revocation invalidates server-side authorization as intended rather than merely deleting a local token.
 - [ ] Rate limits and abuse controls protect authentication endpoints.
@@ -148,8 +150,8 @@ Possessing an account is not the same thing as being allowed into a particular s
 ### Admission and membership
 
 - [ ] The server has an explicit account admission policy such as open, invite, approval, or another documented mechanism.
-- [ ] Membership is distinct from account/device identity.
-- [ ] Membership credentials or records bind the account/device to the correct server identity.
+- [x] Membership is distinct from account/device identity.
+- [x] Membership credentials or records bind the account/device to the correct server identity.
 - [ ] Join, leave, suspension, ban, and rejoin semantics are defined.
 - [ ] Server membership changes survive restart and are auditable at an appropriate level.
 - [ ] A client can clearly represent whether it is authenticated, admitted, suspended, revoked, or disconnected.
@@ -200,14 +202,14 @@ For an E2EE IMS, this is the point where the server becomes a ciphertext courier
 
 - [ ] Conversation encryption uses a reviewed protocol appropriate to the product's one-to-one and/or group messaging model.
 - [ ] Each authorized device participates with conversation-specific cryptographic state rather than an account-wide shared conversation key.
-- [ ] Conversation cryptography is isolated behind an internal interface rather than leaking library-specific state throughout application code.
+- [x] Conversation cryptography is isolated behind an internal interface rather than leaking library-specific state throughout application code.
 - [ ] Initial key establishment authenticates participant/device identities.
 - [ ] Participant additions and removals cause the required cryptographic state transitions.
 - [ ] Removed/revoked devices cannot obtain future conversation keys.
 - [ ] Newly added devices do not silently receive historical plaintext unless explicit history transfer is a documented feature.
 - [ ] Cryptographic commits/updates are authenticated and ordered.
 - [ ] Malformed, stale, replayed, or unauthorized cryptographic updates are rejected.
-- [ ] Cryptographic state survives client restart securely.
+- [x] Cryptographic state survives client restart securely.
 - [ ] Protocol interoperability and deterministic vectors exist for protocol-owned encodings.
 
 ### Server relationship
@@ -234,14 +236,14 @@ Only now do we earn the revolutionary capability of sending "hi" over the Intern
 
 ### Delivery
 
-- [ ] The client can send an encrypted message and receive durable server acknowledgement.
-- [ ] The server assigns or maintains an authoritative ordering mechanism for each route where ordering is required.
-- [ ] Recipients can retrieve missed messages after reconnecting.
-- [ ] Duplicate uploads and downloads do not produce duplicate user-visible messages.
+- [x] The client can send an encrypted message and receive durable server acknowledgement.
+- [x] The server assigns or maintains an authoritative ordering mechanism for each route where ordering is required.
+- [x] Recipients can retrieve missed messages after reconnecting.
+- [x] Duplicate uploads and downloads do not produce duplicate user-visible messages.
 - [ ] Temporary network failure queues outgoing work for safe retry.
 - [ ] Permanent rejection is distinguishable from retryable failure.
 - [ ] Multiple devices on the same account converge on consistent conversation state.
-- [ ] Message delivery continues correctly across server and client restarts.
+- [x] Message delivery continues correctly across server and client restarts.
 
 ---
 
@@ -249,8 +251,8 @@ Only now do we earn the revolutionary capability of sending "hi" over the Intern
 
 A messaging client that only works while continuously connected is a demo with excellent self-esteem.
 
-- [ ] The client maintains explicit synchronization cursors/checkpoints rather than assuming it has seen everything.
-- [ ] Reconnect resumes from durable synchronization state.
+- [x] The client maintains explicit synchronization cursors/checkpoints rather than assuming it has seen everything.
+- [x] Reconnect resumes from durable synchronization state.
 - [ ] Gaps in ordered event streams are detected and repaired.
 - [ ] The server supports bounded catch-up without requiring complete history retransmission on every connection.
 - [ ] Clients can operate usefully during temporary disconnection where product semantics permit it.

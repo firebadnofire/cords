@@ -1,0 +1,14 @@
+CREATE TABLE device_contacts (device_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, contact TEXT NOT NULL);
+CREATE TABLE account_heads (account_id TEXT PRIMARY KEY, authorization_record TEXT NOT NULL);
+CREATE TABLE memberships (device_id TEXT PRIMARY KEY REFERENCES device_contacts, credential TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE);
+CREATE TABLE auth_challenges (id TEXT PRIMARY KEY, device_id TEXT NOT NULL, challenge TEXT NOT NULL, contact TEXT NOT NULL, expires_at BIGINT NOT NULL, consumed BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES memberships, expires_at BIGINT NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE, challenge_id TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, idempotency_key TEXT NOT NULL);
+CREATE TABLE request_results (scope TEXT NOT NULL, request_key TEXT NOT NULL, request_hash TEXT NOT NULL, result TEXT NOT NULL, PRIMARY KEY(scope, request_key));
+CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, creator TEXT NOT NULL REFERENCES memberships(device_id), epoch BIGINT NOT NULL DEFAULT 0, next_sequence BIGINT NOT NULL DEFAULT 1, binding TEXT);
+CREATE TABLE channel_members (channel_id TEXT NOT NULL REFERENCES channels, device_id TEXT NOT NULL REFERENCES memberships, joined_sequence BIGINT NOT NULL DEFAULT 0, active BOOLEAN NOT NULL DEFAULT TRUE, PRIMARY KEY(channel_id, device_id));
+CREATE TABLE key_packages (id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES memberships, package TEXT NOT NULL, reserved_by TEXT UNIQUE, consumed BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE TABLE roster_operations (id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES channels, requester TEXT NOT NULL REFERENCES memberships(device_id), target TEXT NOT NULL REFERENCES memberships(device_id), base_epoch BIGINT NOT NULL, package_id TEXT NOT NULL REFERENCES key_packages, complete BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE UNIQUE INDEX one_pending_roster_change ON roster_operations(channel_id) WHERE NOT complete;
+CREATE TABLE route_events (route_id TEXT NOT NULL REFERENCES channels(id), sequence BIGINT NOT NULL, event_id TEXT NOT NULL UNIQUE, envelope TEXT NOT NULL, received_at BIGINT NOT NULL, PRIMARY KEY(route_id, sequence));
+CREATE TABLE welcomes (channel_id TEXT NOT NULL REFERENCES channels, device_id TEXT NOT NULL REFERENCES memberships, sequence BIGINT NOT NULL, welcome TEXT NOT NULL, PRIMARY KEY(channel_id, device_id));
+UPDATE cords_schema_metadata SET version = 3 WHERE singleton = TRUE;

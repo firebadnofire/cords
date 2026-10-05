@@ -1,5 +1,7 @@
 //! Phase 0 server identity and HTTP application services.
 
+pub mod messaging;
+
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use cords_protocol::{
@@ -81,8 +83,8 @@ impl ServerIdentity {
             api_base: "/api/v1".into(),
             websocket_path: "/api/v1/events".into(),
             server_signing_key: URL_SAFE_NO_PAD.encode(self.signing_key.verifying_key().to_bytes()),
-            join_policy: Vec::new(),
-            features: Vec::new(),
+            join_policy: vec!["public".into()],
+            features: vec!["mls-v1".into(), "channel-sync-v1".into()],
         };
         let signature = self.signing_key.sign(&metadata.signing_bytes()?).to_bytes();
         Ok(SignedServerMetadataV1 {
@@ -134,12 +136,22 @@ fn sync_directory(_path: &Path) -> Result<(), std::io::Error> {
 #[derive(Clone, Debug)]
 pub struct AppState {
     metadata: SignedServerMetadataV1,
+    store: Option<cords_storage::PostgresStore>,
 }
 
 impl AppState {
     #[must_use]
     pub fn new(metadata: SignedServerMetadataV1) -> Self {
-        Self { metadata }
+        Self {
+            metadata,
+            store: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_store(mut self, store: cords_storage::PostgresStore) -> Self {
+        self.store = Some(store);
+        self
     }
 }
 
@@ -166,8 +178,11 @@ pub fn router(state: AppState) -> Router {
 async fn live() -> StatusCode {
     StatusCode::NO_CONTENT
 }
-async fn ready() -> StatusCode {
-    StatusCode::NO_CONTENT
+async fn ready(State(state): State<AppState>) -> StatusCode {
+    match &state.store {
+        Some(store) if store.health().await.is_ok() => StatusCode::NO_CONTENT,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    }
 }
 async fn metadata(State(state): State<AppState>) -> Json<SignedServerMetadataV1> {
     Json(state.metadata)
@@ -176,7 +191,7 @@ async fn capabilities() -> Json<CapabilitiesV1> {
     Json(CapabilitiesV1 {
         protocol_min: PROTOCOL_V1,
         protocol_max: PROTOCOL_V1,
-        features: Vec::new(),
+        features: vec!["mls-v1".into(), "channel-sync-v1".into()],
     })
 }
 
@@ -223,7 +238,7 @@ mod tests {
             .clone()
             .oneshot(Request::get("/health/ready").body(Body::empty())?)
             .await?;
-        assert_eq!(health.status(), StatusCode::NO_CONTENT);
+        assert_eq!(health.status(), StatusCode::SERVICE_UNAVAILABLE);
         let discovery = app
             .oneshot(Request::get("/.well-known/cords/server").body(Body::empty())?)
             .await?;

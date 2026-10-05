@@ -3,8 +3,10 @@
 /bins/cords-client/ui/node_modules/
 /bins/cords-client/ui/dist/
 /bins/cords-client/src-tauri/gen/
-/bins/*
+/bins/cords-client/src-tauri/target/
+/bins/cords-client/ui/.svelte-kit/
 /.env
 *.db
 *.db-shm
 *.db-wal
+/scripts/__pycache__/

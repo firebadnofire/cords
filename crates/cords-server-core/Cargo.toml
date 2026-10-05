@@ -5,9 +5,17 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-axum.workspace = true
 base64.workspace = true
 cords-protocol.workspace = true
+cords-storage.workspace = true
+cords-identity.workspace = true
+cords-crypto.workspace = true
+sqlx.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+axum = { workspace = true, features = ["ws"] }
 ed25519-dalek.workspace = true
 rand_core.workspace = true
 serde.workspace = true
@@ -19,10 +27,13 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+anyhow.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 tower = "0.5"
+tokio-tungstenite = "0.29"
+futures-util = { version = "0.3", features = ["sink"] }
 
 [lints]
 workspace = true

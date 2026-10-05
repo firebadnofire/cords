@@ -1,0 +1,11 @@
+{
+    default_sni 192.168.86.54
+}
+
+https://192.168.86.54:5848 {
+    tls internal {
+        protocols tls1.3
+    }
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy cords-server:4848
+}

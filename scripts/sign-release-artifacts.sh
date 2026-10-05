@@ -46,9 +46,20 @@ signing_fingerprint="$(
   exit 1
 }
 
+rm -f -- "${release_directory}/SHA256SUMS" "${release_directory}/SHA256SUMS.sig"
+unexpected_input="$({
+  find "${release_directory}" -maxdepth 1 -type f \
+    ! \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.dmg' -o -name '*.sha256' -o -name 'cosign.pub' \) \
+    -print -quit
+} || true)"
+[[ -z "${unexpected_input}" ]] || {
+  echo "error: unexpected release input: $(basename "${unexpected_input}")" >&2
+  exit 1
+}
+
 mapfile -d '' signed_inputs < <(
   find "${release_directory}" -maxdepth 1 -type f \
-    \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.pkg' -o -name '*.sha256' -o -name 'cosign.pub' \) \
+    \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.dmg' -o -name '*.sha256' -o -name 'cosign.pub' \) \
     -print0 | sort -z
 )
 (( ${#signed_inputs[@]} > 0 )) || {
@@ -56,15 +67,12 @@ mapfile -d '' signed_inputs < <(
   exit 1
 }
 
-for artifact in "${signed_inputs[@]}"; do
-  signature="${artifact}.asc"
-  rm -f -- "${signature}"
-  printf '%s' "${CI_KEY_PASSPHRASE}" | \
-    gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
-      --local-user "${signing_fingerprint}" --armor --detach-sign \
-      --output "${signature}" "${artifact}"
-  gpg --batch --verify "${signature}" "${artifact}"
-done
+while IFS= read -r -d '' checksum_file; do
+  (
+    cd "${release_directory}"
+    sha256sum --check --strict "$(basename "${checksum_file}")"
+  )
+done < <(find "${release_directory}" -maxdepth 1 -type f -name '*.sha256' -print0 | sort -z)
 
 (
   cd "${release_directory}"
@@ -73,9 +81,9 @@ done
 
 printf '%s' "${CI_KEY_PASSPHRASE}" | \
   gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
-    --local-user "${signing_fingerprint}" --armor --detach-sign \
-    --output "${release_directory}/SHA256SUMS.asc" "${release_directory}/SHA256SUMS"
-gpg --batch --verify "${release_directory}/SHA256SUMS.asc" "${release_directory}/SHA256SUMS"
+    --local-user "${signing_fingerprint}" --detach-sign \
+    --output "${release_directory}/SHA256SUMS.sig" "${release_directory}/SHA256SUMS"
+gpg --batch --verify "${release_directory}/SHA256SUMS.sig" "${release_directory}/SHA256SUMS"
 (
   cd "${release_directory}"
   sha256sum --check --strict SHA256SUMS

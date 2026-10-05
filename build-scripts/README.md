@@ -20,6 +20,7 @@ sign releases with repository secrets, or perform notarization.
 | `linux-windows-client-crosscomp.sh` | Linux x64 or ARM64 | The same portable Windows archive as the native script |
 | `linux-client-tar.sh` | Linux x64 or ARM64 | `cords-client-linux-<arch>-<version>.tar.gz`, containing `Cords.AppImage` |
 | `linux-server-tar.sh` | Linux x64 or ARM64 | `cords-server-linux-<arch>-<version>.tar.gz` |
+| `mac-client-dmg.sh` | macOS Apple Silicon with both Apple targets | `cords-client-macos-universal-<version>.dmg` |
 | `mac-client-pkg.sh` | macOS Intel or Apple Silicon | `cords-client-macos-<arch>-<version>.pkg` |
 | `mac-server-tar.sh` | macOS Intel or Apple Silicon | `cords-server-macos-<arch>-<version>.tar.gz` |
 | `linux-server-oci-img.sh` | Linux with Docker or Podman | A locally loaded `cords-server:<version>` image |
@@ -46,8 +47,10 @@ Node.js/npm, and the Windows `tar.exe` utility:
 & C:\path\to\cords\build-scripts\windows-client.ps1
 ```
 
-The result is a portable ZIP containing `Cords.exe`, `README.md`, and the
-license. Cords uses the system WebView2 runtime; it does not copy a WebView2
+The result is a portable ZIP containing `Cords.exe`, `README.md`, the license,
+and `migrations/sqlite/`. Keep this resource directory beside the executable:
+release builds resolve migrations from the extracted package, not the source
+checkout. Cords uses the system WebView2 runtime; it does not copy a WebView2
 runtime into the archive. This script builds only the client.
 
 ## Linux-built Windows client
@@ -88,16 +91,21 @@ and paths as appropriate. No credentials or persistent data are packaged.
 
 ## macOS artifacts
 
-Both macOS scripts build only the native host architecture. They do not claim
-to produce universal binaries.
+The DMG script builds the release client for both `aarch64-apple-darwin` and
+`x86_64-apple-darwin` through Tauri's `universal-apple-darwin` target. Both Rust
+targets must already be installed. The legacy PKG and the server tar script
+build only the native host architecture.
 
 ```sh
+bash build-scripts/mac-client-dmg.sh
 bash build-scripts/mac-client-pkg.sh
 bash build-scripts/mac-server-tar.sh
 ```
 
-The client requires the normal Tauri macOS prerequisites plus Apple's
-`pkgbuild`, `pkgutil`, and Xcode command-line tools. It stages the real
+The universal client requires the normal Tauri macOS prerequisites and
+`hdiutil`; it verifies the completed DMG before checksumming it. The native PKG
+path additionally requires Apple's `pkgbuild`, `pkgutil`, and Xcode command-line
+tools. It stages the real
 `Cords.app` at `/Applications/Cords.app`, verifies that package payload, and
 creates an unsigned `.pkg` by default. Set `CORDS_PKG_SIGN_IDENTITY` to an
 already configured installer-signing identity to sign the package creation
@@ -121,3 +129,9 @@ reference with `CORDS_IMAGE_NAME` and `CORDS_IMAGE_TAG`. The script builds and
 loads the image locally and never pushes it. It does not emit a file checksum
 because no image archive is exported.
 
+For the isolated `.54` milestone deployment, set
+`CORDS_MILESTONE_IMAGE=cords-server:0.1.0` in its private `.env` and run
+`docker compose --env-file .env -f deploy/compose.milestone.yaml up --no-build -d --wait`.
+This runs the OCI script's loaded image while preserving the milestone volumes,
+PostgreSQL and Caddy. See `docs/encrypted-milestone.md` for backup, CA trust,
+portable-client initialization and conversation acceptance commands.

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ $# -eq 1 ]] || {
-  echo "usage: $0 <release-directory>" >&2
+[[ $# -eq 2 ]] || {
+  echo "usage: $0 <release-directory> <forgejo|github>" >&2
   exit 2
 }
 
 release_directory="$1"
+provider="$2"
 [[ -d "${release_directory}" ]] || {
   echo "error: release directory does not exist: ${release_directory}" >&2
   exit 1
@@ -17,11 +18,21 @@ release_directory="$(cd "${release_directory}" && pwd)"
 : "${RELEASE_NAME:?RELEASE_NAME is required}"
 : "${RELEASE_BODY:?RELEASE_BODY is required}"
 : "${SOURCE_REVISION:?SOURCE_REVISION is required}"
-: "${FORGEJO_API_URL:?FORGEJO_API_URL is required}"
-: "${FORGEJO_REPOSITORY:?FORGEJO_REPOSITORY is required}"
-: "${FORGEJO_TOKEN:?FORGEJO_TOKEN is required}"
-: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
-: "${GH_KEY:?GH_KEY is required}"
+case "${provider}" in
+  forgejo)
+    : "${FORGEJO_API_URL:?FORGEJO_API_URL is required}"
+    : "${FORGEJO_REPOSITORY:?FORGEJO_REPOSITORY is required}"
+    : "${FORGEJO_TOKEN:?FORGEJO_TOKEN is required}"
+    ;;
+  github)
+    : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+    : "${GH_KEY:?GH_KEY is required}"
+    ;;
+  *)
+    echo "error: provider must be forgejo or github" >&2
+    exit 2
+    ;;
+esac
 
 mapfile -d '' release_assets < <(
   find "${release_directory}" -maxdepth 1 -type f -print0 | sort -z
@@ -134,22 +145,24 @@ upload_assets() {
   done
 }
 
-forgejo_result="$(ensure_release forgejo "${FORGEJO_API_URL%/}" \
-  "${FORGEJO_REPOSITORY}" "token ${FORGEJO_TOKEN}")"
-forgejo_release_id="${forgejo_result%%$'\t'*}"
-forgejo_json="${forgejo_result#*$'\t'}"
-upload_assets forgejo "${FORGEJO_API_URL%/}" "${FORGEJO_REPOSITORY}" \
-  "token ${FORGEJO_TOKEN}" "${forgejo_release_id}" "${forgejo_json}" \
-  "${FORGEJO_API_URL%/}/repos/${FORGEJO_REPOSITORY}/releases/${forgejo_release_id}/assets?name="
-rm -f -- "${forgejo_json}"
-
-github_api='https://api.github.com'
-github_result="$(ensure_release github "${github_api}" \
-  "${GITHUB_REPOSITORY}" "Bearer ${GH_KEY}")"
-github_release_id="${github_result%%$'\t'*}"
-github_json="${github_result#*$'\t'}"
-github_upload_url="$(jq -er '.upload_url | sub("\\{.*$"; "")' "${github_json}")"
-upload_assets github "${github_api}" "${GITHUB_REPOSITORY}" \
-  "Bearer ${GH_KEY}" "${github_release_id}" "${github_json}" \
-  "${github_upload_url}?name="
-rm -f -- "${github_json}"
+if [[ "${provider}" == forgejo ]]; then
+  forgejo_result="$(ensure_release forgejo "${FORGEJO_API_URL%/}" \
+    "${FORGEJO_REPOSITORY}" "token ${FORGEJO_TOKEN}")"
+  forgejo_release_id="${forgejo_result%%$'\t'*}"
+  forgejo_json="${forgejo_result#*$'\t'}"
+  upload_assets forgejo "${FORGEJO_API_URL%/}" "${FORGEJO_REPOSITORY}" \
+    "token ${FORGEJO_TOKEN}" "${forgejo_release_id}" "${forgejo_json}" \
+    "${FORGEJO_API_URL%/}/repos/${FORGEJO_REPOSITORY}/releases/${forgejo_release_id}/assets?name="
+  rm -f -- "${forgejo_json}"
+else
+  github_api='https://api.github.com'
+  github_result="$(ensure_release github "${github_api}" \
+    "${GITHUB_REPOSITORY}" "Bearer ${GH_KEY}")"
+  github_release_id="${github_result%%$'\t'*}"
+  github_json="${github_result#*$'\t'}"
+  github_upload_url="$(jq -er '.upload_url | sub("\\{.*$"; "")' "${github_json}")"
+  upload_assets github "${github_api}" "${GITHUB_REPOSITORY}" \
+    "Bearer ${GH_KEY}" "${github_release_id}" "${github_json}" \
+    "${github_upload_url}?name="
+  rm -f -- "${github_json}"
+fi

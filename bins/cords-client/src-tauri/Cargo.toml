@@ -1,0 +1,26 @@
+[package]
+name = "cords-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+anyhow.workspace = true
+cords-client-core.workspace = true
+cords-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+reqwest.workspace = true
+base64.workspace = true
+tauri = { version = "2.11.5", features = [] }
+tokio.workspace = true
+
+[lints]
+workspace = true

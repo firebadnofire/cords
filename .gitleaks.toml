@@ -1,0 +1,19 @@
+title = "Cords source secret scan"
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Existing discovery vector contains this public Ed25519 verification key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)test-vectors/server-metadata-v1\.json$''']
+regexTarget = "secret"
+regexes = ['''^6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw$''']
+
+[[allowlists]]
+description = "Cargo dependency names, not a secret value"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)Cargo\.lock$''']
+regexTarget = "secret"
+regexes = ['''^libcrux-sha3$''']

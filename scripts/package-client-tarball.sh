@@ -59,6 +59,11 @@ case "${platform}" in
     ;;
   windows)
     install -m 0755 "${client_path}" "${package_root}/Cords.exe"
+    mkdir -p "${package_root}/migrations/sqlite"
+    for migration in "${repo_dir}"/migrations/sqlite/*.sql; do
+      [[ -s "${migration}" ]] || { echo "error: missing or empty SQLite migration: ${migration}" >&2; exit 1; }
+      install -m 0644 "${migration}" "${package_root}/migrations/sqlite/"
+    done
     ;;
   macos)
     [[ -d "${client_path}" ]] || {

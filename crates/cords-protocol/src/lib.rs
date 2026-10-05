@@ -1,5 +1,7 @@
 //! Public Cords protocol v1 types and deterministic encodings.
 
+pub mod messaging;
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, VerifyingKey};
 use minicbor::Encoder;

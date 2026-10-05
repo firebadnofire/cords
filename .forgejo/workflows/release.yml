@@ -1,8 +1,7 @@
 name: Build, sign, publish, and mirror Cords
 
-'on':
+"on":
   push:
-    branches: [main]
     tags: ["v*", "V*"]
   workflow_dispatch:
 
@@ -74,9 +73,8 @@ jobs:
     env:
       APPIMAGE_EXTRACT_AND_RUN: "1"
       DEBIAN_FRONTEND: noninteractive
-      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
       - name: Install Linux client toolchain
         shell: bash
         run: |
@@ -89,8 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="${HOME}/.cargo/bin:${PATH}"
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          export SOURCE_DATE_EPOCH
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           CORDS_DIST_DIR=release bash build-scripts/linux-client-tar.sh
       - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
@@ -119,9 +116,8 @@ jobs:
       image: node:24-bookworm
     env:
       DEBIAN_FRONTEND: noninteractive
-      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
       - name: Install Windows cross-compilation toolchain
         shell: bash
         run: |
@@ -137,8 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="${HOME}/.cargo/bin:${PATH}"
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          export SOURCE_DATE_EPOCH
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           CORDS_DIST_DIR=release bash build-scripts/linux-windows-client-crosscomp.sh --target "${{ matrix.architecture }}"
       - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
@@ -150,33 +145,75 @@ jobs:
           retention-days: 7
 
   client-macos:
-    name: macOS client (aarch64)
+    name: macOS client (universal DMG)
     needs: prepare
     runs-on: macos-latest
-    env:
-      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
-      - uses: https://code.forgejo.org/actions/setup-node@v4
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
+      - uses: https://pubcode.archuser.org/actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: bins/cords-client/ui/package-lock.json
-      - uses: https://github.com/dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
-      - name: Build and package macOS client
+      - name: Install universal Rust targets
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          export SOURCE_DATE_EPOCH
-          CORDS_DIST_DIR=release bash build-scripts/mac-client-pkg.sh
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build and package universal macOS client
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          CORDS_DIST_DIR=release bash build-scripts/mac-client-dmg.sh
       - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
-          name: client-macos-aarch64
+          name: client-macos-universal
           path: |
-            release/*.pkg
+            release/*.dmg
+            release/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  server-linux:
+    name: Linux server tarball (${{ matrix.architecture }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            architecture: x86_64
+          - runner: arm-ubuntu-22.04
+            architecture: aarch64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
+      - name: Install server build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates curl git pkg-config
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+      - name: Build and package Linux server
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          CORDS_DIST_DIR=release bash build-scripts/linux-server-tar.sh
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: server-linux-${{ matrix.architecture }}
+          path: |
+            release/*.tar.gz
             release/*.sha256
           if-no-files-found: error
           retention-days: 7
@@ -201,7 +238,7 @@ jobs:
       FORGEJO_TOKEN: ${{ forgejo.token }}
       FORGEJO_USER: ${{ github.actor }}
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
       - name: Validate Docker build environment
         shell: bash
         run: |
@@ -224,16 +261,15 @@ jobs:
           set -euo pipefail
           ARCH_TAG="${TRACE_TAG}-${ARCH_SUFFIX}"
           [[ "${ARCH_TAG}" =~ ^sha-[0-9a-f]{40,64}-(amd64|arm64)$ ]]
-          CORDS_IMAGE_NAME="${CANONICAL_IMAGE}" CORDS_IMAGE_TAG="${ARCH_TAG}" \
-            bash build-scripts/linux-server-oci-img.sh
+          CORDS_IMAGE_NAME="${CANONICAL_IMAGE}" CORDS_IMAGE_TAG="${ARCH_TAG}" bash build-scripts/linux-server-oci-img.sh
           docker push "${CANONICAL_IMAGE}:${ARCH_TAG}"
           docker buildx imagetools inspect "${CANONICAL_IMAGE}:${ARCH_TAG}"
       - name: Close canonical registry session
         if: always()
         run: docker logout pubcode.archuser.org || true
 
-  publish-container:
-    name: Assemble, sign, and mirror server container
+  publish-canonical-container:
+    name: Publish and sign canonical server container
     needs: [prepare, container-architecture]
     runs-on: ubuntu-22.04
     container:
@@ -241,40 +277,31 @@ jobs:
     outputs:
       container_digest: ${{ steps.publish.outputs.container_digest }}
       canonical_reference: ${{ steps.publish.outputs.canonical_reference }}
-      ghcr_reference: ${{ steps.publish.outputs.ghcr_reference }}
     env:
       FORGEJO_TOKEN: ${{ forgejo.token }}
       FORGEJO_USER: ${{ github.actor }}
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
       - name: Install pinned publication tools
         shell: bash
         run: |
           set -euo pipefail
-          if command -v apt-get >/dev/null; then
-            if [[ "$(id -u)" -eq 0 ]]; then sudo_command=(); else sudo_command=(sudo); fi
-            "${sudo_command[@]}" apt-get update
-            "${sudo_command[@]}" apt-get install -y --no-install-recommends ca-certificates curl jq skopeo
-          fi
-          for command in curl docker jq skopeo; do command -v "${command}"; done
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl jq
           cosign_version=v3.1.2
           cosign_sha256=f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf
           curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --output /tmp/cosign "https://github.com/sigstore/cosign/releases/download/${cosign_version}/cosign-linux-amd64"
           printf '%s  %s\n' "${cosign_sha256}" /tmp/cosign | sha256sum --check --strict
           chmod 0755 /tmp/cosign
           echo /tmp >> "${GITHUB_PATH}"
-      - name: Authenticate publication registries
+      - name: Authenticate to canonical registry
         shell: bash
-        env:
-          GH_KEY: ${{ secrets.GH_KEY }}
         run: |
           set -euo pipefail
           : "${FORGEJO_TOKEN:?Forgejo did not provide its job token}"
           : "${FORGEJO_USER:?Forgejo did not provide the actor name}"
-          : "${GH_KEY:?configure GH_KEY with write:packages scope}"
           printf '%s' "${FORGEJO_TOKEN}" | docker login pubcode.archuser.org --username "${FORGEJO_USER}" --password-stdin
-          printf '%s' "${GH_KEY}" | docker login ghcr.io --username firebadnofire --password-stdin
-      - name: Publish and sign container manifests
+      - name: Assemble and sign canonical manifest
         id: publish
         shell: bash
         env:
@@ -285,23 +312,26 @@ jobs:
           RELEASE_DIRECTORY: release
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           TRACE_TAG: ${{ needs.prepare.outputs.trace_tag }}
-        run: bash scripts/publish-container.sh
+        run: bash scripts/publish-container.sh canonical
       - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: cosign-public-key
           path: release/cosign.pub
           if-no-files-found: error
           retention-days: 7
-      - name: Close registry sessions
+      - name: Close canonical registry session
         if: always()
-        shell: bash
-        run: |
-          docker logout pubcode.archuser.org || true
-          docker logout ghcr.io || true
+        run: docker logout pubcode.archuser.org || true
 
-  sign-and-release:
-    name: Sign release files and publish both releases
-    needs: [prepare, client-linux, client-windows, client-macos, publish-container]
+  publish-forgejo-release:
+    name: Sign files and publish canonical Forgejo release
+    needs:
+      - prepare
+      - client-linux
+      - client-windows
+      - client-macos
+      - server-linux
+      - publish-canonical-container
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/catthehacker/ubuntu:act-22.04
@@ -311,42 +341,111 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       SOURCE_REVISION: ${{ github.sha }}
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
       - uses: https://code.forgejo.org/forgejo/download-artifact@v4
-        with: {name: client-linux-x86_64, path: release}
+        with: { name: client-linux-x86_64, path: release }
       - uses: https://code.forgejo.org/forgejo/download-artifact@v4
-        with: {name: client-linux-aarch64, path: release}
+        with: { name: client-linux-aarch64, path: release }
       - uses: https://code.forgejo.org/forgejo/download-artifact@v4
-        with: {name: client-windows-x86_64, path: release}
+        with: { name: client-windows-x86_64, path: release }
       - uses: https://code.forgejo.org/forgejo/download-artifact@v4
-        with: {name: client-windows-aarch64, path: release}
+        with: { name: client-windows-aarch64, path: release }
       - uses: https://code.forgejo.org/forgejo/download-artifact@v4
-        with: {name: client-macos-aarch64, path: release}
+        with: { name: client-macos-universal, path: release }
       - uses: https://code.forgejo.org/forgejo/download-artifact@v4
-        with: {name: cosign-public-key, path: release}
+        with: { name: server-linux-x86_64, path: release }
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
+        with: { name: server-linux-aarch64, path: release }
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
+        with: { name: cosign-public-key, path: release }
       - name: Install release tools
         shell: bash
         run: |
           set -euo pipefail
-          if command -v apt-get >/dev/null; then
-            if [[ "$(id -u)" -eq 0 ]]; then sudo_command=(); else sudo_command=(sudo); fi
-            "${sudo_command[@]}" apt-get update
-            "${sudo_command[@]}" apt-get install -y --no-install-recommends ca-certificates curl git gnupg jq
-          fi
-          for command in base64 curl git gpg jq sha256sum; do command -v "${command}"; done
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl gnupg jq
+          for command in base64 curl gpg jq sha256sum; do command -v "${command}"; done
       - name: Validate unsigned release payload
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find release -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 2
-          test "$(find release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 2
-          test "$(find release -maxdepth 1 -type f -name '*.pkg' | wc -l)" -eq 1
-          test "$(find release -maxdepth 1 -type f -name '*.sha256' | wc -l)" -eq 5
+          package_patterns=(
+            'cords-client-linux-x86_64-*.tar.gz'
+            'cords-client-linux-aarch64-*.tar.gz'
+            'cords-client-windows-x86_64-*.zip'
+            'cords-client-windows-aarch64-*.zip'
+            'cords-client-macos-universal-*.dmg'
+            'cords-server-linux-x86_64-*.tar.gz'
+            'cords-server-linux-aarch64-*.tar.gz'
+          )
+          for pattern in "${package_patterns[@]}"; do
+            test "$(find release -maxdepth 1 -type f -name "${pattern}" | wc -l)" -eq 1
+          done
+          test "$(find release -maxdepth 1 -type f -name '*.sha256' | wc -l)" -eq 7
           test -s release/cosign.pub
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 15
           find release -maxdepth 1 -type f -printf '%f\n' | sort
-      - name: Mirror source revision and release tag to GitHub
+      - name: Create and verify signed checksum manifest
+        shell: bash
+        env:
+          CI_KEY_B64: ${{ secrets.CI_KEY_B64 }}
+          CI_KEY_PASSPHRASE: ${{ secrets.CI_KEY_PASSPHRASE }}
+        run: bash scripts/sign-release-artifacts.sh release
+      - name: Publish canonical Forgejo release
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${FORGEJO_SERVER_URL:?Forgejo did not provide FORGEJO_SERVER_URL}"
+          : "${GITHUB_REPOSITORY:?Forgejo did not provide GITHUB_REPOSITORY}"
+          export FORGEJO_API_URL="${FORGEJO_API_URL:-${FORGEJO_SERVER_URL}/api/v1}"
+          export FORGEJO_REPOSITORY="${GITHUB_REPOSITORY}"
+          export RELEASE_BODY="$(cat <<EOF
+          Signed Cords desktop clients, Linux server tarballs, and multi-architecture server container.
+
+          Canonical container: ${{ needs.publish-canonical-container.outputs.canonical_reference }}
+          EOF
+          )"
+          bash scripts/publish-release-assets.sh release forgejo
+      - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: signed-release-assets
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  mirror-github:
+    name: Mirror canonical release to GitHub
+    needs: [prepare, publish-canonical-container, publish-forgejo-release]
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
+    env:
+      FORGEJO_TOKEN: ${{ forgejo.token }}
+      FORGEJO_USER: ${{ github.actor }}
+      RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      SOURCE_REVISION: ${{ github.sha }}
+    steps:
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: https://code.forgejo.org/forgejo/download-artifact@v4
+        with:
+          name: signed-release-assets
+          path: release
+      - name: Install pinned mirror tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git jq skopeo
+          cosign_version=v3.1.2
+          cosign_sha256=f7622ed3cf22e55e1ae6377c080979ff77a22da9981c11df222a2e444991e7cf
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --output /tmp/cosign "https://github.com/sigstore/cosign/releases/download/${cosign_version}/cosign-linux-amd64"
+          printf '%s  %s\n' "${cosign_sha256}" /tmp/cosign | sha256sum --check --strict
+          chmod 0755 /tmp/cosign
+          echo /tmp >> "${GITHUB_PATH}"
+      - name: Mirror source revision and release tag
         shell: bash
         env:
           GH_KEY: ${{ secrets.GH_KEY }}
@@ -376,34 +475,45 @@ jobs:
             fi
             git push github "refs/tags/${RELEASE_TAG}"
           fi
-      - name: Sign every release payload
-        shell: bash
-        env:
-          CI_KEY_B64: ${{ secrets.CI_KEY_B64 }}
-          CI_KEY_PASSPHRASE: ${{ secrets.CI_KEY_PASSPHRASE }}
-        run: bash scripts/sign-release-artifacts.sh release
-      - name: Publish Forgejo and GitHub releases
+      - name: Authenticate mirror registries
         shell: bash
         env:
           GH_KEY: ${{ secrets.GH_KEY }}
         run: |
           set -euo pipefail
-          : "${FORGEJO_SERVER_URL:?Forgejo did not provide FORGEJO_SERVER_URL}"
-          : "${GITHUB_REPOSITORY:?Forgejo did not provide GITHUB_REPOSITORY}"
-          export FORGEJO_API_URL="${FORGEJO_API_URL:-${FORGEJO_SERVER_URL}/api/v1}"
-          export FORGEJO_REPOSITORY="${GITHUB_REPOSITORY}"
+          : "${FORGEJO_TOKEN:?Forgejo did not provide its job token}"
+          : "${FORGEJO_USER:?Forgejo did not provide the actor name}"
+          : "${GH_KEY:?configure GH_KEY with write:packages scope}"
+          printf '%s' "${FORGEJO_TOKEN}" | docker login pubcode.archuser.org --username "${FORGEJO_USER}" --password-stdin
+          printf '%s' "${GH_KEY}" | docker login ghcr.io --username firebadnofire --password-stdin
+      - name: Mirror and sign server container
+        id: mirror_container
+        shell: bash
+        env:
+          COSIGN_B64: ${{ secrets.COSIGN_B64 }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          EXPECTED_CONTAINER_DIGEST: ${{ needs.publish-canonical-container.outputs.container_digest }}
+          RELEASE_DIRECTORY: release
+          TRACE_TAG: ${{ needs.prepare.outputs.trace_tag }}
+        run: bash scripts/publish-container.sh github
+      - name: Publish GitHub release mirror
+        shell: bash
+        env:
+          GH_KEY: ${{ secrets.GH_KEY }}
+        run: |
+          set -euo pipefail
           export GITHUB_REPOSITORY="${GITHUB_MIRROR_REPOSITORY}"
-          RELEASE_BODY="$(cat <<EOF
-          Signed Cords clients and multi-architecture server container.
+          export RELEASE_BODY="$(cat <<EOF
+          Mirror of the canonical Pubcode release containing signed Cords desktop clients and Linux server tarballs.
 
-          Canonical container: ${{ needs.publish-container.outputs.canonical_reference }}
-          GitHub mirror: ${{ needs.publish-container.outputs.ghcr_reference }}
-
-          Pull the public mirror with:
-
-              docker pull ghcr.io/firebadnofire/cords:${RELEASE_TAG}
-              docker pull ghcr.io/firebadnofire/cords:latest
+          Canonical container: ${{ needs.publish-canonical-container.outputs.canonical_reference }}
+          GitHub container mirror: ${{ steps.mirror_container.outputs.ghcr_reference }}
           EOF
           )"
-          export RELEASE_BODY
-          bash scripts/publish-release-assets.sh release
+          bash scripts/publish-release-assets.sh release github
+      - name: Close registry sessions
+        if: always()
+        shell: bash
+        run: |
+          docker logout pubcode.archuser.org || true
+          docker logout ghcr.io || true

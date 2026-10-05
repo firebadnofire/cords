@@ -1,0 +1,15 @@
+.git
+target
+dist
+**/node_modules
+**/dist
+**/gen
+**/__pycache__
+.env
+.env.*
+backups
+*.tar.gz
+*.dump
+**/*.db
+**/*.db-*
+**/*.key

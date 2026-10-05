@@ -1,0 +1,49 @@
+name: cords-milestone
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: cords
+      POSTGRES_USER: cords
+      POSTGRES_PASSWORD: ${CORDS_POSTGRES_PASSWORD:?required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cords -d cords"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    mem_limit: 1g
+  cords-server:
+    image: ${CORDS_MILESTONE_IMAGE:-cords-milestone-cords-server}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      CORDS_SERVER__LISTEN: 0.0.0.0:4848
+      CORDS_SERVER__PUBLIC_ORIGIN: https://192.168.86.54:5848
+      CORDS_SERVER__NAME: Cords Encrypted Milestone
+      CORDS_SERVER__DATA_DIR: /var/lib/cords
+      CORDS_DATABASE__URL: ${CORDS_DATABASE__URL:?required}
+      CORDS_DATABASE__MIGRATIONS_DIR: /opt/cords/migrations/postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - server-data:/var/lib/cords
+    mem_limit: 1g
+  caddy:
+    image: caddy:2.10-alpine
+    depends_on:
+      cords-server:
+        condition: service_healthy
+    ports:
+      - "192.168.86.54:5848:5848"
+    volumes:
+      - ./Caddyfile.milestone:/etc/caddy/Caddyfile:ro,Z
+      - caddy-data:/data
+    mem_limit: 256m
+volumes:
+  postgres-data:
+  server-data:
+  caddy-data:

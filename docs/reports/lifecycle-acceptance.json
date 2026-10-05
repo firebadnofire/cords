@@ -1,0 +1,33 @@
+{
+  "origin": "https://192.168.86.54:5848",
+  "passed": true,
+  "server_id": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU",
+  "route": "01a10235-d945-7732-9ae0-612e06669e37",
+  "offline_events": 5,
+  "offline_messages": 3,
+  "database_marker_match_counts": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "final_a": {
+    "account_id": "LR4ktEjQ4_w_0mdS8H_aSQe9RokUW5YarsXs-uLurjE",
+    "cursors": {
+      "01a10235-d945-7732-9ae0-612e06669e37": 9
+    },
+    "device_id": "01a10235-c64d-78c1-98d1-f35eed1b0cc4",
+    "origin": "https://192.168.86.54:5848",
+    "server_id": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU"
+  },
+  "final_b": {
+    "account_id": "rT5AbIR-d2fA1CPIfNa6VEUB3PiqjXsAVCGZyC1LZFc",
+    "cursors": {
+      "01a10235-d945-7732-9ae0-612e06669e37": 9
+    },
+    "device_id": "01a10235-ccab-7ea1-b161-76159d6e9bad",
+    "origin": "https://192.168.86.54:5848",
+    "server_id": "d4n8X2WgxvSlPAaDyIH-7-9gYeFXgD4QgZlj7cXikrU"
+  },
+  "revoked_device": "01a10235-d2e4-75c0-b050-e3a0d82baf63"
+}

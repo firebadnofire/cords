@@ -39,10 +39,18 @@ cleanup() {
 }
 trap cleanup EXIT
 if ! command -v clang-cl >/dev/null 2>&1; then
+  clang_cl_candidate=""
+  for candidate in "$(dirname "$(command -v clang)")"/clang-cl-*; do
+    if [[ -x "${candidate}" ]]; then
+      clang_cl_candidate="${candidate}"
+    fi
+  done
+  [[ -n "${clang_cl_candidate}" ]] || \
+    die "Clang is installed, but no clang-cl or versioned clang-cl-* driver is available"
   tool_shim_directory="$(mktemp -d)"
-  ln -s "$(command -v clang)" "${tool_shim_directory}/clang-cl"
+  ln -s "${clang_cl_candidate}" "${tool_shim_directory}/clang-cl"
   export PATH="${tool_shim_directory}:${PATH}"
-  log "Using a private clang-cl driver shim for $(command -v clang)"
+  log "Using a private clang-cl driver shim for ${clang_cl_candidate}"
 fi
 require_command clang-cl "install Clang with clang-cl driver support"
 

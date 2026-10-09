@@ -17,13 +17,18 @@ args = parser.parse_args()
 helpers = runpy.run_path(str(Path(__file__).with_name("encrypted-acceptance.py")))
 root = Path(tempfile.mkdtemp(prefix="cords-lifecycle-"))
 clients = []
+pin = None
 report = {"origin": args.origin, "state_root": str(root), "passed": False}
 markers = ["before additional member", "after additional member", "after member removal", "after device revocation"]
 try:
     for name in ("a", "b", "c", "d"):
         client = helpers["Installation"](args, root / name)
         clients.append(client)
-        client.command("trust", origin=args.origin)
+        trusted = client.command("trust", origin=args.origin)
+        if pin is None:
+            pin = trusted["server_id"]
+        else:
+            assert trusted["server_id"] == pin, "clients pinned different server identities"
         client.command("authenticate")
         client.command("publish")
     a, b, c, d = clients

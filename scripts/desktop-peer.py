@@ -18,7 +18,7 @@ args = parser.parse_args()
 acceptance = runpy.run_path(str(Path(__file__).with_name("encrypted-acceptance.py")))
 client = acceptance["Installation"](args, Path(tempfile.mkdtemp(prefix="cords-desktop-peer-")))
 try:
-    client.command("trust", origin=args.origin)
+    pin = client.command("trust", origin=args.origin)["server_id"]
     client.command("authenticate")
     route = client.command("create", name="desktop-smoke")
     client.command("add", route=route, device=args.device)

@@ -8,7 +8,7 @@ The checkpoints are ordered primarily by dependency, security importance, and op
 
 Where a product intentionally omits a feature, document the decision and its consequences rather than silently treating the checkpoint as complete.
 
-Checked items were verified for the encrypted-channel working-tree slice on October 3, 2026; see [the evidence report](docs/reports/encrypted-milestone.md). Unchecked items and whole phases remain incomplete. Build-script and LAN acceptance evidence is not hosted CI or production release proof.
+Checked items were re-audited against the clean `v0.2.0` source tree on October 9, 2026. Runtime claims rely on the bounded October 3 [encrypted-channel evidence](docs/reports/encrypted-milestone.md), [lifecycle report](docs/reports/lifecycle-acceptance.json), and [packaged-desktop report](docs/reports/desktop-packaged-smoke.json); source inspection alone was not used as runtime proof. Unchecked items and whole phases remain incomplete. LAN, local-build, workflow-contract, and packaged-Windows evidence is not hosted CI, public-PKI deployment, publication, or production release proof. `cargo deny check` remains blocked by RUSTSEC-2026-0173 without a policy suppression.
 
 ## Completion standard
 
@@ -32,7 +32,7 @@ Nothing higher in the stack matters if a clean checkout cannot be built, tested,
 
 ### Project integrity
 
-- [ ] A clean checkout contains every source file, migration, schema, fixture, and build manifest required to build the supported server and client.
+- [x] A clean checkout contains every source file, migration, schema, fixture, and build manifest required to build the supported server and client.
 - [ ] Server and client builds are reproducible from documented commands.
 - [x] Dependency versions are locked or otherwise reproducibly resolved.
 - [x] Supported runtime and toolchain versions are explicitly documented.
@@ -43,12 +43,12 @@ Nothing higher in the stack matters if a clean checkout cannot be built, tested,
 
 ### Baseline security
 
-- [ ] Secrets, credentials, private keys, recovery material, plaintext messages, and equivalent sensitive state are excluded from logs by default.
-- [ ] Sensitive configuration is not committed with production credentials.
-- [ ] Cryptographically secure randomness is used wherever security depends on randomness.
-- [ ] Unsafe or unaudited cryptographic constructions are prohibited unless explicitly reviewed and justified.
-- [ ] Protocol inputs are size-bounded and strictly parsed before expensive or state-changing processing.
-- [ ] Public errors do not expose internal stack traces, database errors, secrets, or cryptographic state.
+- [x] Secrets, credentials, private keys, recovery material, plaintext messages, and equivalent sensitive state are excluded from logs by default.
+- [x] Sensitive configuration is not committed with production credentials.
+- [x] Cryptographically secure randomness is used wherever security depends on randomness.
+- [x] Unsafe or unaudited cryptographic constructions are prohibited unless explicitly reviewed and justified.
+- [x] Protocol inputs are size-bounded and strictly parsed before expensive or state-changing processing.
+- [x] Public errors do not expose internal stack traces, database errors, secrets, or cryptographic state.
 
 ---
 
@@ -58,19 +58,19 @@ The first useful milestone is a client being able to locate a server, establish 
 
 ### Server
 
-- [ ] The server starts from a documented configuration with safe defaults.
+- [x] The server starts from a documented configuration with safe defaults.
 - [x] The server exposes liveness and readiness information.
 - [x] Readiness is not reported until required persistent storage and critical dependencies are usable.
 - [x] The server has a persistent application identity distinct from its TLS certificate where the protocol requires long-lived server identity.
 - [x] The server publishes protocol/version/capability metadata in a deterministic, authenticated form.
 - [ ] Server identity rotation has a defined authenticated transition mechanism.
-- [ ] Graceful shutdown stops accepting new work and safely finishes or aborts in-flight state changes.
+- [x] Graceful shutdown stops accepting new work and safely finishes or aborts in-flight state changes.
 
 ### Client
 
 - [x] The client accepts or discovers a server endpoint without disabling normal TLS certificate validation.
-- [ ] The client can retrieve and validate server metadata before authentication.
-- [ ] The client rejects malformed, unauthenticated, incompatible, or cryptographically invalid server metadata.
+- [x] The client can retrieve and validate server metadata before authentication.
+- [x] The client rejects malformed, unauthenticated, incompatible, or cryptographically invalid server metadata.
 - [x] The client records the server identity it has trusted and detects unexpected identity changes.
 - [ ] A server identity change produces an explicit trust transition rather than silent acceptance.
 - [ ] The client can distinguish connection failure, TLS failure, server-identity failure, protocol incompatibility, and temporary server unavailability.
@@ -83,21 +83,21 @@ Messaging software is a distributed state machine wearing a chat bubble as a dis
 
 ### Server
 
-- [ ] Persistent server state is stored behind a defined storage abstraction.
-- [ ] Database/schema migrations are versioned, ordered, restart-safe, and tested from supported upgrade points.
+- [x] Persistent server state is stored behind a defined storage abstraction.
+- [x] Database/schema migrations are versioned, ordered, restart-safe, and tested from supported upgrade points.
 - [x] Server identity survives restart and cannot be silently regenerated over existing state.
-- [ ] Critical mutations support idempotency or equivalent duplicate suppression.
+- [x] Critical mutations support idempotency or equivalent duplicate suppression.
 - [x] Replaying a successfully completed request does not create duplicate durable state.
-- [ ] Partial failures cannot leave security-critical state in an ambiguous half-committed condition.
+- [x] Partial failures cannot leave security-critical state in an ambiguous half-committed condition.
 - [ ] Backup and restore procedures exist for server-owned durable state.
 
 ### Client
 
 - [x] Client state uses durable local storage rather than UI state as its source of truth.
-- [ ] Local schema migrations are versioned and tested.
+- [x] Local schema migrations are versioned and tested.
 - [x] Account, device, trust, conversation, synchronization, and retry state survive restart as appropriate.
 - [x] Security-sensitive local state is encrypted at rest using a key not simply stored beside the encrypted database.
-- [ ] Interrupted writes and interrupted synchronization can recover without corrupting identity or conversation state.
+- [x] Interrupted writes and interrupted synchronization can recover without corrupting identity or conversation state.
 - [ ] The client can detect an incompatible or corrupted local database and fail safely.
 
 ---
@@ -108,9 +108,9 @@ An IMS must know the difference between an account, a device, a server, and a co
 
 ### Account authority
 
-- [ ] Accounts have a durable cryptographic or equivalently strong identity independent of a single login session.
-- [ ] Account authority can authorize multiple devices without sharing one routine-use private key among them.
-- [ ] Account identity fingerprints or equivalent human-verifiable identifiers are defined.
+- [x] Accounts have a durable cryptographic or equivalently strong identity independent of a single login session.
+- [x] Account authority can authorize multiple devices without sharing one routine-use private key among them.
+- [x] Account identity fingerprints or equivalent human-verifiable identifiers are defined.
 - [ ] Account identity material has a documented backup/recovery model.
 - [ ] Recovery does not give the server unilateral access to end-to-end encryption keys unless that is an explicit, prominently documented product property.
 
@@ -118,19 +118,19 @@ An IMS must know the difference between an account, a device, a server, and a co
 
 - [x] Every client installation has a unique device identity.
 - [x] Device authorization is cryptographically bound to the owning account or equivalently authenticated.
-- [ ] Device authorization statements are replay-resistant and versioned/generation-aware where necessary.
+- [x] Device authorization statements are replay-resistant and versioned/generation-aware where necessary.
 - [ ] A newly authorized device can authenticate independently without copying another device's routine private keys.
-- [ ] Device revocation is supported.
-- [ ] Revoked devices cannot create new authenticated sessions or obtain new conversation key material.
+- [x] Device revocation is supported.
+- [x] Revoked devices cannot create new authenticated sessions or obtain new conversation key material.
 - [ ] Device replacement and device loss have documented workflows.
 
 ### Key separation
 
-- [ ] Account, device, server, transport, conversation, attachment, recovery, and external-attestation key roles are explicitly separated.
-- [ ] Private key material is not reused across cryptographic roles merely because algorithms or key formats are compatible.
+- [x] Account, device, server, transport, conversation, attachment, recovery, and external-attestation key roles are explicitly separated.
+- [x] Private key material is not reused across cryptographic roles merely because algorithms or key formats are compatible.
 - [x] Signed structures use domain separation and deterministic signing encodings.
 - [ ] Key rotation semantics are defined for every long-lived key class.
-- [ ] Compromise of one key class has a documented and bounded effect on the others.
+- [x] Compromise of one key class has a documented and bounded effect on the others.
 
 ---
 
@@ -141,15 +141,15 @@ Possessing an account is not the same thing as being allowed into a particular s
 ### Authentication
 
 - [x] The server authenticates possession of an authorized device identity using a replay-resistant challenge or comparably strong mechanism.
-- [ ] Authentication does not transmit reusable private credentials in plaintext.
+- [x] Authentication does not transmit reusable private credentials in plaintext.
 - [x] Authentication challenges expire and cannot be reused.
-- [ ] Session credentials are scoped, expiring, revocable, and securely stored by the client.
+- [x] Session credentials are scoped, expiring, revocable, and securely stored by the client.
 - [ ] Logout/revocation invalidates server-side authorization as intended rather than merely deleting a local token.
-- [ ] Rate limits and abuse controls protect authentication endpoints.
+- [x] Rate limits and abuse controls protect authentication endpoints.
 
 ### Admission and membership
 
-- [ ] The server has an explicit account admission policy such as open, invite, approval, or another documented mechanism.
+- [x] The server has an explicit account admission policy such as open, invite, approval, or another documented mechanism.
 - [x] Membership is distinct from account/device identity.
 - [x] Membership credentials or records bind the account/device to the correct server identity.
 - [ ] Join, leave, suspension, ban, and rejoin semantics are defined.
@@ -164,11 +164,11 @@ Authentication answers who. Authorization answers whether they are allowed to do
 
 ### Server
 
-- [ ] Authorization is enforced in core service logic, not solely in UI or HTTP route handlers.
-- [ ] Permissions use stable machine-readable capabilities rather than display-role names as protocol logic.
+- [x] Authorization is enforced in core service logic, not solely in UI or HTTP route handlers.
+- [x] Permissions use stable machine-readable capabilities rather than display-role names as protocol logic.
 - [ ] Roles/capabilities cover creation, reading, posting, moderation, membership administration, and other privileged operations as applicable.
 - [ ] Permission changes take effect predictably for existing sessions.
-- [ ] Unauthorized requests are rejected without leaking protected state.
+- [x] Unauthorized requests are rejected without leaking protected state.
 - [ ] Privileged actions have an appropriate audit trail.
 
 ### Client
@@ -184,13 +184,13 @@ Authentication answers who. Authorization answers whether they are allowed to do
 Before sending messages, the service needs durable, synchronizable objects to send them to.
 
 - [ ] The server can create, identify, enumerate, and retire conversation routes/channels according to policy.
-- [ ] Conversation membership is explicit and access-controlled.
-- [ ] Server-visible routing metadata is clearly separated from end-to-end protected content.
-- [ ] Stable conversation identifiers survive reconnects and client restarts.
-- [ ] Clients can synchronize the conversations they are entitled to know about.
-- [ ] Membership/roster changes have an ordered, conflict-safe model.
+- [x] Conversation membership is explicit and access-controlled.
+- [x] Server-visible routing metadata is clearly separated from end-to-end protected content.
+- [x] Stable conversation identifiers survive reconnects and client restarts.
+- [x] Clients can synchronize the conversations they are entitled to know about.
+- [x] Membership/roster changes have an ordered, conflict-safe model.
 - [ ] Deleted or inaccessible conversations have defined client synchronization semantics.
-- [ ] Conversation metadata reveals no more plaintext information to the server than the product intentionally requires.
+- [x] Conversation metadata reveals no more plaintext information to the server than the product intentionally requires.
 
 ---
 
@@ -200,24 +200,24 @@ For an E2EE IMS, this is the point where the server becomes a ciphertext courier
 
 ### Cryptographic group/session layer
 
-- [ ] Conversation encryption uses a reviewed protocol appropriate to the product's one-to-one and/or group messaging model.
-- [ ] Each authorized device participates with conversation-specific cryptographic state rather than an account-wide shared conversation key.
+- [x] Conversation encryption uses a reviewed protocol appropriate to the product's one-to-one and/or group messaging model.
+- [x] Each authorized device participates with conversation-specific cryptographic state rather than an account-wide shared conversation key.
 - [x] Conversation cryptography is isolated behind an internal interface rather than leaking library-specific state throughout application code.
-- [ ] Initial key establishment authenticates participant/device identities.
-- [ ] Participant additions and removals cause the required cryptographic state transitions.
-- [ ] Removed/revoked devices cannot obtain future conversation keys.
-- [ ] Newly added devices do not silently receive historical plaintext unless explicit history transfer is a documented feature.
-- [ ] Cryptographic commits/updates are authenticated and ordered.
-- [ ] Malformed, stale, replayed, or unauthorized cryptographic updates are rejected.
+- [x] Initial key establishment authenticates participant/device identities.
+- [x] Participant additions and removals cause the required cryptographic state transitions.
+- [x] Removed/revoked devices cannot obtain future conversation keys.
+- [x] Newly added devices do not silently receive historical plaintext unless explicit history transfer is a documented feature.
+- [x] Cryptographic commits/updates are authenticated and ordered.
+- [x] Malformed, stale, replayed, or unauthorized cryptographic updates are rejected.
 - [x] Cryptographic state survives client restart securely.
 - [ ] Protocol interoperability and deterministic vectors exist for protocol-owned encodings.
 
 ### Server relationship
 
-- [ ] The server can coordinate or relay cryptographic membership work without possessing conversation plaintext keys.
-- [ ] The server cannot add itself as an invisible encrypted-conversation participant.
+- [x] The server can coordinate or relay cryptographic membership work without possessing conversation plaintext keys.
+- [x] The server cannot add itself as an invisible encrypted-conversation participant.
 - [ ] Server-side membership policy and cryptographic conversation membership cannot silently diverge indefinitely.
-- [ ] Recovery from interrupted roster/key updates is defined and tested.
+- [x] Recovery from interrupted roster/key updates is defined and tested.
 
 ---
 
@@ -227,12 +227,12 @@ Only now do we earn the revolutionary capability of sending "hi" over the Intern
 
 ### Message model
 
-- [ ] Messages have stable unique identifiers.
-- [ ] Client-generated events have idempotency identifiers or equivalent duplicate suppression.
-- [ ] Sender account and device identity are authenticated inside the protected message/event layer where E2EE is used.
-- [ ] Server-visible envelopes contain only the routing/order information the server genuinely requires.
-- [ ] Message body, rich payload, reply target, reaction value, and other private semantics are end-to-end protected where promised by the product.
-- [ ] Message/event schemas are versioned or extensible without ambiguous parsing.
+- [x] Messages have stable unique identifiers.
+- [x] Client-generated events have idempotency identifiers or equivalent duplicate suppression.
+- [x] Sender account and device identity are authenticated inside the protected message/event layer where E2EE is used.
+- [x] Server-visible envelopes contain only the routing/order information the server genuinely requires.
+- [x] Message body, rich payload, reply target, reaction value, and other private semantics are end-to-end protected where promised by the product.
+- [x] Message/event schemas are versioned or extensible without ambiguous parsing.
 
 ### Delivery
 
@@ -240,7 +240,7 @@ Only now do we earn the revolutionary capability of sending "hi" over the Intern
 - [x] The server assigns or maintains an authoritative ordering mechanism for each route where ordering is required.
 - [x] Recipients can retrieve missed messages after reconnecting.
 - [x] Duplicate uploads and downloads do not produce duplicate user-visible messages.
-- [ ] Temporary network failure queues outgoing work for safe retry.
+- [x] Temporary network failure queues outgoing work for safe retry.
 - [ ] Permanent rejection is distinguishable from retryable failure.
 - [ ] Multiple devices on the same account converge on consistent conversation state.
 - [x] Message delivery continues correctly across server and client restarts.
@@ -253,10 +253,10 @@ A messaging client that only works while continuously connected is a demo with e
 
 - [x] The client maintains explicit synchronization cursors/checkpoints rather than assuming it has seen everything.
 - [x] Reconnect resumes from durable synchronization state.
-- [ ] Gaps in ordered event streams are detected and repaired.
-- [ ] The server supports bounded catch-up without requiring complete history retransmission on every connection.
+- [x] Gaps in ordered event streams are detected and repaired.
+- [x] The server supports bounded catch-up without requiring complete history retransmission on every connection.
 - [ ] Clients can operate usefully during temporary disconnection where product semantics permit it.
-- [ ] Outgoing offline actions are replayed safely after reconnect.
+- [x] Outgoing offline actions are replayed safely after reconnect.
 - [ ] Conflicting edits/state changes have deterministic resolution semantics.
 - [ ] Synchronization is resilient to duplicated, delayed, and out-of-order network delivery.
 - [ ] A full resynchronization path exists for damaged or irrecoverably stale local synchronization metadata.
@@ -319,8 +319,8 @@ A messaging client that only works while continuously connected is a demo with e
 
 ## 14. Real-time transport and presence-like state
 
-- [ ] The service supports an efficient authenticated real-time transport for event notification/delivery.
-- [ ] Realtime transport loss falls back to the durable synchronization path without losing messages.
+- [x] The service supports an efficient authenticated real-time transport for event notification/delivery.
+- [x] Realtime transport loss falls back to the durable synchronization path without losing messages.
 - [ ] Reconnection uses bounded backoff and avoids synchronized reconnect storms.
 - [ ] Connection authentication can be renewed without silently extending revoked credentials.
 - [ ] Presence, typing indicators, read state, and similar ephemeral metadata are explicitly classified by privacy level before implementation.
@@ -343,12 +343,12 @@ A messaging client that only works while continuously connected is a demo with e
 
 ## 16. Privacy, metadata minimization, and local data control
 
-- [ ] The project documents what metadata the server necessarily learns.
-- [ ] The server does not collect message semantics merely because doing so would simplify implementation.
+- [x] The project documents what metadata the server necessarily learns.
+- [x] The server does not collect message semantics merely because doing so would simplify implementation.
 - [ ] Logs and metrics minimize stable user/device identifiers and high-cardinality sensitive labels.
-- [ ] Telemetry is absent, minimal, or explicitly documented and controllable according to product policy.
-- [ ] Local plaintext caching behavior is documented and configurable where appropriate.
-- [ ] Local sensitive caches are encrypted at rest.
+- [x] Telemetry is absent, minimal, or explicitly documented and controllable according to product policy.
+- [x] Local plaintext caching behavior is documented and configurable where appropriate.
+- [x] Local sensitive caches are encrypted at rest.
 - [ ] Account export and local-data deletion semantics are defined.
 - [ ] Server retention policy is documented and enforceable.
 - [ ] Backups preserve the same confidentiality expectations as primary storage.
@@ -359,9 +359,9 @@ A messaging client that only works while continuously connected is a demo with e
 
 ### Server operations
 
-- [ ] Production deployment has a documented supported topology.
-- [ ] TLS configuration is production-safe and certificate renewal is automated or operationally documented.
-- [ ] Health checks distinguish process liveness from actual service readiness.
+- [x] Production deployment has a documented supported topology.
+- [x] TLS configuration is production-safe and certificate renewal is automated or operationally documented.
+- [x] Health checks distinguish process liveness from actual service readiness.
 - [ ] Structured logs include request/correlation identifiers without leaking secrets.
 - [ ] Metrics expose capacity, latency, error, queue, storage, and synchronization health without exposing sensitive content.
 - [ ] Operators can perform backup, restore, migration, key rotation, and disaster recovery using documented procedures.
@@ -374,22 +374,22 @@ A messaging client that only works while continuously connected is a demo with e
 - [ ] Client updates preserve local identity and conversation state.
 - [ ] Failed updates do not strand users with an unreadable local database without a recovery path.
 - [ ] Crash reports and diagnostics redact cryptographic and message secrets.
-- [ ] Users can inspect connection/trust/device state sufficiently to diagnose security-relevant problems.
+- [x] Users can inspect connection/trust/device state sufficiently to diagnose security-relevant problems.
 - [ ] Exportable diagnostic information is explicitly scrubbed of secrets.
 
 ---
 
 ## 18. Compatibility and protocol evolution
 
-- [ ] Protocol version negotiation is explicit.
-- [ ] Application version and protocol version are independent concepts.
-- [ ] Optional capabilities/features are advertised explicitly rather than inferred from version numbers alone.
+- [x] Protocol version negotiation is explicit.
+- [x] Application version and protocol version are independent concepts.
+- [x] Optional capabilities/features are advertised explicitly rather than inferred from version numbers alone.
 - [ ] Unknown optional fields/events can be handled according to documented forward-compatibility rules.
-- [ ] Security-critical unknown fields or algorithms fail closed where required.
-- [ ] Signed encoding changes receive new domains/versions rather than ambiguously changing existing encodings.
-- [ ] Cryptographic algorithm agility is designed without opportunistic downgrade negotiation.
+- [x] Security-critical unknown fields or algorithms fail closed where required.
+- [x] Signed encoding changes receive new domains/versions rather than ambiguously changing existing encodings.
+- [x] Cryptographic algorithm agility is designed without opportunistic downgrade negotiation.
 - [ ] Supported upgrade paths preserve trust pins, identities, memberships, and encrypted conversation state.
-- [ ] Interoperability vectors exist for stable wire and cryptographic structures.
+- [x] Interoperability vectors exist for stable wire and cryptographic structures.
 - [ ] Compatibility tests exercise mixed supported client/server versions.
 
 ---
@@ -409,9 +409,9 @@ A messaging client that only works while continuously connected is a demo with e
 
 ## 20. Adversarial and failure testing
 
-- [ ] Protocol parsers are tested with malformed, truncated, oversized, duplicated, and unexpected inputs.
-- [ ] Authentication is tested against replay and stale-challenge attempts.
-- [ ] Signed structures are tested against field tampering and key/fingerprint substitution.
+- [x] Protocol parsers are tested with malformed, truncated, oversized, duplicated, and unexpected inputs.
+- [x] Authentication is tested against replay and stale-challenge attempts.
+- [x] Signed structures are tested against field tampering and key/fingerprint substitution.
 - [ ] Authorization tests prove forbidden actions remain forbidden through every exposed interface.
 - [ ] Conversation cryptography is tested across add/remove/update, simultaneous changes, stale state, and interrupted commit scenarios.
 - [ ] Synchronization tests inject duplicates, gaps, delay, reordering, disconnects, and restarts.
@@ -419,7 +419,7 @@ A messaging client that only works while continuously connected is a demo with e
 - [ ] Attachment tests cover corruption, truncation, replay, resume boundaries, and malicious metadata.
 - [ ] Secret-scanning tests or equivalent checks prevent representative credentials/private material from entering releases or logs.
 - [ ] Fuzzing targets security-sensitive parsers and protocol-owned encodings where practical.
-- [ ] End-to-end tests exercise a real server and multiple independent client/device instances.
+- [x] End-to-end tests exercise a real server and multiple independent client/device instances.
 
 ---
 
@@ -469,11 +469,11 @@ An IMS should not call itself production-ready until all applicable earlier chec
 
 - [ ] A new operator can deploy a server from the documentation without undocumented secrets or manual database surgery.
 - [ ] A new user can install a client, verify/connect to a server, establish an account/device identity, authenticate, and join according to server policy.
-- [ ] Two independent accounts can establish an authorized encrypted conversation and exchange messages without the server obtaining plaintext.
-- [ ] Both users can disconnect, restart their clients, reconnect, and converge on correct state.
+- [x] Two independent accounts can establish an authorized encrypted conversation and exchange messages without the server obtaining plaintext.
+- [x] Both users can disconnect, restart their clients, reconnect, and converge on correct state.
 - [ ] A second device can be securely enrolled and a lost device can be revoked.
 - [ ] Device revocation prevents future authenticated access and future conversation-key access.
-- [ ] Server restart, client restart, temporary network loss, duplicate requests, and delayed events do not corrupt or duplicate conversation state.
+- [x] Server restart, client restart, temporary network loss, duplicate requests, and delayed events do not corrupt or duplicate conversation state.
 - [ ] Encrypted attachments can be uploaded, resumed, downloaded, authenticated, and garbage-collected without server plaintext access.
 - [ ] Server backup and restore preserve server-owned state without granting operators end-to-end plaintext keys.
 - [ ] Client upgrade preserves identity, trust, local storage, and encrypted conversation state.

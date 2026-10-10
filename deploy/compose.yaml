@@ -28,7 +28,6 @@ services:
       CORDS_SERVER__DATA_DIR: /var/lib/cords
       CORDS_DATABASE__URL: postgres://cords:cords-development-only@postgres:5432/cords
       CORDS_DATABASE__MIGRATIONS_DIR: /opt/cords/migrations/postgres
-      CORDS_AUTHENTICATION__OWNER_CLAIM_CODE: ${CORDS_AUTHENTICATION__OWNER_CLAIM_CODE:-}
     depends_on:
       postgres:
         condition: service_healthy

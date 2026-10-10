@@ -17,7 +17,14 @@ fn main() {
         .manage(conversation::Desktop::default())
         .invoke_handler(tauri::generate_handler![
             inspect_server,
-            conversation::open_client,
+            conversation::list_accounts,
+            conversation::check_password,
+            conversation::create_account,
+            conversation::unlock_account,
+            conversation::migrate_legacy_account,
+            conversation::session_control,
+            conversation::remove_local_account,
+            conversation::record_activity,
             conversation::conversation_action,
             conversation::conversation_view,
             images::load_image_url

@@ -22,32 +22,7 @@
     | 'Ownership';
   export let status: Status;
   export let identity: Identity | null;
-  export let generateOwnershipCode: () => Promise<string>;
-  export let claimOwnership: (code: string) => Promise<void>;
   const pending = 'Not implemented yet';
-  let claimCode = '';
-  let claimBusy = false;
-  let claimError = '';
-  async function prepareClaim() {
-    claimError = '';
-    try {
-      claimCode = await generateOwnershipCode();
-    } catch (caught) {
-      claimError = String(caught);
-    }
-  }
-  async function redeemClaim() {
-    claimBusy = true;
-    claimError = '';
-    try {
-      await claimOwnership(claimCode);
-      claimCode = '';
-    } catch (caught) {
-      claimError = String(caught);
-    } finally {
-      claimBusy = false;
-    }
-  }
 </script>
 
 {#if page === 'Invites'}
@@ -168,34 +143,15 @@
       >
     </div>
   </div>
-  {#if !identity?.membership?.capabilities.includes('server.manage')}
-    <section class="settings-card ownership-claim">
-      <h2>Claim this server</h2>
-      <p>
-        Generate a one-time code here, configure it as
-        <code>CORDS_AUTHENTICATION__OWNER_CLAIM_CODE</code> on the server, restart the server, then redeem
-        it below. This proves access to the server configuration while the authenticated request binds
-        ownership to this Cords account.
-      </p>
-      <button type="button" on:click={prepareClaim}>Generate one-time code</button>
-      {#if claimCode}
-        <label
-          >One-time claim code<input
-            bind:value={claimCode}
-            spellcheck="false"
-            autocomplete="off"
-          /></label
-        >
-        <button type="button" class="primary" disabled={claimBusy} on:click={redeemClaim}
-          >{claimBusy ? 'Claiming…' : 'Redeem ownership claim'}</button
-        >
-      {/if}
-      {#if claimError}<p class="error" role="alert">{claimError}</p>{/if}
-    </section>
-  {:else}
+  {#if identity?.membership?.capabilities.includes('server.manage')}
     <div class="admin-footnote">
       <Shield size={16} />This account can manage channel rosters across the server. Invite, ban,
       and destructive ownership operations remain unavailable until their authoritative APIs exist.
+    </div>
+  {:else}
+    <div class="admin-footnote">
+      <Shield size={16} />Ownership is established only during server bootstrap. An ordinary member
+      cannot claim or inherit administrative authority here.
     </div>
   {/if}
   <section class="danger-zone">

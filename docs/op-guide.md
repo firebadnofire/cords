@@ -70,7 +70,6 @@ explicit command-line overrides. Nested TOML names use a double underscore in en
 | `database.migrations_dir`          | `CORDS_DATABASE__MIGRATIONS_DIR`          | Migrations packaged with the running release    |
 | `authentication.challenge_seconds` | `CORDS_AUTHENTICATION__CHALLENGE_SECONDS` | Short-lived device challenge lifetime           |
 | `authentication.session_seconds`   | `CORDS_AUTHENTICATION__SESSION_SECONDS`   | Device session lifetime                         |
-| `authentication.owner_claim_code`  | `CORDS_AUTHENTICATION__OWNER_CLAIM_CODE`  | Temporary first-owner bootstrap value           |
 
 The CLI also accepts `--listen`, `--public-origin`, `--server-name`, `--data-dir`,
 `--database-url`, and `--migrations-dir`. Prefer one durable configuration mechanism instead of
@@ -409,41 +408,43 @@ pins the discovered server identity. A later signing-key change is rejected.
 
 ## Claim the first server owner
 
-Joining does not imply ownership. The first operator proves control of the deployment with a
-single-use code:
-
-1. Join the server from the Cords desktop client.
-2. Open **Server administration → Ownership** and generate a one-time code.
-3. Configure that exact code temporarily as `CORDS_AUTHENTICATION__OWNER_CLAIM_CODE`.
-4. Restart Cords, redeem the claim from the same authenticated client, remove the code, and restart
-   normally.
-
-For the OCI path, recreate only the `cords-server` container with this additional environment
-value. Preserve its existing network, volume, port, origin and database settings. After redemption,
-recreate it again without the value.
-
-With the raw-engine installation above, edit `/etc/cords/server.env`, then replace only the
-ephemeral container object and repeat the Step 3 `cords-server` start command:
+Joining does not imply ownership. After migrations and persistent identity setup, a fresh empty
+server atomically enters `UNCLAIMED`, generates a 256-bit single-use code and emits the plaintext
+once in the server log. PostgreSQL stores only a server-bound verifier. Restrict access to this log:
 
 ```sh
-"$ENGINE" stop cords-server
-"$ENGINE" rm cords-server
-# Repeat the cords-server run command from Path A, Step 3.
+docker compose logs cords-server
 ```
 
-Removing this container does not remove the separately named `cords-server` volume. Never add
-`--volumes` or delete the volume during a configuration change.
+Connect the desktop client to the normal HTTPS origin. It validates the certificate, verifies and
+pins signed discovery, verifies signed ownership state, and presents the claim form before any
+ordinary membership is created. Enter the logged code. The client proves both its device key and
+account-root key; one database transaction creates the owner membership, consumes the challenge,
+clears the verifier and marks the server `CLAIMED`.
 
-For the tarball path, temporarily add this line to the existing `[authentication]` section in
-`/etc/cords/server.toml`:
+Restarting an unclaimed server does not show or rotate the code. If an unused code may be exposed,
+rotate it with a server-local action. For Compose:
 
-```toml
-owner_claim_code = "CLIENT_GENERATED_CODE"
+```sh
+docker compose run --rm cords-server --config /opt/cords/server.toml ownership-bootstrap rotate
 ```
 
-Then restart, redeem, remove `owner_claim_code`, and restart once more. The server stores ownership
-in PostgreSQL and keeps only a digest of the configured code in memory. It never logs the code. A
-used code cannot transfer ownership to another account.
+For a tarball install, use the same database URL, migrations directory and data directory as the
+service:
+
+```sh
+sudo -u cords /opt/cords/bin/cords-server \
+  --config /etc/cords/server.toml ownership-bootstrap rotate
+```
+
+The rotation command is refused after ownership is claimed. It emits the replacement exactly once;
+store it securely and do not put it in shell arguments, environment files or client storage.
+
+An upgraded database that already has an owner is marked `CLAIMED` automatically. A populated
+database with no owner and no bootstrap state fails closed instead of selecting the oldest account.
+After taking and verifying a backup, the operator may explicitly create unclaimed state with the
+same local command using `initialize` instead of `rotate`. This does not grant authority to any
+existing membership; the eventual claimant must still supply the code and both signatures.
 
 The current owner receives real `server.manage` and `channel.manage` capabilities. Invite issuance,
 banning and ownership transfer remain unavailable until their authoritative APIs are implemented.
@@ -457,6 +458,7 @@ The endpoints have distinct meanings:
 - `/health/live` means the HTTP process is running.
 - `/health/ready` is exposed after database schema validation and server identity loading succeed.
 - `/.well-known/cords/server` returns signed public discovery metadata.
+- `/api/v1/ownership` returns signed `UNCLAIMED` or `CLAIMED` state, never the bootstrap code.
 
 Container logs:
 
@@ -539,7 +541,8 @@ into an isolated environment first, verify it, and only then replace the failed 
 | Client reports a server-key change                 | Stop. Confirm the expected signing key or complete a separately specified trust reset; a valid TLS certificate alone does not authorize replacement. |
 | Public readiness works but clients cannot join     | Inspect signed discovery, `public_origin`, reverse-proxy routing, system clocks and certificate validity.                                            |
 | Messages synchronize but realtime updates fail     | Confirm the proxy permits WebSocket upgrades on `/api/v1/events` and does not strip the Cords subprotocol.                                           |
-| Ownership claim is denied                          | Confirm the code has 32–256 non-whitespace characters, the running server received the exact value, and no owner already exists.                     |
+| Ownership claim is denied                          | Confirm the 43-character code was copied from the initial or rotation log, is still unused, and the client trusts the expected HTTPS origin and server pin. |
+| Server requests explicit bootstrap initialization | The database has memberships but no owner. Stop, take a verified backup, then run the local `ownership-bootstrap initialize` command; no account is selected automatically. |
 
 If a corrective action would delete a volume, reset trust, replace `server-signing.key`, restore a
 database, or discard an existing owner record, stop and take a verified backup first.

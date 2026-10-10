@@ -20,7 +20,7 @@ zeroize.workspace = true
 reqwest.workspace = true
 base64.workspace = true
 tauri = { version = "2.11.5", features = [] }
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

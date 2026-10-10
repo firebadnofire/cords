@@ -12,9 +12,9 @@ use axum::{
 use cords_identity::{validate_contact, validate_transition};
 use cords_protocol::messaging::{
     Challenge, ChallengeRequest, Channel, ChannelCreate, CommitUpload, Contact, EventUpload,
-    InvalidObject, KeyPackageUpload, MAX_ENVELOPE, Membership, OwnershipClaim, RosterAction,
-    RosterOperation, RosterRequest, RouteEvent, Session, SessionRequest, Signed, Statement,
-    WS_PROTOCOL, canonical, decode, encode, hash, notification,
+    InvalidObject, KeyPackageUpload, MAX_ENVELOPE, Membership, OwnershipClaim, OwnershipState,
+    RosterAction, RosterOperation, RosterRequest, RouteEvent, Session, SessionRequest, Signed,
+    Statement, WS_PROTOCOL, canonical, decode, encode, hash, notification,
 };
 use cords_storage::PostgresStore;
 use rand_core::{OsRng, RngCore as _};
@@ -39,8 +39,8 @@ struct Inner {
     notifications: broadcast::Sender<(String, u64)>,
     challenge_seconds: u64,
     session_seconds: u64,
-    ownership_claim_hash: Option<String>,
     authentication_budget: Mutex<(Instant, u32)>,
+    ownership_budget: Mutex<(Instant, u32)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -115,14 +115,8 @@ impl Service {
         identity: crate::ServerIdentity,
         challenge_seconds: u64,
         session_seconds: u64,
-        ownership_claim_code: Option<&str>,
     ) -> Result<Self> {
         if !(1..=600).contains(&challenge_seconds) || !(1..=86400).contains(&session_seconds) {
-            return Err(bad());
-        }
-        if ownership_claim_code.is_some_and(|code| {
-            !(32..=256).contains(&code.len()) || code.chars().any(char::is_whitespace)
-        }) {
             return Err(bad());
         }
         Ok(Self(Arc::new(Inner {
@@ -131,8 +125,8 @@ impl Service {
             notifications: broadcast::channel(256).0,
             challenge_seconds,
             session_seconds,
-            ownership_claim_hash: ownership_claim_code.map(hash),
             authentication_budget: Mutex::new((Instant::now(), 0)),
+            ownership_budget: Mutex::new((Instant::now(), 0)),
         })))
     }
     fn limit_authentication(&self) -> Result<()> {
@@ -145,6 +139,24 @@ impl Service {
             *budget = (Instant::now(), 0);
         }
         if budget.1 >= 64 {
+            return Err(ApiError(
+                StatusCode::TOO_MANY_REQUESTS,
+                "CORDS_RATE_LIMITED",
+            ));
+        }
+        budget.1 += 1;
+        Ok(())
+    }
+    fn limit_ownership(&self) -> Result<()> {
+        let mut budget = self
+            .0
+            .ownership_budget
+            .lock()
+            .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "CORDS_AUTH_UNAVAILABLE"))?;
+        if budget.0.elapsed() >= Duration::from_secs(1) {
+            *budget = (Instant::now(), 0);
+        }
+        if budget.1 >= 8 {
             return Err(ApiError(
                 StatusCode::TOO_MANY_REQUESTS,
                 "CORDS_RATE_LIMITED",
@@ -241,7 +253,15 @@ impl Service {
                     .ok_or_else(denied)?;
             let permitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_members WHERE channel_id=$1 AND device_id=$2 AND active AND delivery_active)")
                 .bind(route).bind(&member.value.device_id).fetch_one(&mut **tx).await?;
-            if !permitted || (manage && creator != member.value.device_id) {
+            if !permitted
+                || (manage
+                    && creator != member.value.device_id
+                    && !member
+                        .value
+                        .capabilities
+                        .iter()
+                        .any(|capability| capability == "channel.manage"))
+            {
                 return Err(denied());
             }
         }
@@ -306,6 +326,8 @@ pub fn router(service: Service) -> Router {
         .route("/api/v1/join/request", post(join_challenge))
         .route("/api/v1/auth/challenge", post(auth_challenge))
         .route("/api/v1/auth/session", post(session))
+        .route("/api/v1/ownership", get(ownership_state))
+        .route("/api/v1/ownership/challenge", post(ownership_challenge))
         .route("/api/v1/ownership/claim", post(claim_ownership))
         .route("/api/v1/devices/revoke", post(lifecycle::revoke))
         .route("/api/v1/members", get(members))
@@ -356,6 +378,18 @@ async fn join_challenge(
     if request.purpose != "join" {
         return Err(bad());
     }
+    require_ownership_state(&s, "CLAIMED").await?;
+    challenge(&s, request).await.map(Json)
+}
+async fn ownership_challenge(
+    State(s): State<Service>,
+    Json(request): Json<ChallengeRequest>,
+) -> Result<Json<Challenge>> {
+    if request.purpose != "claim_ownership" {
+        return Err(bad());
+    }
+    s.limit_ownership()?;
+    require_ownership_state(&s, "UNCLAIMED").await?;
     challenge(&s, request).await.map(Json)
 }
 async fn auth_challenge(
@@ -428,6 +462,38 @@ async fn challenge(s: &Service, request: ChallengeRequest) -> Result<Challenge> 
     Ok(result)
 }
 
+async fn require_ownership_state(s: &Service, expected: &str) -> Result<()> {
+    let state: Option<String> =
+        sqlx::query_scalar("SELECT state FROM server_ownership_bootstrap WHERE singleton=TRUE")
+            .fetch_optional(s.0.store.pool())
+            .await?;
+    if state.as_deref() != Some(expected) {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "CORDS_OWNERSHIP_STATE_CONFLICT",
+        ));
+    }
+    Ok(())
+}
+
+async fn ownership_state(State(s): State<Service>) -> Result<Json<Signed<OwnershipState>>> {
+    let row =
+        sqlx::query("SELECT state,generation FROM server_ownership_bootstrap WHERE singleton=TRUE")
+            .fetch_optional(s.0.store.pool())
+            .await?
+            .ok_or(ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "CORDS_OWNERSHIP_UNAVAILABLE",
+            ))?;
+    let generation = uint(row.try_get("generation")?)?;
+    Ok(Json(s.sign(OwnershipState {
+        version: 1,
+        server_id: s.0.identity.server_id(),
+        state: row.try_get("state")?,
+        generation,
+    })?))
+}
+
 #[derive(Serialize)]
 struct SessionSeed<'a> {
     challenge_id: &'a str,
@@ -495,6 +561,17 @@ async fn session(
         if expected.purpose != "join" {
             return Err(denied());
         }
+        let ownership_state: Option<String> = sqlx::query_scalar(
+            "SELECT state FROM server_ownership_bootstrap WHERE singleton=TRUE FOR SHARE",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if ownership_state.as_deref() != Some("CLAIMED") {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "CORDS_OWNERSHIP_STATE_CONFLICT",
+            ));
+        }
         let owner: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE account_id=$1)")
                 .bind(&expected.account_id)
@@ -533,73 +610,119 @@ async fn session(
     }))
 }
 
+#[allow(clippy::too_many_lines)] // Keep proof validation and the atomic state transition auditable together.
 async fn claim_ownership(
     State(s): State<Service>,
-    headers: HeaderMap,
     Json(request): Json<OwnershipClaim>,
-) -> Result<Json<Signed<Membership>>> {
-    if !(32..=256).contains(&request.claim_code.len())
+) -> Result<Json<Session>> {
+    s.limit_ownership()?;
+    if request.claim_code.len() != 43
         || request.claim_code.chars().any(char::is_whitespace)
         || request.idempotency_key.is_empty()
         || request.idempotency_key.len() > 128
     {
-        return Err(bad());
-    }
-    let member = s.authenticate(&headers, "channel.read").await?;
-    let mut tx = s.0.store.pool().begin().await?;
-    s.authorize_mutation(&mut tx, &headers, &member, None)
-        .await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('server-ownership',0))")
-        .execute(&mut *tx)
-        .await?;
-    let owner: Option<String> = sqlx::query_scalar(
-        "SELECT account_id FROM server_ownership WHERE singleton=TRUE FOR UPDATE",
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
-    if let Some(owner) = owner {
-        if owner != member.value.account_id {
-            return Err(conflict());
-        }
-        tx.commit().await?;
-        return Ok(Json(member));
-    }
-    let expected = s.0.ownership_claim_hash.as_ref().ok_or_else(denied)?;
-    let presented = hash(request.claim_code.as_bytes());
-    if !bool::from(expected.as_bytes().ct_eq(presented.as_bytes())) {
         return Err(denied());
     }
     let time = now()?;
+    validate_contact(&request.contact, time)?;
+    let authorization = &request.contact.authorization.value;
+    request
+        .device_proof
+        .verify(&authorization.device_public_key)?;
+    request.root_proof.verify(&authorization.root_public_key)?;
+    let proof = &request.root_proof.value;
+    let supplied_challenge = &request.device_proof.value;
+    if proof.version != 1
+        || proof.server_id != s.0.identity.server_id()
+        || proof.account_id != authorization.account_id
+        || proof.device_id != authorization.device_id
+        || proof.challenge_hash != hash(canonical(supplied_challenge)?)
+    {
+        return Err(denied());
+    }
+    let mut tx = s.0.store.pool().begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('server-ownership',0))")
+        .execute(&mut *tx)
+        .await?;
+    let row = sqlx::query(
+        "SELECT challenge,contact,consumed FROM auth_challenges WHERE id=$1 FOR UPDATE",
+    )
+    .bind(&supplied_challenge.challenge_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(denied)?;
+    let expected: Challenge = parse(row.try_get("challenge")?)?;
+    let expected_contact: Contact = parse(row.try_get("contact")?)?;
+    if row.try_get::<bool, _>("consumed")?
+        || expected.purpose != "claim_ownership"
+        || expected.expires_at <= time
+        || expected.server_id != s.0.identity.server_id()
+        || canonical(&expected)? != canonical(supplied_challenge)?
+        || canonical(&expected_contact)? != canonical(&request.contact)?
+    {
+        return Err(denied());
+    }
+    let bootstrap = sqlx::query("SELECT state,claim_code_hash FROM server_ownership_bootstrap WHERE singleton=TRUE FOR UPDATE")
+        .fetch_optional(&mut *tx).await?.ok_or_else(denied)?;
+    if bootstrap.try_get::<String, _>("state")? != "UNCLAIMED" {
+        return Err(conflict());
+    }
+    let expected_hash: String = bootstrap.try_get("claim_code_hash")?;
+    let presented =
+        crate::ownership::claim_code_hash(&s.0.identity.server_id(), &request.claim_code);
+    if !bool::from(expected_hash.as_bytes().ct_eq(presented.as_bytes())) {
+        return Err(denied());
+    }
+    persist_contact(&mut tx, &request.contact).await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT credential FROM memberships WHERE device_id=$1 FOR UPDATE")
+            .bind(&authorization.device_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let (member_id, generation) = if let Some(old) = old {
+        let old: Signed<Membership> = parse(&old)?;
+        (old.value.member_id, old.value.generation.saturating_add(1))
+    } else {
+        (id(), 1)
+    };
+    let membership = s.sign(Membership {
+        version: 1,
+        server_id: s.0.identity.server_id(),
+        member_id,
+        account_id: authorization.account_id.clone(),
+        device_id: authorization.device_id.clone(),
+        generation,
+        issued_at: time,
+        capabilities: member_capabilities(true),
+        status: "active".into(),
+    })?;
+    sqlx::query("INSERT INTO memberships(device_id,credential,active) VALUES($1,$2,TRUE) ON CONFLICT(device_id) DO UPDATE SET credential=EXCLUDED.credential,active=TRUE")
+        .bind(&authorization.device_id)
+        .bind(json(&membership)?)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("INSERT INTO server_ownership(singleton,account_id,claimed_by_device_id,claimed_at) VALUES(TRUE,$1,$2,$3)")
-        .bind(&member.value.account_id)
-        .bind(&member.value.device_id)
+        .bind(&authorization.account_id)
+        .bind(&authorization.device_id)
         .bind(int(time)?)
         .execute(&mut *tx)
         .await?;
-    let rows = sqlx::query("SELECT m.device_id,m.credential FROM memberships m JOIN device_contacts d ON d.device_id=m.device_id WHERE d.account_id=$1 AND m.active FOR UPDATE OF m")
-        .bind(&member.value.account_id)
-        .fetch_all(&mut *tx)
+    sqlx::query("UPDATE server_ownership_bootstrap SET state='CLAIMED',claim_code_hash=NULL,claimed_at=$1 WHERE singleton=TRUE AND state='UNCLAIMED'")
+        .bind(int(time)?).execute(&mut *tx).await?;
+    let expires_at = time + s.0.session_seconds;
+    let token = session_token(&s, &expected.challenge_id, expires_at)?;
+    sqlx::query("INSERT INTO sessions(token_hash,device_id,expires_at,challenge_id,request_hash,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(hash(&token)).bind(&authorization.device_id).bind(int(expires_at)?).bind(&expected.challenge_id).bind(hash(canonical(&request.root_proof)?)).bind(&request.idempotency_key).execute(&mut *tx).await?;
+    sqlx::query("UPDATE auth_challenges SET consumed=TRUE WHERE id=$1")
+        .bind(&expected.challenge_id)
+        .execute(&mut *tx)
         .await?;
-    let mut claimed = None;
-    for row in rows {
-        let device_id: String = row.try_get("device_id")?;
-        let mut credential: Signed<Membership> = parse(row.try_get("credential")?)?;
-        credential.value.generation = credential.value.generation.saturating_add(1);
-        credential.value.issued_at = time;
-        credential.value.capabilities = member_capabilities(true);
-        let credential = s.sign(credential.value)?;
-        sqlx::query("UPDATE memberships SET credential=$1 WHERE device_id=$2")
-            .bind(json(&credential)?)
-            .bind(&device_id)
-            .execute(&mut *tx)
-            .await?;
-        if device_id == member.value.device_id {
-            claimed = Some(credential);
-        }
-    }
-    let claimed = claimed.ok_or_else(denied)?;
     tx.commit().await?;
-    Ok(Json(claimed))
+    Ok(Json(Session {
+        token,
+        expires_at,
+        membership,
+    }))
 }
 
 async fn persist_contact(tx: &mut Tx<'_>, contact: &Contact) -> Result<()> {

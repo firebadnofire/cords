@@ -20,8 +20,6 @@
   export let close: () => void;
   export let create: (name: string) => Promise<void>;
   export let select: (id: string) => Promise<void>;
-  export let generateOwnershipCode: () => Promise<string>;
-  export let claimOwnership: (code: string) => Promise<void>;
   type Page =
     | 'Overview'
     | 'Members'
@@ -352,7 +350,7 @@
             >
           </form>
         {:else}
-          <AdminUnavailable {page} {status} {identity} {generateOwnershipCode} {claimOwnership} />
+          <AdminUnavailable {page} {status} {identity} />
         {/if}
       </div>
     </main>

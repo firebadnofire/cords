@@ -19,6 +19,7 @@ export type Status = {
   device_id: string;
   origin: string;
   server_id: string;
+  ownership_state: string;
   cursors: Record<string, number>;
 };
 export type Message = {
@@ -59,6 +60,11 @@ export type Preferences = {
   jewelAction: 'dms' | 'settings' | 'none';
   avatar: Picture;
   jewel: Picture;
+  genericize: boolean;
+  hideNicknameOnLock: boolean;
+  autoLockMinutes: 1 | 5 | 15 | 30 | 60 | null;
+  lockOnOsLock: boolean;
+  lockOnSuspend: boolean;
 };
 export const blankPicture = (): Picture => ({ data: '', shape: 'circle', x: 50, y: 50, zoom: 1 });
 export const defaults = (): Preferences => ({
@@ -72,6 +78,11 @@ export const defaults = (): Preferences => ({
   jewelAction: 'dms',
   avatar: blankPicture(),
   jewel: blankPicture(),
+  genericize: false,
+  hideNicknameOnLock: false,
+  autoLockMinutes: 15,
+  lockOnOsLock: true,
+  lockOnSuspend: true,
 });
 const bounded = (n: unknown, min: number, max: number, fallback: number) =>
   typeof n === 'number' && Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
@@ -92,6 +103,10 @@ export function picture(value: unknown): Picture {
 }
 export function preferences(value: unknown): Preferences {
   const p = (value && typeof value === 'object' ? value : {}) as Partial<Preferences>;
+  const autoLockMinutes: Preferences['autoLockMinutes'] =
+    p.autoLockMinutes === null || [1, 5, 15, 30, 60].includes(p.autoLockMinutes as number)
+      ? (p.autoLockMinutes ?? null)
+      : 15;
   return {
     ...defaults(),
     displayName: typeof p.displayName === 'string' ? p.displayName.slice(0, 100) : 'You',
@@ -106,6 +121,11 @@ export function preferences(value: unknown): Preferences {
     jewelAction: p.jewelAction === 'none' || p.jewelAction === 'settings' ? p.jewelAction : 'dms',
     avatar: picture(p.avatar),
     jewel: picture(p.jewel),
+    genericize: p.genericize === true,
+    hideNicknameOnLock: p.hideNicknameOnLock === true,
+    autoLockMinutes,
+    lockOnOsLock: p.lockOnOsLock !== false,
+    lockOnSuspend: p.lockOnSuspend !== false,
   };
 }
 export function dmEntry(action: Preferences['jewelAction']) {

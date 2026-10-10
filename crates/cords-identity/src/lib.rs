@@ -100,6 +100,12 @@ impl Identity {
     pub fn sign_device<T: Statement>(&self, value: T) -> Result<Signed<T>, InvalidObject> {
         sign(&self.device, value)
     }
+    /// Sign an account-authority statement. Routine messages must not use this key.
+    /// # Errors
+    /// Returns an error when deterministic statement encoding fails.
+    pub fn sign_root<T: Statement>(&self, value: T) -> Result<Signed<T>, InvalidObject> {
+        sign(&self.root, value)
+    }
     /// # Errors
     /// Returns an error for invalid identity material, authorization, signatures, or state continuity.
     pub fn contact(&self, mls_public_key: &[u8]) -> Result<Contact, InvalidObject> {

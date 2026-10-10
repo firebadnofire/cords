@@ -46,18 +46,26 @@ Clients join with the HTTPS URL only. Cords validates the certificate, verifies 
 pins the discovered server identity on first use, and refuses later identity changes for that
 origin. The pinned fingerprint remains visible for inspection; it is not a join form field.
 
-To bind the first server owner, open **Server administration → Ownership** in an authenticated
-desktop client and generate a one-time claim code. Configure that exact value temporarily as
-`CORDS_AUTHENTICATION__OWNER_CLAIM_CODE`, restart the server, and redeem it from the same client.
-For Compose, set it only for the claim restart:
+On a fresh database the server enters `UNCLAIMED`, generates a 256-bit one-time code, and writes the
+plaintext once to its operator log. It persists only a server-bound verifier. Read the initial code:
 
 ```sh
-CORDS_AUTHENTICATION__OWNER_CLAIM_CODE='<client-generated-code>' docker compose --profile proxy up -d cords-server caddy
+docker compose logs cords-server
 ```
 
-The authenticated claim atomically binds ownership to the Cords account. Remove the environment
-value after success and restart normally. A used code cannot transfer ownership, codes shorter
-than 32 characters are rejected, and Cords never logs the configured value.
+Connect the desktop client over its normal certificate-validated HTTPS origin. Signed discovery
+reports that the server is unclaimed and presents the claim form before ordinary joining. Enter the
+server-generated code there. The claim proves both the device key and account root key, atomically
+creates the first membership as owner, and permanently consumes the verifier. Restrict access to
+bootstrap logs. Before a successful claim, rotate a possibly exposed code with:
+
+```sh
+docker compose run --rm cords-server --config /opt/cords/server.toml ownership-bootstrap rotate
+```
+
+A populated legacy database without an owner is never assigned one implicitly; its operator must
+run the same command with `initialize` instead of `rotate`. See [the operator guide](docs/op-guide.md)
+for backup and migration details.
 
 ## Run the desktop client
 

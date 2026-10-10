@@ -20,6 +20,7 @@
   export let close: () => void;
   export let save: (value: Preferences) => Promise<void>;
   export let revoke: () => void;
+  export let lockNow: () => Promise<void>;
 
   type Page =
     | 'My Account'
@@ -374,6 +375,20 @@
             address.</span
           >
         </div>
+        <label class="toggle-row"
+          ><span
+            >Genericize Mode<small
+              >Use local initials instead of remotely sourced avatars on locked surfaces.</small
+            ></span
+          ><input type="checkbox" bind:checked={draft.genericize} /></label
+        >
+        <label class="toggle-row"
+          ><span
+            >Hide nickname while locked<small
+              >Show a numbered local account label on the account picker.</small
+            ></span
+          ><input type="checkbox" bind:checked={draft.hideNicknameOnLock} /></label
+        >
         {#each ['Who can direct message you', 'Contact requests', 'Sensitive media', 'Activity status', 'Link previews'] as item (item)}<button
             class="dev-unimplemented settings-row-button"
             disabled
@@ -465,12 +480,44 @@
             ><span>Encrypted local state and pinned server identity</span>
           </div>
         </div>
-        <button
-          class="dev-unimplemented settings-row-button"
-          disabled
-          aria-disabled="true"
-          title={pending}>Require local unlock at every startup</button
-        >
+        <section>
+          <h2>Auto-lock</h2>
+          <label
+            >Lock after inactivity<select bind:value={draft.autoLockMinutes}
+              ><option value={1}>1 minute</option><option value={5}>5 minutes</option><option
+                value={15}>15 minutes</option
+              ><option value={30}>30 minutes</option><option value={60}>1 hour</option><option
+                value={null}>Never</option
+              ></select
+            ></label
+          >
+          {#if draft.autoLockMinutes === null}<div class="account-banner warning">
+              <Info size={19} /><span
+                >Never locking leaves private keys available until you lock or exit Cords.</span
+              >
+            </div>{/if}
+          <label class="toggle-row"
+            ><span
+              >Lock on operating-system session lock<small
+                >Enabled on platforms that report a reliable session-lock event.</small
+              ></span
+            ><input type="checkbox" bind:checked={draft.lockOnOsLock} /></label
+          >
+          <label class="toggle-row"
+            ><span
+              >Lock on system suspend<small
+                >A detected suspend gap drops keys and identity-bound connections.</small
+              ></span
+            ><input type="checkbox" bind:checked={draft.lockOnSuspend} /></label
+          >
+          <div class="settings-row-button security-invariant">
+            Network handling while locked: disconnect all identity-bound connections
+          </div>
+          <button class="danger" on:click={lockNow}>Lock Now</button>
+        </section>
+        <div class="settings-row-button security-invariant">
+          Local password unlock is required at every startup
+        </div>
         <div class="settings-row-button security-invariant">
           Server identity changes fail closed
         </div>
@@ -500,7 +547,7 @@
         >
       {/if}
 
-      {#if ['My Account', 'Profile image', 'Jewel', 'Appearance', 'Accessibility'].includes(page)}<footer
+      {#if ['My Account', 'Profile image', 'Jewel', 'Appearance', 'Accessibility', 'Privacy', 'Security'].includes(page)}<footer
           class="settings-actions"
         >
           <button class="primary" disabled={busy || !status} on:click={persist}

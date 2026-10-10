@@ -2,14 +2,13 @@ use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 use config::{Config, Environment, File};
 use cords_protocol::ServerOrigin;
-use cords_server_core::{AppState, ServerIdentity, router};
+use cords_server_core::{AppState, ServerIdentity, ownership, router};
 use cords_storage::PostgresStore;
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
-use zeroize::Zeroizing;
 
 #[derive(Debug, Parser)]
 #[command(name = "cords-server", version, about = "Cords messaging server")]
@@ -45,11 +44,24 @@ enum Command {
     },
     /// Apply pending database migrations and exit.
     Migrate,
+    /// Manage the server-local ownership bootstrap secret.
+    OwnershipBootstrap {
+        #[command(subcommand)]
+        command: OwnershipBootstrapCommand,
+    },
     /// Check the local readiness endpoint and exit.
     Healthcheck {
         #[arg(long, default_value = "http://127.0.0.1:4848/health/ready")]
         url: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum OwnershipBootstrapCommand {
+    /// Initialize an unowned database, including an explicitly acknowledged populated legacy one.
+    Initialize,
+    /// Rotate the one-time code while the server remains unclaimed.
+    Rotate,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -61,18 +73,16 @@ struct Settings {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct AuthenticationSettings {
     challenge_seconds: u64,
     session_seconds: u64,
-    owner_claim_code: Option<String>,
 }
 impl Default for AuthenticationSettings {
     fn default() -> Self {
         Self {
             challenge_seconds: 60,
             session_seconds: 900,
-            owner_claim_code: None,
         }
     }
 }
@@ -107,15 +117,6 @@ impl Settings {
         let mut settings: Self = config
             .try_deserialize()
             .context("configuration is invalid")?;
-        if settings
-            .authentication
-            .owner_claim_code
-            .as_ref()
-            .is_some_and(|code| code.trim().is_empty())
-        {
-            settings.authentication.owner_claim_code = None;
-        }
-
         if let Some(value) = cli.listen {
             settings.server.listen = value;
         }
@@ -149,20 +150,33 @@ impl Settings {
         if self.database.url.trim().is_empty() {
             bail!("database.url must not be empty");
         }
-        if self
-            .authentication
-            .owner_claim_code
-            .as_ref()
-            .is_some_and(|code| {
-                !(32..=256).contains(&code.len()) || code.chars().any(char::is_whitespace)
-            })
-        {
-            bail!(
-                "authentication.owner_claim_code must contain 32 to 256 non-whitespace characters"
-            );
-        }
         Ok(())
     }
+}
+
+async fn load_server_identity(
+    store: &PostgresStore,
+    data_dir: &std::path::Path,
+) -> Result<ServerIdentity> {
+    let identity_path = data_dir.join("server-signing.key");
+    if store.server_identity().await?.is_some() && !identity_path.exists() {
+        bail!(
+            "server database has an established signing identity but its key is missing; restore the matching server-data volume"
+        );
+    }
+    let (identity, created) = ServerIdentity::load_or_create(&identity_path)
+        .context("failed to load persistent server identity")?;
+    store.bind_server_identity(&identity.server_id()).await?;
+    if created {
+        warn!(
+            server_id = %identity.server_id(),
+            path = %identity_path.display(),
+            "created a new persistent Cords server identity; verify that the data volume is durable"
+        );
+    } else {
+        info!(server_id = %identity.server_id(), "loaded persistent Cords server identity");
+    }
+    Ok(identity)
 }
 
 #[tokio::main]
@@ -173,7 +187,7 @@ async fn main() -> Result<()> {
     }
 
     init_tracing();
-    let mut settings = Settings::load(&cli)?;
+    let settings = Settings::load(&cli)?;
     let store = PostgresStore::connect(&settings.database.url)
         .await
         .context("failed to connect to PostgreSQL")?;
@@ -185,6 +199,30 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to apply PostgreSQL migrations")?;
             info!("database migrations are current");
+            Ok(())
+        }
+        Command::OwnershipBootstrap { command } => {
+            store
+                .require_current()
+                .await
+                .context("database schema is not current")?;
+            let identity = load_server_identity(&store, &settings.server.data_dir).await?;
+            let code = match command {
+                OwnershipBootstrapCommand::Initialize => {
+                    match ownership::initialize_legacy(&store, &identity.server_id()).await? {
+                        ownership::BootstrapOutcome::Generated(code) => code,
+                        ownership::BootstrapOutcome::Existing => {
+                            bail!(
+                                "ownership bootstrap is already initialized; use `rotate` only while it is unclaimed"
+                            )
+                        }
+                    }
+                }
+                OwnershipBootstrapCommand::Rotate => {
+                    ownership::rotate(&store, &identity.server_id()).await?
+                }
+            };
+            warn!(claim_code = %code.as_str(), "Cords ownership bootstrap code; store it securely because it will not be shown again");
             Ok(())
         }
         Command::Serve {
@@ -208,39 +246,21 @@ async fn main() -> Result<()> {
                 .await
                 .context("PostgreSQL readiness check failed")?;
 
-            let identity_path = settings.server.data_dir.join("server-signing.key");
-            if store.server_identity().await?.is_some() && !identity_path.exists() {
-                bail!(
-                    "server database has an established signing identity but its key is missing; restore the matching server-data volume"
-                );
-            }
-            let (identity, created) = ServerIdentity::load_or_create(&identity_path)
-                .context("failed to load persistent server identity")?;
-            store.bind_server_identity(&identity.server_id()).await?;
-            if created {
-                warn!(
-                    server_id = %identity.server_id(),
-                    path = %identity_path.display(),
-                    "created a new persistent Cords server identity; verify that the data volume is durable"
-                );
-            } else {
-                info!(server_id = %identity.server_id(), "loaded persistent Cords server identity");
+            let identity = load_server_identity(&store, &settings.server.data_dir).await?;
+            if let ownership::BootstrapOutcome::Generated(code) =
+                ownership::ensure(&store, &identity.server_id()).await?
+            {
+                warn!(claim_code = %code.as_str(), "Cords ownership bootstrap code; store it securely because it will not be shown again");
             }
 
             let metadata = identity
                 .signed_metadata(&settings.server.name)
                 .context("failed to sign server metadata")?;
-            let ownership_claim_code = settings
-                .authentication
-                .owner_claim_code
-                .take()
-                .map(Zeroizing::new);
             let service = cords_server_core::messaging::Service::new(
                 store.clone(),
                 identity,
                 settings.authentication.challenge_seconds,
                 settings.authentication.session_seconds,
-                ownership_claim_code.as_ref().map(|code| code.as_str()),
             )
             .map_err(|_| anyhow::anyhow!("authentication lifetime configuration is invalid"))?;
             let app = router(AppState::new(metadata).with_store(store))

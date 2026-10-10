@@ -99,6 +99,9 @@ Messaging software is a distributed state machine wearing a chat bubble as a dis
 - [x] Security-sensitive local state is encrypted at rest using a key not simply stored beside the encrypted database.
 - [x] Interrupted writes and interrupted synchronization can recover without corrupting identity or conversation state.
 - [ ] The client can detect an incompatible or corrupted local database and fail safely.
+- [x] Independently password-wrapped local account vaults reject cross-account passwords in core tests.
+- [x] Legacy passphrase migration copies and verifies account/device identity before registration and preserves the source vault.
+- [ ] Multi-account picker, switching, removal, inactivity lock, suspend lock, and OS-session-lock behavior have packaged-runtime acceptance on every supported desktop platform.
 
 ---
 

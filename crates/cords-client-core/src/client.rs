@@ -10,14 +10,13 @@ use cords_protocol::{
     messaging::{
         Challenge, ChallengeRequest, Channel, ChannelBind, ChannelCreate, CommitUpload, Contact,
         DeviceAuthorization, DeviceRevocation, EventUpload, GroupBinding, KeyPackageUpload,
-        MAX_TEXT, Message, OwnershipClaim, RevocationRequest, RosterAction, RosterOperation,
-        RosterRequest, RouteEvent, Session, SessionRequest, Signed, WS_PROTOCOL, canonical, decode,
-        encode, hash,
+        MAX_TEXT, Message, OwnershipClaim, OwnershipProof, OwnershipState, RevocationRequest,
+        RosterAction, RosterOperation, RosterRequest, RouteEvent, Session, SessionRequest, Signed,
+        WS_PROTOCOL, canonical, decode, encode, hash,
     },
 };
 use cords_storage::SqliteStore;
 use futures_util::{SinkExt as _, StreamExt as _};
-use rand_core::{OsRng, RngCore as _};
 use rustls::pki_types::pem::PemObject as _;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sqlx::Row as _;
@@ -32,6 +31,7 @@ use tokio_tungstenite::{
     Connector, connect_async_tls_with_config,
     tungstenite::{Message as SocketMessage, client::IntoClientRequest as _},
 };
+use zeroize::Zeroize as _;
 use zeroize::Zeroizing;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -45,6 +45,8 @@ struct Durable {
     origin: String,
     server_id: String,
     server_key: String,
+    #[serde(default)]
+    ownership_state: String,
     session: Option<Session>,
     cursors: BTreeMap<String, u64>,
     contacts: BTreeMap<String, Signed<DeviceAuthorization>>,
@@ -53,6 +55,15 @@ struct Durable {
     last_upload: Option<EventUpload>,
     #[serde(default)]
     reserved_roster: Option<(String, RosterOperation)>,
+}
+impl Drop for Durable {
+    fn drop(&mut self) {
+        self.identity.zeroize();
+        self.crypto.zeroize();
+        if let Some(session) = self.session.as_mut() {
+            session.token.zeroize();
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Pending {
@@ -86,6 +97,7 @@ pub struct Status {
     pub device_id: String,
     pub server_id: String,
     pub origin: String,
+    pub ownership_state: String,
     pub cursors: BTreeMap<String, u64>,
 }
 #[derive(Debug, Serialize)]
@@ -124,6 +136,84 @@ struct Welcome {
     welcome: String,
 }
 impl Client {
+    /// Create a new password-protected vault. Desktop callers must use this instead of relying on
+    /// the compatibility initialization behavior in [`Self::open`].
+    /// # Errors
+    /// Returns an error for an existing vault, an invalid password, or failed durable storage.
+    pub async fn create(
+        directory: &Path,
+        migrations: &Path,
+        passphrase: &[u8],
+        ca: Option<&Path>,
+    ) -> Result<Self> {
+        ensure!(
+            std::str::from_utf8(passphrase)?.chars().count() >= 12,
+            "use a password of at least 12 characters"
+        );
+        ensure!(
+            !directory.join("client.db").exists(),
+            "account vault already exists"
+        );
+        Self::open(directory, migrations, Some(passphrase), ca).await
+    }
+
+    /// Open an existing vault without creating identity material.
+    /// # Errors
+    /// Returns an error when the vault does not exist or cannot be authenticated.
+    pub async fn open_existing(
+        directory: &Path,
+        migrations: &Path,
+        passphrase: &[u8],
+        ca: Option<&Path>,
+    ) -> Result<Self> {
+        ensure!(
+            directory.join("client.db").is_file(),
+            "account vault is missing"
+        );
+        Self::open(directory, migrations, Some(passphrase), ca).await
+    }
+
+    /// Replace legacy storage-key protection with a mandatory account password without changing
+    /// the storage key, account root, device key, or MLS state.
+    /// # Errors
+    /// Returns an error if the new password is invalid or the rewrap transaction fails.
+    pub async fn rewrap_password(&mut self, passphrase: &[u8]) -> Result<()> {
+        ensure!(
+            std::str::from_utf8(passphrase)?.chars().count() >= 12,
+            "use a password of at least 12 characters"
+        );
+        let salt = protection::random_key();
+        let wrapping = protection::derive_wrapping_key(passphrase, salt.as_ref())?;
+        let wrapped = protection::seal(
+            &wrapping,
+            format!("{}/master/v1", self.installation).as_bytes(),
+            self.key.as_ref(),
+        )?;
+        sqlx::query(
+            "UPDATE installation SET protection='passphrase',salt=?1,wrapped_key=?2 WHERE singleton=1",
+        )
+        .bind(salt.as_ref())
+        .bind(wrapped)
+        .execute(self.store.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Clear the current server bearer session while preserving the encrypted local vault.
+    /// # Errors
+    /// Returns an error when the cleared state cannot be persisted.
+    pub async fn sign_out(&mut self) -> Result<()> {
+        if let Some(mut session) = self.durable.session.take() {
+            session.token.zeroize();
+        }
+        self.persist(&[], &[]).await
+    }
+
+    /// Close `SQLite` before a vault directory is moved or removed.
+    pub async fn shutdown(self) {
+        self.store.pool().close().await;
+    }
+
     /// Local presentation preferences, protected by the installation storage key.
     #[must_use]
     pub fn ui_preferences(&self) -> serde_json::Value {
@@ -267,11 +357,9 @@ impl Client {
             };
             let identity = Identity::generate(now()?)?;
             let crypto = ConversationCrypto::new(identity.authorization.value.device_id.clone())?;
-            let durable = Durable {
-                identity: encode(identity.export_secret()?.as_slice()),
-                crypto: encode(crypto.snapshot()?.as_slice()),
-                ..Durable::default()
-            };
+            let mut durable = Durable::default();
+            durable.identity = encode(identity.export_secret()?.as_slice());
+            durable.crypto = encode(crypto.snapshot()?.as_slice());
             let sealed = protection::seal(
                 &key,
                 format!("{installation}/state/v1").as_bytes(),
@@ -321,6 +409,7 @@ impl Client {
             device_id: self.identity.authorization.value.device_id.clone(),
             server_id: self.durable.server_id.clone(),
             origin: self.durable.origin.clone(),
+            ownership_state: self.durable.ownership_state.clone(),
             cursors: self.durable.cursors.clone(),
         }
     }
@@ -402,6 +491,8 @@ impl Client {
                 Some("CORDS_AUTH_CHALLENGE_EXPIRED") => "CORDS_AUTH_CHALLENGE_EXPIRED",
                 Some("CORDS_RATE_LIMITED") => "CORDS_RATE_LIMITED",
                 Some("CORDS_STORAGE_UNAVAILABLE") => "CORDS_STORAGE_UNAVAILABLE",
+                Some("CORDS_OWNERSHIP_STATE_CONFLICT") => "CORDS_OWNERSHIP_STATE_CONFLICT",
+                Some("CORDS_OWNERSHIP_UNAVAILABLE") => "CORDS_OWNERSHIP_UNAVAILABLE",
                 _ => "CORDS_HTTP_ERROR",
             };
             bail!("{code}: HTTP {status}");
@@ -469,6 +560,22 @@ impl Client {
         self.durable.origin = origin.to_string();
         self.durable.server_id = discovered;
         self.durable.server_key = signed.metadata.server_signing_key;
+        let ownership: Signed<OwnershipState> = Self::response(
+            self.http
+                .get(origin.join("/api/v1/ownership")?)
+                .send()
+                .await?,
+        )
+        .await?;
+        ownership.verify(&self.durable.server_key)?;
+        ensure!(
+            ownership.value.version == 1
+                && ownership.value.server_id == self.durable.server_id
+                && matches!(ownership.value.state.as_str(), "UNCLAIMED" | "CLAIMED")
+                && ownership.value.generation > 0,
+            "invalid ownership state"
+        );
+        self.durable.ownership_state = ownership.value.state;
         self.persist(&[], &[]).await?;
         Ok(self.status())
     }
@@ -486,6 +593,10 @@ impl Client {
             "inspect and accept server identity first"
         );
         self.trust(&origin).await?;
+        ensure!(
+            self.durable.ownership_state == "CLAIMED",
+            "CORDS_SERVER_UNCLAIMED"
+        );
         let purpose = if self.durable.session.is_some() {
             "authenticate"
         } else {
@@ -538,48 +649,71 @@ impl Client {
         Ok(self.status())
     }
 
-    /// Generate a high-entropy, URL-safe code for out-of-band server ownership setup.
-    #[must_use]
-    pub fn ownership_claim_code() -> String {
-        let mut bytes = [0_u8; 32];
-        OsRng.fill_bytes(&mut bytes);
-        encode(bytes)
-    }
-
-    /// Claim configured server ownership for this authenticated account.
+    /// Claim persistently unclaimed server ownership with its server-generated one-time code.
     /// # Errors
     /// Returns an error when the claim is unavailable, invalid, already owned by another account,
     /// or the signed replacement membership is invalid.
     pub async fn claim_ownership(&mut self, claim_code: &str) -> Result<Status> {
+        ensure!(claim_code.len() == 43, "invalid ownership claim code");
+        ensure!(!self.durable.server_id.is_empty(), "trust the server first");
+        self.trust(&self.durable.origin.clone()).await?;
         ensure!(
-            (32..=256).contains(&claim_code.len()),
-            "invalid ownership claim code"
+            self.durable.ownership_state == "UNCLAIMED",
+            "server is not unclaimed"
         );
-        self.ensure_session().await?;
-        let request = OwnershipClaim {
-            claim_code: claim_code.into(),
+        let contact = self.identity.contact(&self.crypto.public_key())?;
+        let challenge_request = ChallengeRequest {
+            contact: contact.clone(),
+            purpose: "claim_ownership".into(),
             idempotency_key: id(),
         };
-        let membership: Signed<cords_protocol::messaging::Membership> =
-            self.post("/api/v1/ownership/claim", &request, true).await?;
-        membership.verify(&self.durable.server_key)?;
+        let challenge: Challenge = self
+            .post("/api/v1/ownership/challenge", &challenge_request, false)
+            .await?;
         ensure!(
-            membership.value.server_id == self.durable.server_id
-                && membership.value.account_id == self.identity.authorization.value.account_id
-                && membership.value.device_id == self.identity.authorization.value.device_id
-                && membership.value.status == "active"
-                && membership
+            challenge.server_id == self.durable.server_id
+                && challenge.account_id == self.identity.authorization.value.account_id
+                && challenge.device_id == self.identity.authorization.value.device_id
+                && challenge.authorization_hash == hash(canonical(&contact.authorization)?)
+                && challenge.purpose == "claim_ownership"
+                && challenge.expires_at > now()?,
+            "invalid ownership challenge context"
+        );
+        let root_proof = self.identity.sign_root(OwnershipProof {
+            version: 1,
+            server_id: challenge.server_id.clone(),
+            account_id: challenge.account_id.clone(),
+            device_id: challenge.device_id.clone(),
+            challenge_hash: hash(canonical(&challenge)?),
+        })?;
+        let request = OwnershipClaim {
+            claim_code: claim_code.into(),
+            contact,
+            device_proof: self.identity.sign_device(challenge)?,
+            root_proof,
+            idempotency_key: id(),
+        };
+        let session: Session = self
+            .post("/api/v1/ownership/claim", &request, false)
+            .await?;
+        session.membership.verify(&self.durable.server_key)?;
+        ensure!(
+            session.membership.value.server_id == self.durable.server_id
+                && session.membership.value.account_id
+                    == self.identity.authorization.value.account_id
+                && session.membership.value.device_id
+                    == self.identity.authorization.value.device_id
+                && session.membership.value.status == "active"
+                && session
+                    .membership
                     .value
                     .capabilities
                     .iter()
                     .any(|capability| capability == "server.manage"),
             "invalid ownership membership"
         );
-        self.durable
-            .session
-            .as_mut()
-            .context("not authenticated")?
-            .membership = membership;
+        self.durable.session = Some(session);
+        self.durable.ownership_state = "CLAIMED".into();
         self.persist(&[], &[]).await?;
         self.flush().await?;
         Ok(self.status())
@@ -1246,18 +1380,6 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite")
     }
     const PASS: &[u8] = b"independent test installation passphrase";
-    #[test]
-    fn ownership_claim_codes_are_strong_url_safe_and_unique() {
-        let first = Client::ownership_claim_code();
-        let second = Client::ownership_claim_code();
-        assert_eq!(first.len(), 43);
-        assert!(
-            first
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-        );
-        assert_ne!(first, second);
-    }
     #[tokio::test]
     async fn persisted_identity_lock_wrong_passphrase_and_missing_state() -> Result<()> {
         let temp = tempfile::tempdir()?;

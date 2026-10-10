@@ -1,51 +1,58 @@
-# ADR 0003: Authenticated one-time server ownership bootstrap
+# ADR 0003: Pre-membership one-time server ownership bootstrap
 
-- Status: Accepted
-- Date: 2026-10-04
+- Status: Accepted (supersedes the October 4 client-generated-code decision)
+- Date: 2026-10-10
 
 ## Context
 
 A public join proves control of an authorized Cords device but does not prove authority over the
-server deployment. Channel creation likewise must not silently imply server ownership. Cords needs
-a first-owner bootstrap that preserves account/device/server separation, does not expose account
-private keys, and cannot be replayed to replace an established owner.
-
-The client also needs a URL-only join experience. Requiring a user to copy a server fingerprint
-into the same form as the URL adds friction without providing an independent verification channel.
-Normal Web PKI and the persistent Cords signing identity remain separate requirements.
+server deployment. A fresh server must therefore have an explicit state before it admits ordinary
+members, and the first owner must prove both deployment access and control of a portable Cords
+account root. Client-generated configuration values allowed membership to exist before ownership
+and made server restart/configuration part of the claim protocol; that design is superseded here.
 
 ## Decision
 
-The desktop identity client generates a random 256-bit, unpadded base64url claim code. The operator
-places that code temporarily in the server configuration as
-`CORDS_AUTHENTICATION__OWNER_CLAIM_CODE` and restarts the service. The server validates a minimum
-32-character non-whitespace value, retains only its SHA-256 digest in service memory, and never
-logs it.
+After migrations and persistent server-identity binding, a fresh empty server atomically creates a
+singleton `UNCLAIMED` record and a cryptographically random 256-bit, unpadded base64url code. The
+plaintext is emitted once to the operator log. PostgreSQL stores only a domain-separated SHA-256
+verifier bound to the server ID. Restart reuses that verifier without re-emitting or rotating the
+code. No HTTP endpoint returns the code.
 
-An already authenticated device redeems the code at `/api/v1/ownership/claim`. The server compares
-the digest in constant time and, under one database transaction and ownership lock, records the
-authenticated account as the singleton owner and reissues server-signed membership credentials for
-that account's active devices. Owner credentials include `server.manage` and `channel.manage`.
-Future root-authorized devices for the owner account inherit those capabilities. A retry by the
-same owner is idempotent; another account receives a conflict. Ownership transfer and deletion are
-not implied and remain unavailable until separately specified.
+An operator may rotate an unused code only through the local
+`cords-server ownership-bootstrap rotate` command. A populated database with neither an ownership
+record nor bootstrap state refuses to serve until the operator explicitly runs
+`cords-server ownership-bootstrap initialize`; this creates an unclaimed verifier and never selects
+an existing account. An existing durable owner is migrated to `CLAIMED` without creating a code.
 
-For an unpinned origin, the client fetches discovery over certificate-validated HTTPS, verifies the
-server's signed metadata, and pins the discovered signing identity. Every later authentication
-repeats discovery and refuses an origin or server-identity mismatch. The fingerprint remains an
-inspectable identifier but is no longer user input. Invite-carried independent fingerprints remain
-a compatible future strengthening mechanism.
+The signed `GET /api/v1/ownership` response exposes only `UNCLAIMED` or `CLAIMED` plus a verifier
+generation. While unclaimed, ordinary join challenges and session creation are refused. A claimant
+requests a short-lived ownership challenge and submits:
 
-## Consequences
+- the one-time code;
+- the root-authorized device contact;
+- a device signature over the server challenge; and
+- an account-root signature binding that exact challenge, server, account and device.
 
-Possession of the configured code alone is insufficient: redemption also requires a valid Cords
-device session, and the resulting authority is bound to that account. Conversely, a compromised
-server configuration channel can expose an unredeemed code; operators must use a secret-capable
-configuration path, remove the value after redemption, and avoid shell history where applicable.
-The durable singleton owner record makes the configured value inert after the first successful
-claim.
+The server validates all proofs and compares the verifier in constant time. One PostgreSQL
+transaction and advisory lock then persist the contact, create the first owner membership, bind the
+singleton owner, clear the verifier, mark the bootstrap `CLAIMED`, consume the challenge and issue a
+session. A failed transaction leaves the server unclaimed and the code usable. Failed claims create
+no contacts, account heads, memberships, owner records or sessions.
 
-URL-only first use trusts the server identity authenticated by the requested HTTPS origin. It does
-not claim protection from a compromised CA or origin on first contact. Pinning detects later
-application-key substitution, and deployments needing independent first-contact verification can
-compare the displayed pinned fingerprint or eventually use a fingerprint-bearing invite.
+Ordinary members never receive `server.manage` or `channel.manage`. Later authorized devices for
+the owner account receive owner capabilities from the durable owner binding. Device revocation,
+account burning or membership inactivity does not delete ownership or recreate bootstrap state;
+ownership recovery or transfer requires a separately specified protocol.
+
+## Security and operational consequences
+
+The code is bearer bootstrap material and appears in operator-controlled logs by design. Operators
+must restrict log access and retention and rotate the code if it may have leaked before use. The
+client keeps the submitted code only for the request, redacts it from Rust debug output, and clears
+the UI field. Rate limits apply to challenge and claim attempts.
+
+Claims still use normal certificate-validated HTTPS. The client verifies signed discovery, pins the
+persistent server identity, and verifies the signed ownership state before sending the code. First
+contact therefore inherits normal Web PKI trust; an independent invite fingerprint remains a future
+strengthening mechanism.

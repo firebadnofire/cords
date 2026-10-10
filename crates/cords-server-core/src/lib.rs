@@ -1,6 +1,7 @@
 //! Phase 0 server identity and HTTP application services.
 
 pub mod messaging;
+pub mod ownership;
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};

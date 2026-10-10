@@ -74,14 +74,14 @@ Challenges are persisted, short-lived, single-use, and protected by a bounded
 authentication budget and per-device outstanding limit. Sessions are device-bound,
 expiring, stored by hash, and invalidated by device revocation.
 
-ADR 0003 defines first-owner bootstrap. A client generates a random 256-bit
-base64url claim code. The operator temporarily supplies it as
-`CORDS_AUTHENTICATION__OWNER_CLAIM_CODE`; the server retains only its SHA-256
-digest in memory and never logs the code. An authenticated device redeems it once
-at `/api/v1/ownership/claim`. PostgreSQL records a singleton owner account and
-reissues active-device memberships with `server.manage` and `channel.manage`.
-Same-owner retry is idempotent; another account conflicts. Ownership transfer and
-deletion are not implemented.
+ADR 0003 defines first-owner bootstrap. A fresh server persists explicit `UNCLAIMED`
+state, generates a random 256-bit base64url code, logs it once for the operator, and
+stores only a server-bound verifier. Ordinary joining is refused until a client
+redeems that code with device and account-root proofs. One PostgreSQL transaction
+creates the first membership with `server.manage` and `channel.manage`, clears the
+verifier, and marks the server `CLAIMED`. Local operator commands can rotate an
+unused code or explicitly initialize a populated legacy database without selecting
+an existing account. Ownership transfer and deletion are not implemented.
 
 ### Identity and local custody
 
@@ -124,7 +124,9 @@ restart, server restart, and PostgreSQL restart.
 
 ### Desktop client
 
-`App.svelte` coordinates real native state. The UI is split into rail, sidebar,
+`App.svelte` coordinates real native state. The identity-centric locked shell reads a non-secret
+device registry and opens independent per-account SQLite vaults through native create/unlock/
+migration/session commands. The UI is split into account picker, rail, sidebar,
 header, timeline/composer, details, identity, settings, administration, modal,
 avatar, and image-editor components. Unlock precedes the workspace. Server trust,
 ownership claim, authentication, channels, MLS roster operations, sending,
@@ -174,7 +176,8 @@ remain incomplete.
   revocation, generation transitions, expiry, and rollback validation.
 - `crates/cords-crypto`: OpenMLS adapter and local XChaCha20-Poly1305/Argon2id
   protection. OpenMLS types do not escape this crate.
-- `crates/cords-client-core`: installation state, unlocking, discovery/pinning,
+- `crates/cords-client-core`: device account registry, independent vault creation/unlocking,
+  non-destructive legacy migration, discovery/pinning,
   authentication, ownership, KeyPackages, channels, roster changes, outbox,
   synchronization, encrypted history, preferences, and notification reconnection.
 - `crates/cords-server-core`: persistent identity, discovery/health,

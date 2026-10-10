@@ -65,7 +65,6 @@ async fn main() -> Result<()> {
                     Ok(match operation {
                         "status"=>serde_json::to_value(client.status())?,
                         "trust"=>serde_json::to_value(client.trust(field(&request,"origin")?).await?)?,
-                        "ownership-code"=>json!(Client::ownership_claim_code()),
                         "claim-ownership"=>serde_json::to_value(client.claim_ownership(field(&request,"code")?).await?)?,
                         "authenticate"=>serde_json::to_value(client.authenticate().await?)?,
                         "publish"=>client.publish_key_package().await?,

@@ -7,16 +7,18 @@ use axum::{
 };
 use cords_crypto::conversation::ConversationCrypto;
 use cords_identity::Identity;
+use cords_protocol::messaging::OwnershipProof;
 use std::str::FromStr as _;
 use tower::ServiceExt as _;
 
 async fn fixture() -> Result<(Service, tempfile::TempDir)> {
-    fixture_with_claim(None).await
+    let (service, directory, _) = fixture_with_state(true).await?;
+    Ok((service, directory))
 }
 
-async fn fixture_with_claim(
-    ownership_claim_code: Option<&str>,
-) -> Result<(Service, tempfile::TempDir)> {
+async fn fixture_with_state(
+    claimed: bool,
+) -> Result<(Service, tempfile::TempDir, zeroize::Zeroizing<String>)> {
     let url = std::env::var("CORDS_TEST_DATABASE_URL")
         .context("set CORDS_TEST_DATABASE_URL to an isolated PostgreSQL service")?;
     let admin = sqlx::PgPool::connect(&url).await?;
@@ -47,10 +49,16 @@ async fn fixture_with_claim(
         crate::ServerIdentity::load_or_create(&directory.path().join("server.key"))?;
     assert!(!created);
     assert_eq!(loaded.server_id(), identity.server_id());
-    Ok((
-        Service::new(store, identity, 60, 900, ownership_claim_code)?,
-        directory,
-    ))
+    let crate::ownership::BootstrapOutcome::Generated(code) =
+        crate::ownership::ensure(&store, &identity.server_id()).await?
+    else {
+        anyhow::bail!("fresh fixture did not generate an ownership code")
+    };
+    if claimed {
+        sqlx::query("UPDATE server_ownership_bootstrap SET state='CLAIMED',claim_code_hash=NULL,claimed_at=1 WHERE singleton=TRUE")
+            .execute(store.pool()).await?;
+    }
+    Ok((Service::new(store, identity, 60, 900)?, directory, code))
 }
 fn identity() -> Result<(Identity, Contact)> {
     let identity = Identity::generate(now()?)?;
@@ -73,6 +81,202 @@ async fn join(s: &Service, identity: &Identity, contact: Contact) -> Result<Sess
         idempotency_key: id(),
     };
     Ok(session(State(s.clone()), Json(request)).await?.0)
+}
+
+async fn ownership_request(
+    s: &Service,
+    identity: &Identity,
+    contact: Contact,
+    code: &str,
+) -> Result<OwnershipClaim> {
+    let challenge = ownership_challenge(
+        State(s.clone()),
+        Json(ChallengeRequest {
+            contact: contact.clone(),
+            purpose: "claim_ownership".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    Ok(OwnershipClaim {
+        claim_code: code.into(),
+        contact,
+        device_proof: identity.sign_device(challenge.clone())?,
+        root_proof: identity.sign_root(OwnershipProof {
+            version: 1,
+            server_id: challenge.server_id.clone(),
+            account_id: challenge.account_id.clone(),
+            device_id: challenge.device_id.clone(),
+            challenge_hash: hash(canonical(&challenge)?),
+        })?,
+        idempotency_key: id(),
+    })
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
+async fn ownership_bootstrap_is_pre_membership_atomic_and_one_time() -> Result<()> {
+    let (s, _directory, code) = fixture_with_state(false).await?;
+    let signed = ownership_state(State(s.clone())).await?.0;
+    signed.verify(&encode(s.0.identity.signing_key.verifying_key().to_bytes()))?;
+    assert_eq!(signed.value.state, "UNCLAIMED");
+
+    let (owner, contact) = identity()?;
+    assert!(join(&s, &owner, contact.clone()).await.is_err());
+    let request = ownership_request(&s, &owner, contact, &code).await?;
+    let mut wrong_code = request.clone();
+    wrong_code.claim_code = "A".repeat(43);
+    assert_eq!(
+        claim_ownership(State(s.clone()), Json(wrong_code))
+            .await
+            .err()
+            .context("wrong bootstrap code was accepted")?
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM memberships")
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert_eq!(count, 0);
+
+    let (attacker, _) = identity()?;
+    let mut wrong_root = request.clone();
+    wrong_root.root_proof = attacker.sign_root(wrong_root.root_proof.value.clone())?;
+    assert!(
+        claim_ownership(State(s.clone()), Json(wrong_root))
+            .await
+            .is_err()
+    );
+    let claimed = claim_ownership(State(s.clone()), Json(request.clone()))
+        .await?
+        .0;
+    claimed
+        .membership
+        .verify(&encode(s.0.identity.signing_key.verifying_key().to_bytes()))?;
+    assert!(
+        claimed
+            .membership
+            .value
+            .capabilities
+            .iter()
+            .any(|capability| capability == "server.manage")
+    );
+    assert!(
+        claim_ownership(State(s.clone()), Json(request))
+            .await
+            .is_err()
+    );
+    let stored: (String, Option<String>) = sqlx::query_as(
+        "SELECT state,claim_code_hash FROM server_ownership_bootstrap WHERE singleton=TRUE",
+    )
+    .fetch_one(s.0.store.pool())
+    .await?;
+    assert_eq!(stored, ("CLAIMED".into(), None));
+
+    let reloaded = Service::new(s.0.store.clone(), s.0.identity.clone(), 60, 900)?;
+    assert_eq!(
+        ownership_state(State(reloaded)).await?.0.value.state,
+        "CLAIMED"
+    );
+    sqlx::query("UPDATE memberships SET active=FALSE WHERE device_id=$1")
+        .bind(&owner.authorization.value.device_id)
+        .execute(s.0.store.pool())
+        .await?;
+    assert!(matches!(
+        crate::ownership::rotate(&s.0.store, &s.0.identity.server_id()).await,
+        Err(crate::ownership::BootstrapError::AlreadyClaimed)
+    ));
+    assert_eq!(
+        ownership_state(State(s.clone())).await?.0.value.state,
+        "CLAIMED"
+    );
+    let (member, member_contact) = identity()?;
+    let member = join(&s, &member, member_contact).await?;
+    assert!(
+        !member
+            .membership
+            .value
+            .capabilities
+            .iter()
+            .any(|capability| { capability == "server.manage" || capability == "channel.manage" })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
+async fn simultaneous_valid_ownership_claims_have_one_winner() -> Result<()> {
+    let (s, _directory, code) = fixture_with_state(false).await?;
+    let (a, contact_a) = identity()?;
+    let (b, contact_b) = identity()?;
+    let request_a = ownership_request(&s, &a, contact_a, &code).await?;
+    let request_b = ownership_request(&s, &b, contact_b, &code).await?;
+    let (a, b) = tokio::join!(
+        claim_ownership(State(s.clone()), Json(request_a)),
+        claim_ownership(State(s.clone()), Json(request_b))
+    );
+    assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+    let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM server_ownership")
+        .fetch_one(s.0.store.pool())
+        .await?;
+    let memberships: i64 = sqlx::query_scalar("SELECT count(*) FROM memberships")
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert_eq!((owners, memberships), (1, 1));
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
+async fn bootstrap_restart_rotation_and_legacy_initialization_are_explicit() -> Result<()> {
+    let (s, _directory, original) = fixture_with_state(false).await?;
+    assert_eq!(original.len(), 43);
+    let before: (String, i64) = sqlx::query_as(
+        "SELECT claim_code_hash,generation FROM server_ownership_bootstrap WHERE singleton=TRUE",
+    )
+    .fetch_one(s.0.store.pool())
+    .await?;
+    assert!(matches!(
+        crate::ownership::ensure(&s.0.store, &s.0.identity.server_id()).await?,
+        crate::ownership::BootstrapOutcome::Existing
+    ));
+    let unchanged: (String, i64) = sqlx::query_as(
+        "SELECT claim_code_hash,generation FROM server_ownership_bootstrap WHERE singleton=TRUE",
+    )
+    .fetch_one(s.0.store.pool())
+    .await?;
+    assert_eq!(before, unchanged);
+    let rotated = crate::ownership::rotate(&s.0.store, &s.0.identity.server_id()).await?;
+    let after: (String, i64) = sqlx::query_as(
+        "SELECT claim_code_hash,generation FROM server_ownership_bootstrap WHERE singleton=TRUE",
+    )
+    .fetch_one(s.0.store.pool())
+    .await?;
+    assert_ne!(original.as_str(), rotated.as_str());
+    assert_ne!(before.0, after.0);
+    assert_eq!(after.1, 2);
+
+    sqlx::query("UPDATE server_ownership_bootstrap SET state='CLAIMED',claim_code_hash=NULL,claimed_at=1 WHERE singleton=TRUE")
+        .execute(s.0.store.pool()).await?;
+    let (member, contact) = identity()?;
+    join(&s, &member, contact).await?;
+    sqlx::query("DELETE FROM server_ownership_bootstrap")
+        .execute(s.0.store.pool())
+        .await?;
+    assert!(matches!(
+        crate::ownership::ensure(&s.0.store, &s.0.identity.server_id()).await,
+        Err(crate::ownership::BootstrapError::LegacyInitializationRequired)
+    ));
+    assert!(matches!(
+        crate::ownership::initialize_legacy(&s.0.store, &s.0.identity.server_id()).await?,
+        crate::ownership::BootstrapOutcome::Generated(_)
+    ));
+    let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM server_ownership")
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert_eq!(owners, 0);
+    Ok(())
 }
 
 #[tokio::test]
@@ -181,70 +385,6 @@ fn headers(session: &Session) -> Result<HeaderMap> {
         format!("Bearer {}", session.token).parse()?,
     );
     Ok(headers)
-}
-
-#[tokio::test]
-#[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
-async fn authenticated_one_time_claim_grants_account_owner_capabilities() -> Result<()> {
-    const CODE: &str = "owner-claim-code-with-at-least-32-characters";
-    let (s, _directory) = fixture_with_claim(Some(CODE)).await?;
-    let (owner, contact) = identity()?;
-    let owner_session = join(&s, &owner, contact).await?;
-    let claimed = claim_ownership(
-        State(s.clone()),
-        headers(&owner_session)?,
-        Json(OwnershipClaim {
-            claim_code: CODE.into(),
-            idempotency_key: id(),
-        }),
-    )
-    .await?
-    .0;
-    claimed.verify(&encode(s.0.identity.signing_key.verifying_key().to_bytes()))?;
-    assert_eq!(
-        claimed.value.account_id,
-        owner.authorization.value.account_id
-    );
-    assert!(
-        claimed
-            .value
-            .capabilities
-            .iter()
-            .any(|capability| capability == "server.manage")
-    );
-    s.authenticate_token(&owner_session.token, "channel.manage")
-        .await?;
-
-    let repeated = claim_ownership(
-        State(s.clone()),
-        headers(&owner_session)?,
-        Json(OwnershipClaim {
-            claim_code: CODE.into(),
-            idempotency_key: id(),
-        }),
-    )
-    .await?
-    .0;
-    assert_eq!(repeated.value.account_id, claimed.value.account_id);
-
-    let (other, contact) = identity()?;
-    let other_session = join(&s, &other, contact).await?;
-    assert_eq!(
-        claim_ownership(
-            State(s.clone()),
-            headers(&other_session)?,
-            Json(OwnershipClaim {
-                claim_code: CODE.into(),
-                idempotency_key: id(),
-            }),
-        )
-        .await
-        .err()
-        .context("second account claimed server ownership")?
-        .0,
-        StatusCode::CONFLICT
-    );
-    Ok(())
 }
 
 #[tokio::test]
@@ -488,7 +628,7 @@ async fn route_permissions_sequence_concurrency_and_restart() -> Result<()> {
         .0,
         StatusCode::CONFLICT
     );
-    let reloaded = Service::new(s.0.store.clone(), s.0.identity.clone(), 60, 900, None)?;
+    let reloaded = Service::new(s.0.store.clone(), s.0.identity.clone(), 60, 900)?;
     let events = history(
         State(reloaded),
         headers(&sa)?,
@@ -672,7 +812,7 @@ async fn root_revocation_invalidates_sessions_and_rejects_rollback() -> Result<(
         .fetch_one(s.0.store.pool())
         .await?;
     assert_eq!(revoked, 1);
-    let reloaded = Service::new(s.0.store.clone(), s.0.identity.clone(), 60, 900, None)?;
+    let reloaded = Service::new(s.0.store.clone(), s.0.identity.clone(), 60, 900)?;
     assert!(
         reloaded
             .authenticate_token(&issued.token, "channel.read")

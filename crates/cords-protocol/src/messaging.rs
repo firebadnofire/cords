@@ -224,16 +224,45 @@ pub struct SessionRequest {
     pub proof: Signed<Challenge>,
     pub idempotency_key: String,
 }
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnershipState {
+    pub version: u16,
+    pub server_id: String,
+    pub state: String,
+    pub generation: u64,
+}
+impl Statement for OwnershipState {
+    const DOMAIN: &'static str = "CORDS-OWNERSHIP-STATE-V1";
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnershipProof {
+    pub version: u16,
+    pub server_id: String,
+    pub account_id: String,
+    pub device_id: String,
+    pub challenge_hash: String,
+}
+impl Statement for OwnershipProof {
+    const DOMAIN: &'static str = "CORDS-OWNERSHIP-PROOF-V1";
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnershipClaim {
     pub claim_code: String,
+    pub contact: Contact,
+    pub device_proof: Signed<Challenge>,
+    pub root_proof: Signed<OwnershipProof>,
     pub idempotency_key: String,
 }
 impl std::fmt::Debug for OwnershipClaim {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OwnershipClaim")
             .field("claim_code", &"[REDACTED]")
+            .field("contact", &self.contact)
+            .field("device_proof", &self.device_proof)
+            .field("root_proof", &self.root_proof)
             .field("idempotency_key", &self.idempotency_key)
             .finish()
     }
@@ -375,14 +404,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ownership_claim_debug_redacts_the_secret() {
+    fn ownership_claim_debug_redacts_the_secret() -> Result<(), Box<dyn std::error::Error>> {
+        let contact: Contact = serde_json::from_value(serde_json::json!({
+            "authorization": {"value": {"version":1,"account_id":"a","root_public_key":"r","device_id":"d","device_public_key":"k","generation":1,"created_at":1,"expires_at":null,"previous_record_hash":null,"capabilities":[],"revoked":false},"signature":"s"},
+            "mls_binding": {"value": {"version":1,"account_id":"a","device_id":"d","authorization_hash":"h","mls_public_key":"m"},"signature":"s"}
+        }))?;
+        let challenge = Challenge {
+            version: 1,
+            challenge_id: "c".into(),
+            server_id: "s".into(),
+            account_id: "a".into(),
+            device_id: "d".into(),
+            authorization_hash: "h".into(),
+            purpose: "claim_ownership".into(),
+            nonce: "n".into(),
+            expires_at: 2,
+        };
         let request = OwnershipClaim {
             claim_code: "secret-owner-code-that-must-not-appear".into(),
+            contact,
+            device_proof: Signed {
+                value: challenge.clone(),
+                signature: "s".into(),
+            },
+            root_proof: Signed {
+                value: OwnershipProof {
+                    version: 1,
+                    server_id: "s".into(),
+                    account_id: "a".into(),
+                    device_id: "d".into(),
+                    challenge_hash: hash(canonical(&challenge)?),
+                },
+                signature: "s".into(),
+            },
             idempotency_key: "request-id".into(),
         };
         let debug = format!("{request:?}");
         assert!(!debug.contains(&request.claim_code));
         assert!(debug.contains("[REDACTED]"));
+        Ok(())
     }
     #[test]
     fn canonical_vector_and_float_rejection() -> Result<(), InvalidObject> {

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { KeyRound, LockKeyhole } from '@lucide/svelte';
+  import { LockKeyhole } from '@lucide/svelte';
   import { onMount } from 'svelte';
+  import AccountPicker from './components/AccountPicker.svelte';
   import Modal from './components/Modal.svelte';
   import Settings from './components/Settings.svelte';
   import Admin from './components/Admin.svelte';
@@ -26,6 +27,11 @@
   } from './model';
 
   let status: Status | null = null;
+  type LocalAccount = { account_id: string; nickname: string; avatar_data: string };
+  let accounts: LocalAccount[] = [];
+  let selectedAccount = '';
+  let activeAccount = '';
+  let legacyVault = false;
   let identity: Identity | null = null;
   let prefs = defaults();
   let channels: Channel[] = [];
@@ -36,12 +42,14 @@
   let overlay: 'connect' | 'settings' | 'admin' | 'create' | null = null;
   let confirm: { title: string; description: string; execute: () => Promise<void> } | null = null;
   let origin = '';
-  let passphrase = '';
+  let removalPassword = '';
+  let removingAccount = false;
   let name = '';
   let body = '';
   let query = '';
   let error = '';
   let connectionError = '';
+  let claimCode = '';
   let connected = false;
   let busy = false;
   let refreshing = false;
@@ -50,6 +58,74 @@
 
   $: selected = selectedChannel(channels, route);
   $: manager = canManage(selected, status, identity);
+
+  async function listAccounts() {
+    const result = await invoke<{ accounts: LocalAccount[]; legacy_vault: boolean }>(
+      'list_accounts',
+    );
+    accounts = result.accounts;
+    legacyVault = result.legacy_vault;
+  }
+  async function finishUnlock(opened: Status, accountId: string) {
+    status = opened;
+    activeAccount = accountId || opened.account_id;
+    selectedAccount = activeAccount;
+    const view = await invoke<View>('conversation_view', { route: null });
+    prefs = preferences(view.preferences);
+    identity = view.identity;
+    origin = opened.origin;
+    if (opened.server_id && opened.ownership_state === 'CLAIMED') {
+      await action('authenticate');
+      channels = await action<Channel[]>('channels');
+    } else overlay = 'connect';
+  }
+  function clearSensitiveUi() {
+    status = null;
+    identity = null;
+    prefs = defaults();
+    channels = [];
+    contacts = [];
+    messages = [];
+    route = '';
+    body = '';
+    origin = '';
+    claimCode = '';
+    connected = false;
+    connectionError = '';
+    overlay = null;
+    confirm = null;
+  }
+  async function returnToPicker(actionName: 'lock' | 'switch' | 'sign_out') {
+    const previous = await invoke<string | null>('session_control', { action: actionName });
+    clearSensitiveUi();
+    activeAccount = '';
+    selectedAccount = actionName === 'switch' ? '' : (previous ?? selectedAccount);
+    await listAccounts();
+  }
+  async function unlockAccount(accountId: string, password: string) {
+    const opened = await invoke<Status>('unlock_account', { accountId, password });
+    await finishUnlock(opened, accountId);
+  }
+  async function createAccount(nickname: string, password: string, allowWeak: boolean) {
+    const opened = await invoke<Status>('create_account', { nickname, password, allowWeak });
+    await listAccounts();
+    await finishUnlock(opened, opened.account_id);
+  }
+  async function migrateAccount(
+    nickname: string,
+    currentPassword: string,
+    password: string,
+    allowWeak: boolean,
+  ) {
+    const opened = await invoke<Status>('migrate_legacy_account', {
+      nickname,
+      currentPassword: currentPassword || null,
+      newPassword: password,
+      allowWeak,
+    });
+    await listAccounts();
+    await finishUnlock(opened, opened.account_id);
+  }
 
   async function action<T>(kind: string, fields: Record<string, unknown> = {}): Promise<T> {
     return invoke<T>('conversation_action', { action: { kind, ...fields } });
@@ -65,7 +141,12 @@
       connected = view.connected;
       connectionError = view.error ?? '';
     } catch (caught) {
-      error = String(caught);
+      const message = String(caught);
+      if (/unlock/i.test(message)) {
+        clearSensitiveUi();
+        activeAccount = '';
+        await listAccounts();
+      } else error = message;
     } finally {
       refreshing = false;
     }
@@ -83,28 +164,15 @@
       busy = false;
     }
   }
-  async function unlock() {
-    const material = passphrase || null;
-    passphrase = '';
-    await run(async () => {
-      status = await invoke<Status>('open_client', { passphrase: material });
-      const view = await invoke<View>('conversation_view', { route: null });
-      prefs = preferences(view.preferences);
-      identity = view.identity;
-      origin = status.origin;
-      if (status.server_id) {
-        await action('authenticate');
-        channels = await action<Channel[]>('channels');
-      } else overlay = 'connect';
-    });
-  }
   async function connect() {
     await run(async () => {
-      await action('trust', { origin });
-      status = await action<Status>('authenticate');
-      channels = await action<Channel[]>('channels');
-      overlay = null;
-      section = 'server';
+      status = await action<Status>('trust', { origin });
+      if (status.ownership_state === 'CLAIMED') {
+        status = await action<Status>('authenticate');
+        channels = await action<Channel[]>('channels');
+        overlay = null;
+        section = 'server';
+      }
     });
   }
   async function selectChannel(id: string) {
@@ -137,8 +205,11 @@
     prefs = normalized;
   }
   async function claimOwnership(code: string) {
-    await action('claim_ownership', { code });
-    await refresh();
+    status = await action<Status>('claim_ownership', { code });
+    claimCode = '';
+    channels = await action<Channel[]>('channels');
+    overlay = null;
+    section = 'server';
   }
   function revoke() {
     confirm = {
@@ -162,46 +233,35 @@
     };
   }
   onMount(() => {
+    void listAccounts().catch((caught) => (error = String(caught)));
     const timer = setInterval(() => void refresh(), 1000);
     return () => clearInterval(timer);
   });
+  let activityPending = false;
+  function activity() {
+    if (!status || activityPending) return;
+    activityPending = true;
+    void invoke('record_activity').finally(() => {
+      window.setTimeout(() => (activityPending = false), 1000);
+    });
+  }
 </script>
 
 <svelte:head><title>Cords — Right on the wire</title></svelte:head>
+<svelte:window on:pointerdown={activity} on:keydown={activity} />
 
 {#if !status}
-  <div class="startup-shell" data-theme={prefs.theme}>
-    <main class="startup-surface">
-      <section class="startup-card">
-        <div class="startup-mark"><LockKeyhole size={30} /></div>
-        <p class="eyebrow">Portable identity</p>
-        <h1>Unlock this installation</h1>
-        <p>
-          Your account and device keys stay on this device. Unlock local encrypted state before
-          connecting to a server.
-        </p>
-        <form on:submit|preventDefault={unlock}>
-          <label
-            >Local storage passphrase<input
-              type="password"
-              autocomplete="current-password"
-              bind:value={passphrase}
-            /></label
-          >
-          <p class="hint">
-            Leave empty to use the operating-system credential store. A new installation is
-            initialized on first unlock.
-          </p>
-          <button class="primary" disabled={busy}
-            ><KeyRound size={17} />{busy ? 'Opening…' : 'Unlock or initialize'}</button
-          >
-        </form>
-        {#if error}<div role="alert" class="error">
-            <strong>Could not open this installation</strong>
-            <p>{error}</p>
-          </div>{/if}
-      </section>
-    </main>
+  <div data-theme={prefs.theme}>
+    <AccountPicker
+      {accounts}
+      bind:selected={selectedAccount}
+      {legacyVault}
+      unlock={unlockAccount}
+      create={createAccount}
+      migrate={migrateAccount}
+      assess={(password, nickname) => invoke('check_password', { password, nickname })}
+    />
+    {#if error}<div class="startup-global-error error" role="alert">{error}</div>{/if}
   </div>
 {:else}
   <div
@@ -250,6 +310,10 @@
           preferences={prefs}
           {connected}
           openSettings={() => (overlay = 'settings')}
+          lockAccount={() => void returnToPicker('lock')}
+          switchAccount={() => void returnToPicker('switch')}
+          signOut={() => void returnToPicker('sign_out')}
+          removeAccount={() => (removingAccount = true)}
         />
       </aside>
       <div class="conversation-column">
@@ -312,6 +376,7 @@
         {status}
         close={() => (overlay = null)}
         save={savePreferences}
+        lockNow={() => returnToPicker('lock')}
         {revoke}
       />{/if}
     {#if overlay === 'admin'}<Admin
@@ -322,8 +387,6 @@
         close={() => (overlay = null)}
         create={createChannel}
         select={selectChannel}
-        generateOwnershipCode={() => action<string>('ownership_code')}
-        {claimOwnership}
       />{/if}
     {#if overlay === 'connect'}<Modal title="Connection and trust" close={() => (overlay = null)}
         ><div class="modal-body connect-dialog">
@@ -339,13 +402,40 @@
                 bind:value={origin}
                 required
               /></label
-            ><button class="primary" disabled={busy || identity?.revoked}
-              >Trust and authenticate</button
+            ><button class="primary" disabled={busy || identity?.revoked}>Trust and continue</button
             >
           </form>
+          {#if status?.ownership_state === 'UNCLAIMED'}
+            <section class="settings-card ownership-claim">
+              <h2>Claim this unclaimed server</h2>
+              <p>
+                Enter the one-time code generated by the server. It appears only in the initial
+                bootstrap log, or after an operator runs the local rotate command.
+              </p>
+              <form
+                on:submit|preventDefault={() =>
+                  void run(async () => {
+                    const code = claimCode;
+                    claimCode = '';
+                    await claimOwnership(code);
+                  })}
+              >
+                <label
+                  >One-time claim code<input
+                    bind:value={claimCode}
+                    required
+                    minlength="43"
+                    maxlength="43"
+                    spellcheck="false"
+                    autocomplete="off"
+                  /></label
+                ><button class="primary" disabled={busy || identity?.revoked}>Claim server</button>
+              </form>
+            </section>
+          {/if}
           <div class="account-banner">
             <LockKeyhole size={18} /><span
-              >This build supports one pinned server per installation. Existing encrypted state is
+              >This build supports one pinned server per local account. Existing encrypted state is
               never reset to switch servers.</span
             >
           </div>
@@ -368,6 +458,41 @@
           >{#if error}<p role="alert" class="error">{error}</p>{/if}
         </form></Modal
       >{/if}
+    {#if removingAccount}<Modal
+        title="Remove Account From Device"
+        close={() => (removingAccount = false)}
+      >
+        <form
+          class="modal-body"
+          on:submit|preventDefault={() =>
+            void run(async () => {
+              await invoke('remove_local_account', {
+                accountId: activeAccount,
+                password: removalPassword,
+              });
+              removalPassword = '';
+              removingAccount = false;
+              clearSensitiveUi();
+              activeAccount = '';
+              selectedAccount = '';
+              await listAccounts();
+            })}
+        >
+          <p>
+            This deletes only this device’s encrypted local vault and key material. It does not
+            delete the identity elsewhere, revoke any device, or burn the account root key.
+          </p>
+          <label
+            >Confirm with the local storage password<input
+              type="password"
+              bind:value={removalPassword}
+              autocomplete="current-password"
+              required
+            /></label
+          >
+          <button class="danger" disabled={!removalPassword}>Remove local account</button>
+        </form>
+      </Modal>{/if}
     {#if confirm}<Modal
         title={confirm.title}
         close={() => {

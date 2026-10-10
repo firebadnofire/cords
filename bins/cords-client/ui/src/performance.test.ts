@@ -26,6 +26,7 @@ describe('representative conversation performance guard', () => {
       device_id: 'device-a',
       origin: 'https://server.example:4848',
       server_id: 'server',
+      ownership_state: 'CLAIMED',
       cursors: {},
     } satisfies Status;
     const runtime = globalThis as typeof globalThis & {

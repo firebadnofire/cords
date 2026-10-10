@@ -11,14 +11,21 @@ Updated October 4, 2026. The React `cords-ui` sibling is the visual and interact
 | `ConversationView` | `ConversationView.svelte` | Real decrypted local history and native send command | Sending, search and copy actions work; replies, edits, deletion, reports and attachments are development-marked |
 | `ConversationDetails` | `ConversationDetails.svelte` | Real server pin, MLS epoch/roster and KeyPackage commands | Add/remove devices and publish work where authorized; retention remains development-marked |
 | `IdentityPanel` | `IdentityPanel.svelte` | Real account/device/session/connection state | Functional and never receives private key material |
-| `AddServerDialog` | Donor-derived connection/trust dialog | Existing trust and authenticate commands | URL-only signed discovery, initial pin and authentication work; the core still permits one pinned server per installation |
+| `AddServerDialog` | Donor-derived connection/trust dialog | Existing trust and authenticate commands | URL-only signed discovery, initial pin and authentication work; the core still permits one pinned server per local account vault |
 | Settings overlay and preference pages | `Settings.svelte` | Encrypted local preferences plus public identity/session views | Profile/Jewel image, theme, compact mode and reduced motion work; all other future controls remain visible and lime-marked |
 | Identity and recovery pages | Settings identity/recovery sections | Real current authorization, generation and revocation state | Current-device revocation works; root unlock, enrollment and recovery are development-marked and do not simulate crypto |
-| Server administration | `Admin.svelte`, `AdminUnavailable.svelte` | Real contacts, capabilities, channels, origin and pin | Overview, ownership claim, contact search, channel creation/selection and real read-only state work; unavailable mutations remain visible and marked |
+| Server administration | `Admin.svelte`, `AdminUnavailable.svelte` | Real contacts, capabilities, channels, origin and pin | Overview, contact search, channel creation/selection and real read-only state work; first-owner claim occurs before membership in the connection dialog; unavailable mutations remain visible and marked |
 | Dialogs, menus and donor primitives | Native `<dialog>`, semantic menus and shared CSS primitives | Local UI state | Navigation and safe copy actions work; inactive actions use one semantic development state |
 | Donor fixtures | Not imported | None | Empty/unavailable states replace fake membership, owner, presence, audit, moderation and integration claims |
 
 The complete donor navigation remains present: account, identity/devices, profile image, recovery, Jewel, server trust, local history, appearance, accessibility, notifications, privacy, blocked users, connections, devices, sessions, security and advanced settings; plus server overview, members, roles, channels, invites, moderation, audit log, notifications, integrations, advanced and ownership.
+
+The locked shell is now identity-centric. It lists only device-registry presentation metadata,
+reveals a password field for the selected account, and opens one independent native vault. Add
+Account requires a confirmed 12-character password and presents an overridable local weak-password
+warning. Lock, Switch Account, Sign Out, and authenticated Remove Account From Device have separate
+native paths. Inactivity and suspend-gap policies drop native client state and connections; reliable
+OS-session-lock events still require per-platform integration and packaged validation.
 
 ## Development-only controls
 

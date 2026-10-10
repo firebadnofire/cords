@@ -1,5 +1,6 @@
 //! UI-facing Phase 0 client services. No private key material crosses this API.
 
+pub mod accounts;
 pub mod client;
 
 use cords_protocol::{PROTOCOL_V1, ServerOrigin, SignedServerMetadataV1};

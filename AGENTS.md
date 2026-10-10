@@ -969,11 +969,19 @@ The desktop client uses SQLite for:
 
 Account private keys, device private keys, MLS state, attachment keys, and recovery material MUST be encrypted at rest.
 
-The client generates a random local storage master key. Preferred storage:
+The client generates a random local storage master key for each local account vault. Desktop
+accounts MUST require a user-chosen local storage password of at least 12 Unicode scalar values.
+Argon2id derives an independent wrapping key using an independent salt, and authenticated
+encryption wraps the vault master key. An operating-system credential store or hardware-backed
+provider MAY supplement this password protection but MUST NOT silently bypass or replace the
+mandatory password. Legacy passwordless OS-store vaults may be opened only for explicit,
+non-destructive migration.
 
-1. Operating-system credential store.
-2. Hardware-backed credential provider where available.
-3. User passphrase wrapping with Argon2id when no credential store is available.
+Several accounts on one device MUST use independent vault master keys, databases, account/device
+key material, sessions, and connection state. Locked-screen metadata MUST be limited to an explicit
+non-secret registry. Locking MUST remove native access to private-key operations and decrypted
+state; it is not a WebView overlay. Removing a local account MUST NOT be represented as device
+revocation, identity deletion, or root-key destruction. See ADR 0004.
 
 A fallback that stores the master key beside the encrypted database is not acceptable.
 

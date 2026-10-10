@@ -265,7 +265,12 @@ Algorithm compatibility never overrides this table. Two roles using Ed25519, X25
 
 Long-lived private keys, recovery material, MLS state, attachment keys retained locally, and equivalent secret state must be encrypted at rest using a local master key or an equivalent platform protection mechanism.
 
-The local master key must not be stored unprotected beside the database it protects. Appropriate protection mechanisms include operating-system credential stores, hardware-backed providers, or passphrase-derived wrapping where platform facilities are unavailable or deliberately not used.
+The local master key must not be stored unprotected beside the database it protects. Each local
+account vault requires an independent master key and independent password-derived wrapping key.
+Desktop account passwords are local vault-unlock credentials, not account roots, device
+credentials, recovery authority, or server authentication credentials. Operating-system credential
+stores and hardware-backed providers may supplement password wrapping but must not make the
+mandatory account password irrelevant. See ADR 0004.
 
 The WebView/presentation layer must not receive long-lived private keys or raw MLS state. Cryptographic operations belong behind the native client-core boundary.
 

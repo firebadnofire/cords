@@ -186,6 +186,14 @@ pub(super) async fn revoke(
         .bind(&record.account_id)
         .execute(&mut *tx)
         .await?;
+    let locked: bool = sqlx::query_scalar(
+        "SELECT locked_down FROM server_owner_control WHERE singleton=TRUE FOR SHARE",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if locked {
+        return Err(super::ApiError(super::StatusCode::CONFLICT, "OWNER_RECOVERY_REQUIRED"));
+    }
     let head: String =
         sqlx::query_scalar("SELECT authorization_record FROM account_heads WHERE account_id=$1")
             .bind(&record.account_id)

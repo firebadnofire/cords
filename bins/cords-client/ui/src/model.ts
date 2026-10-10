@@ -19,6 +19,15 @@ export type MembershipRequest = {
   device_id: string;
   requested_at: number;
   status: string;
+  identity_burned: boolean;
+};
+export type ServerListing = {
+  origin: string;
+  server_id: string;
+  ownership_state: string;
+  active: boolean;
+  archived: boolean;
+  remote_drop_confirmed: boolean;
 };
 export type Status = {
   account_id: string;
@@ -26,6 +35,8 @@ export type Status = {
   origin: string;
   server_id: string;
   ownership_state: string;
+  ownership_generation: number;
+  burned: boolean;
   join_policy: string[];
   cursors: Record<string, number>;
 };

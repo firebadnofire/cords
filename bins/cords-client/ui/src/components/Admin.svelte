@@ -46,6 +46,7 @@
   let busy = false;
   let selectedContact: Contact | null = null;
   let selectedChannel = channels[0]?.channel_id ?? '';
+  let burnedApprovalDevice = '';
   $: manager = identity?.membership?.capabilities.includes('server.manage') ?? false;
   const pending = 'Not implemented yet';
   async function createChannel() {
@@ -163,13 +164,17 @@
               <h2>Membership requests</h2>
               {#each membershipRequests as request (request.device_id)}
                 <div class="override-row">
-                  <span><strong>{request.account_id}</strong><br /><small>{request.device_id} · {request.status}</small></span>
+                  <span><strong>{request.account_id}</strong><br /><small>{request.device_id} · {request.status}</small>{#if request.identity_burned}<br /><strong class="error">Identity was burned. Its key was declared untrustworthy. Approve only after independent, exceptional verification.</strong>{/if}</span>
                   <button disabled={busy} on:click={async () => {
+                    if (request.identity_burned && burnedApprovalDevice !== request.device_id) {
+                      burnedApprovalDevice = request.device_id;
+                      return;
+                    }
                     busy = true; error = '';
-                    try { await decideMembership(request.device_id, true); }
+                    try { await decideMembership(request.device_id, true); burnedApprovalDevice = ''; }
                     catch (caught) { error = String(caught); }
                     finally { busy = false; }
-                  }}>Approve</button>
+                  }}>{request.identity_burned && burnedApprovalDevice === request.device_id ? 'Confirm exceptional approval' : 'Approve'}</button>
                   <button disabled={busy || request.status !== 'pending'} on:click={async () => {
                     busy = true; error = '';
                     try { await decideMembership(request.device_id, false); }

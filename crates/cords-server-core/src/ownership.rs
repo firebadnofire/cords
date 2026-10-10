@@ -21,6 +21,8 @@ pub enum BootstrapError {
     AlreadyClaimed,
     #[error("server ownership bootstrap has not been initialized")]
     NotInitialized,
+    #[error("operator recovery codes can only be generated during OWNER_LOCKDOWN")]
+    NotLockedDown,
     #[error("system clock is before the Unix epoch")]
     Clock,
     #[error("ownership bootstrap storage operation failed")]
@@ -51,6 +53,42 @@ fn code() -> Zeroizing<String> {
 pub fn claim_code_hash(server_id: &str, code: &str) -> String {
     let material = Zeroizing::new(format!("{HASH_DOMAIN}\0{server_id}\0{code}"));
     hash(material.as_bytes())
+}
+
+#[must_use]
+pub fn recovery_code_hash(server_id: &str, code: &str) -> String {
+    let material = Zeroizing::new(format!("CORDS-OWNER-RECOVERY-CODE-V1\0{server_id}\0{code}"));
+    hash(material.as_bytes())
+}
+
+/// Generate a fresh, one-use operator recovery code without reopening bootstrap.
+/// The plaintext is returned only to the local administrative caller.
+/// # Errors
+/// Returns an error unless the server is locked down or storage is unavailable.
+pub async fn rotate_recovery_code(
+    store: &PostgresStore,
+    server_id: &str,
+) -> Result<Zeroizing<String>, BootstrapError> {
+    let mut tx = store.pool().begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('server-ownership',0))")
+        .execute(&mut *tx)
+        .await?;
+    let locked: Option<bool> = sqlx::query_scalar(
+        "SELECT locked_down FROM server_owner_control WHERE singleton=TRUE FOR UPDATE",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if locked != Some(true) {
+        return Err(BootstrapError::NotLockedDown);
+    }
+    let code = code();
+    sqlx::query("UPDATE server_owner_control SET recovery_code_hash=$1,recovery_generation=recovery_generation+1,recovery_issued_at=$2 WHERE singleton=TRUE AND locked_down")
+        .bind(recovery_code_hash(server_id, &code))
+        .bind(now()?)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(code)
 }
 
 /// Ensure a fresh database has durable unclaimed state. Existing populated databases fail closed.

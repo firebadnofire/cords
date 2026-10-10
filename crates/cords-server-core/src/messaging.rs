@@ -286,6 +286,14 @@ impl Service {
         {
             return Err(denied());
         }
+        let locked: bool = sqlx::query_scalar(
+            "SELECT locked_down FROM server_owner_control WHERE singleton=TRUE FOR SHARE",
+        )
+        .fetch_one(&mut **tx)
+        .await?;
+        if locked {
+            return Err(ApiError(StatusCode::CONFLICT, "OWNER_RECOVERY_REQUIRED"));
+        }
         if let Some((route, manage)) = route {
             let creator: String =
                 sqlx::query_scalar("SELECT creator FROM channels WHERE id=$1 FOR UPDATE")
@@ -372,6 +380,12 @@ pub fn router(service: Service) -> Router {
         .route("/api/v1/ownership/challenge", post(ownership_challenge))
         .route("/api/v1/ownership/claim", post(claim_ownership))
         .route("/api/v1/devices/revoke", post(lifecycle::revoke))
+        .route("/api/v1/membership/drop", post(departure::drop_membership))
+        .route("/api/v1/identity/burn", post(departure::burn_identity))
+        .route("/api/v1/ownership/successor", post(departure::designate_successor))
+        .route("/api/v1/ownership/successor/accept", post(departure::accept_successor))
+        .route("/api/v1/ownership/recovery/challenge", post(departure::recovery_challenge))
+        .route("/api/v1/ownership/recovery/claim", post(departure::recover_owner))
         .route("/api/v1/members", get(members))
         .route("/api/v1/membership-requests", get(membership_requests))
         .route(
@@ -514,6 +528,14 @@ async fn challenge(s: &Service, request: ChallengeRequest) -> Result<Challenge> 
 }
 
 async fn require_ownership_state(s: &Service, expected: &str) -> Result<()> {
+    let locked: bool = sqlx::query_scalar(
+        "SELECT locked_down FROM server_owner_control WHERE singleton=TRUE",
+    )
+    .fetch_one(s.0.store.pool())
+    .await?;
+    if locked {
+        return Err(ApiError(StatusCode::CONFLICT, "OWNER_RECOVERY_REQUIRED"));
+    }
     let state: Option<String> =
         sqlx::query_scalar("SELECT state FROM server_ownership_bootstrap WHERE singleton=TRUE")
             .fetch_optional(s.0.store.pool())
@@ -537,10 +559,15 @@ async fn ownership_state(State(s): State<Service>) -> Result<Json<Signed<Ownersh
                 "CORDS_OWNERSHIP_UNAVAILABLE",
             ))?;
     let generation = uint(row.try_get("generation")?)?;
+    let locked: bool = sqlx::query_scalar(
+        "SELECT locked_down FROM server_owner_control WHERE singleton=TRUE",
+    )
+    .fetch_one(s.0.store.pool())
+    .await?;
     Ok(Json(s.sign(OwnershipState {
         version: 1,
         server_id: s.0.identity.server_id(),
-        state: row.try_get("state")?,
+        state: if locked { "OWNER_LOCKDOWN".into() } else { row.try_get("state")? },
         generation,
     })?))
 }
@@ -604,11 +631,13 @@ async fn session(
         .bind(device)
         .fetch_optional(&mut *tx)
         .await?;
-    let membership = if let Some(old) = old {
-        if !old.try_get::<bool, _>("active")? {
-            return Err(denied());
-        }
-        parse(old.try_get("credential")?)?
+    let active_old = old
+        .as_ref()
+        .map(|row| row.try_get::<bool, _>("active"))
+        .transpose()?
+        .unwrap_or(false);
+    let membership = if active_old {
+        parse(old.as_ref().ok_or_else(denied)?.try_get("credential")?)?
     } else {
         if expected.purpose != "join" {
             return Err(denied());
@@ -624,12 +653,26 @@ async fn session(
                 "CORDS_OWNERSHIP_STATE_CONFLICT",
             ));
         }
+        let locked: bool = sqlx::query_scalar(
+            "SELECT locked_down FROM server_owner_control WHERE singleton=TRUE FOR SHARE",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if locked {
+            return Err(ApiError(StatusCode::CONFLICT, "OWNER_RECOVERY_REQUIRED"));
+        }
+        let burned: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM identity_burns WHERE account_id=$1)",
+        )
+        .bind(&expected.account_id)
+        .fetch_one(&mut *tx)
+        .await?;
         let owner: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE account_id=$1)")
                 .bind(&expected.account_id)
                 .fetch_one(&mut *tx)
                 .await?;
-        if !owner && s.0.join_policy == JoinPolicy::ModeratorApproval {
+        if burned || (!owner && s.0.join_policy == JoinPolicy::ModeratorApproval) {
             let prior: Option<String> = sqlx::query_scalar(
                 "SELECT status FROM membership_requests WHERE device_id=$1 FOR UPDATE",
             )
@@ -665,18 +708,22 @@ async fn session(
                 return Err(ApiError(StatusCode::FORBIDDEN, result_code));
             }
         }
+        let (member_id, generation) = if let Some(ref old) = old {
+            let old: Signed<Membership> = parse(old.try_get("credential")?)?;
+            (old.value.member_id, old.value.generation.checked_add(1).ok_or_else(bad)?)
+        } else { (id(), 1) };
         let credential = s.sign(Membership {
             version: 1,
             server_id: s.0.identity.server_id(),
-            member_id: id(),
+            member_id,
             account_id: expected.account_id.clone(),
             device_id: device.clone(),
-            generation: 1,
+            generation,
             issued_at: time,
             capabilities: member_capabilities(owner),
             status: "active".into(),
         })?;
-        sqlx::query("INSERT INTO memberships(device_id,credential) VALUES($1,$2)")
+        sqlx::query("INSERT INTO memberships(device_id,credential,active) VALUES($1,$2,TRUE) ON CONFLICT(device_id) DO UPDATE SET credential=EXCLUDED.credential,active=TRUE")
             .bind(device)
             .bind(json(&credential)?)
             .execute(&mut *tx)
@@ -799,7 +846,7 @@ async fn claim_ownership(
         .bind(int(time)?)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE server_ownership_bootstrap SET state='CLAIMED',claim_code_hash=NULL,claimed_at=$1 WHERE singleton=TRUE AND state='UNCLAIMED'")
+    sqlx::query("UPDATE server_ownership_bootstrap SET state='CLAIMED',claim_code_hash=NULL,claimed_at=$1,generation=generation+1 WHERE singleton=TRUE AND state='UNCLAIMED'")
         .bind(int(time)?).execute(&mut *tx).await?;
     let expires_at = time + s.0.session_seconds;
     let token = session_token(&s, &expected.challenge_id, expires_at)?;
@@ -906,7 +953,7 @@ async fn membership_requests(
     headers: HeaderMap,
 ) -> Result<Json<Vec<MembershipRequest>>> {
     s.authenticate(&headers, "server.manage").await?;
-    let rows = sqlx::query("SELECT account_id,device_id,requested_at,status FROM membership_requests WHERE status IN ('pending','rejected') ORDER BY requested_at,device_id LIMIT 1000")
+    let rows = sqlx::query("SELECT r.account_id,r.device_id,r.requested_at,r.status,(b.account_id IS NOT NULL) AS identity_burned FROM membership_requests r LEFT JOIN identity_burns b ON b.account_id=r.account_id WHERE r.status IN ('pending','rejected') ORDER BY r.requested_at,r.device_id LIMIT 1000")
         .fetch_all(s.0.store.pool()).await?;
     Ok(Json(
         rows.into_iter()
@@ -916,6 +963,7 @@ async fn membership_requests(
                     device_id: row.try_get("device_id")?,
                     requested_at: uint(row.try_get("requested_at")?)?,
                     status: row.try_get("status")?,
+                    identity_burned: row.try_get("identity_burned")?,
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -954,18 +1002,24 @@ async fn approve_membership(
     // Revalidate revocation and the current account head at the approval boundary.
     persist_contact(&mut tx, &contact).await?;
     let time = now()?;
+    let old: Option<String> = sqlx::query_scalar("SELECT credential FROM memberships WHERE device_id=$1 FOR UPDATE")
+        .bind(&device).fetch_optional(&mut *tx).await?;
+    let (member_id, generation) = if let Some(old) = old {
+        let old: Signed<Membership> = parse(&old)?;
+        (old.value.member_id, old.value.generation.checked_add(1).ok_or_else(bad)?)
+    } else { (id(), 1) };
     let credential = s.sign(Membership {
         version: 1,
         server_id: s.0.identity.server_id(),
-        member_id: id(),
+        member_id,
         account_id: account,
         device_id: device.clone(),
-        generation: 1,
+        generation,
         issued_at: time,
         capabilities: member_capabilities(false),
         status: "active".into(),
     })?;
-    sqlx::query("INSERT INTO memberships(device_id,credential) VALUES($1,$2)")
+    sqlx::query("INSERT INTO memberships(device_id,credential,active) VALUES($1,$2,TRUE) ON CONFLICT(device_id) DO UPDATE SET credential=EXCLUDED.credential,active=TRUE")
         .bind(&device)
         .bind(json(&credential)?)
         .execute(&mut *tx)
@@ -1482,5 +1536,6 @@ async fn socket_loop(
 }
 
 mod lifecycle;
+mod departure;
 #[cfg(test)]
 mod tests;

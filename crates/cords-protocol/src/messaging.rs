@@ -157,6 +157,89 @@ pub struct RevocationRequest {
     pub idempotency_key: String,
 }
 
+/// A voluntary departure is scoped to one pinned server. It does not revoke the account root.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServerDeparture {
+    pub version: u16,
+    pub server_id: String,
+    pub account_id: String,
+    pub issued_at: u64,
+    pub nonce: String,
+}
+impl Statement for ServerDeparture {
+    const DOMAIN: &'static str = "CORDS-SERVER-DEPARTURE-V1";
+}
+
+/// An identity burn is intentionally distinct from an ordinary server departure.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityBurn {
+    pub version: u16,
+    pub server_id: String,
+    pub account_id: String,
+    pub issued_at: u64,
+    pub nonce: String,
+}
+impl Statement for IdentityBurn {
+    const DOMAIN: &'static str = "CORDS-IDENTITY-BURN-V1";
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DepartureRequest<T> {
+    pub record: Signed<T>,
+    pub idempotency_key: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DepartureReceipt {
+    pub version: u16,
+    pub server_id: String,
+    pub account_id: String,
+    pub kind: String,
+    pub request_hash: String,
+    pub accepted_at: u64,
+}
+impl Statement for DepartureReceipt {
+    const DOMAIN: &'static str = "CORDS-DEPARTURE-RECEIPT-V1";
+}
+
+/// Owner-authenticated designation; server acceptance starts the maturation clock.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuccessorDesignation {
+    pub version: u16,
+    pub server_id: String,
+    pub owner_account_id: String,
+    pub successor_account_id: String,
+    pub nonce: String,
+}
+impl Statement for SuccessorDesignation {
+    const DOMAIN: &'static str = "CORDS-OWNER-SUCCESSOR-DESIGNATION-V1";
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuccessorAcceptance {
+    pub version: u16,
+    pub server_id: String,
+    pub successor_account_id: String,
+    pub designation_hash: String,
+    pub nonce: String,
+}
+impl Statement for SuccessorAcceptance {
+    const DOMAIN: &'static str = "CORDS-OWNER-SUCCESSOR-ACCEPTANCE-V1";
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuccessorRequest<T> {
+    pub record: Signed<T>,
+    pub idempotency_key: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MlsBinding {
@@ -214,6 +297,8 @@ pub struct MembershipRequest {
     pub device_id: String,
     pub requested_at: u64,
     pub status: String,
+    #[serde(default)]
+    pub identity_burned: bool,
 }
 impl Statement for Membership {
     const DOMAIN: &'static str = "CORDS-MEMBERSHIP-V1";
@@ -263,6 +348,38 @@ pub struct OwnershipClaim {
     pub device_proof: Signed<Challenge>,
     pub root_proof: Signed<OwnershipProof>,
     pub idempotency_key: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnershipRecoveryProof {
+    pub version: u16,
+    pub server_id: String,
+    pub account_id: String,
+    pub device_id: String,
+    pub challenge_hash: String,
+}
+impl Statement for OwnershipRecoveryProof {
+    const DOMAIN: &'static str = "CORDS-OWNER-RECOVERY-PROOF-V1";
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnershipRecoveryClaim {
+    pub recovery_code: String,
+    pub contact: Contact,
+    pub device_proof: Signed<Challenge>,
+    pub root_proof: Signed<OwnershipRecoveryProof>,
+    pub idempotency_key: String,
+}
+impl std::fmt::Debug for OwnershipRecoveryClaim {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OwnershipRecoveryClaim")
+            .field("recovery_code", &"[REDACTED]")
+            .field("contact", &self.contact)
+            .field("device_proof", &self.device_proof)
+            .field("root_proof", &self.root_proof)
+            .field("idempotency_key", &self.idempotency_key)
+            .finish()
+    }
 }
 impl std::fmt::Debug for OwnershipClaim {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -466,6 +583,27 @@ mod tests {
                 114, 3
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn departure_and_burn_have_distinct_signing_domains() -> Result<(), InvalidObject> {
+        let departure = ServerDeparture {
+            version: 1,
+            server_id: "server".into(),
+            account_id: "account".into(),
+            issued_at: 42,
+            nonce: "nonce".into(),
+        };
+        let burn = IdentityBurn {
+            version: departure.version,
+            server_id: departure.server_id.clone(),
+            account_id: departure.account_id.clone(),
+            issued_at: departure.issued_at,
+            nonce: departure.nonce.clone(),
+        };
+        assert_eq!(canonical(&departure)?, canonical(&burn)?);
+        assert_ne!(signing_bytes(&departure)?, signing_bytes(&burn)?);
         Ok(())
     }
 }

@@ -49,6 +49,8 @@ enum Command {
         #[command(subcommand)]
         command: OwnershipBootstrapCommand,
     },
+    /// Generate a fresh, one-use owner recovery code during OWNER_LOCKDOWN.
+    OwnershipRecoveryCode,
     /// Check the local readiness endpoint and exit.
     Healthcheck {
         #[arg(long, default_value = "http://127.0.0.1:4848/health/ready")]
@@ -225,6 +227,13 @@ async fn main() -> Result<()> {
                 }
             };
             warn!(claim_code = %code.as_str(), "Cords ownership bootstrap code; store it securely because it will not be shown again");
+            Ok(())
+        }
+        Command::OwnershipRecoveryCode => {
+            store.require_current().await.context("database schema is not current")?;
+            let identity = load_server_identity(&store, &settings.server.data_dir).await?;
+            let code = ownership::rotate_recovery_code(&store, &identity.server_id()).await?;
+            warn!(recovery_code = %code.as_str(), "One-time Cords owner recovery code; give it only to the intended new owner and store it securely");
             Ok(())
         }
         Command::Serve {

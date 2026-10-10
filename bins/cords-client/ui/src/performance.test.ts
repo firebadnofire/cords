@@ -27,6 +27,8 @@ describe('representative conversation performance guard', () => {
       origin: 'https://server.example:4848',
       server_id: 'server',
       ownership_state: 'CLAIMED',
+      ownership_generation: 2,
+      burned: false,
       join_policy: ['moderator_approval'],
       cursors: {},
     } satisfies Status;

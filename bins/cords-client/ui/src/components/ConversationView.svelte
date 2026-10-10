@@ -113,7 +113,7 @@
       {/each}
     {/if}
   </div>
-  <form class="cords-composer" on:submit|preventDefault={send}>
+  <form class="cords-composer" autocomplete="off" on:submit|preventDefault={send}>
     <button
       type="button"
       class="composer-tool dev-unimplemented"
@@ -124,6 +124,7 @@
     <label for="message-draft" class="sr-only">Message</label>
     <input
       id="message-draft"
+      autocomplete="off"
       value={body}
       on:input={(event) => setBody(event.currentTarget.value)}
       disabled={!channel || section === 'dms' || busy || revoked}

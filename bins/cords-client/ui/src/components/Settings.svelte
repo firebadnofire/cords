@@ -12,15 +12,21 @@
   import Modal from './Modal.svelte';
   import Avatar from './Avatar.svelte';
   import ImageEditor from './ImageEditor.svelte';
-  import type { Preferences, Identity, Status } from '../model';
+  import type { Preferences, Identity, ServerListing, Status } from '../model';
 
   export let value: Preferences;
   export let identity: Identity | null;
   export let status: Status | null;
+  export let servers: ServerListing[];
   export let close: () => void;
   export let save: (value: Preferences) => Promise<void>;
   export let revoke: () => void;
   export let lockNow: () => Promise<void>;
+  export let removeServer: (serverId: string) => void;
+  export let archiveServer: (serverId: string) => void;
+  export let burnIdentity: () => void;
+  export let designateSuccessor: (accountId: string) => Promise<string>;
+  export let acceptSuccessor: (designationHash: string) => Promise<void>;
 
   type Page =
     | 'My Account'
@@ -58,6 +64,25 @@
   let error = '';
   let saved = false;
   let busy = false;
+  let burnPhrase = '';
+  let successorAccount = '';
+  let designationHash = '';
+  let successorNotice = '';
+
+  async function designationAction(accept: boolean) {
+    busy = true;
+    error = '';
+    try {
+      if (accept) {
+        await acceptSuccessor(designationHash);
+        successorNotice = 'Successor acceptance recorded. The 30-day period still runs from server acceptance of the designation.';
+      } else {
+        const hash = await designateSuccessor(successorAccount);
+        successorNotice = `Designation accepted. Give this designation hash to the successor: ${hash}`;
+      }
+    } catch (caught) { error = String(caught); }
+    finally { busy = false; }
+  }
 
   async function persist() {
     busy = true;
@@ -273,6 +298,39 @@
         <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
           >Review trust reset</button
         >
+        <section class="settings-card">
+          <h2>Tracked servers</h2>
+          <p>Remove erases local messages and MLS state after a signed drop. Archive preserves only the origin, fingerprint, and departure status.</p>
+          {#each servers as server (server.server_id)}
+            <div class="trust-card">
+              <div><strong>{server.origin}</strong><small>{server.archived ? 'Archived — never auto-reconnects' : server.active ? 'Selected server' : 'Tracked server'}</small></div>
+              <code>{server.server_id}</code>
+            </div>
+            {#if server.archived}
+              <p>{server.remote_drop_confirmed ? 'Remote drop confirmed.' : 'Remote membership removal was not verified.'}</p>
+            {:else}
+              <div class="settings-action-row">
+                <button class="danger" disabled={busy} on:click={() => removeServer(server.server_id)}>Remove server…</button>
+                <button disabled={busy} on:click={() => archiveServer(server.server_id)}>Archive server…</button>
+              </div>
+            {/if}
+          {:else}<p>No tracked servers.</p>{/each}
+        </section>
+        {#if status?.server_id && !status.burned}
+          <section class="settings-card">
+            <h2>Owner succession</h2>
+            <p>A successor must already be a server member, explicitly accept with their account root, and mature for 30 full days. An accepted designation cannot be removed by the owner key alone.</p>
+            <form on:submit|preventDefault={() => void designationAction(false)}>
+              <label>Successor account fingerprint<input bind:value={successorAccount} required /></label>
+              <button disabled={busy || !successorAccount}>Designate successor</button>
+            </form>
+            <form on:submit|preventDefault={() => void designationAction(true)}>
+              <label>Designation hash to accept<input bind:value={designationHash} required /></label>
+              <button disabled={busy || !designationHash}>Accept designation</button>
+            </form>
+            {#if successorNotice}<p role="status">{successorNotice}</p>{/if}
+          </section>
+        {/if}
       {:else if page === 'Local history'}
         <header class="settings-page-header">
           <h1>Local history</h1>
@@ -521,6 +579,13 @@
         <div class="settings-row-button security-invariant">
           Server identity changes fail closed
         </div>
+        <section class="settings-card">
+          <h2>Burn this identity</h2>
+          <p>This is for compromise or account deletion only. Cords signs a burn notice for every known server and retries failed deliveries. Unknown historical servers cannot be notified. The current account cannot resume ordinary messaging after burn begins. Servers must manually review any reinvite with extreme caution.</p>
+          <label>Type BURN to continue<input bind:value={burnPhrase} autocomplete="off" spellcheck="false" /></label>
+          <button class="danger" disabled={status?.burned || burnPhrase !== 'BURN'} on:click={burnIdentity}>Burn identity…</button>
+          {#if status?.burned}<p role="status">This identity has been burned on this device. Pending server notices will be retried.</p>{/if}
+        </section>
         <button
           class="dev-unimplemented settings-row-button"
           disabled

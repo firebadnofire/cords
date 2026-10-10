@@ -301,6 +301,15 @@ pub(crate) async fn record_activity(state: tauri::State<'_, Desktop>) -> Result<
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Action {
     Trust { origin: String },
+    Servers,
+    SelectServer { server_id: String },
+    RemoveServer { server_id: String, local_only: bool },
+    ArchiveServer { server_id: String },
+    BurnIdentity,
+    RetryBurns,
+    DesignateSuccessor { account_id: String },
+    AcceptSuccessor { designation_hash: String },
+    RecoverOwner { code: String },
     ClaimOwnership { code: String },
     Authenticate,
     Publish,
@@ -332,6 +341,21 @@ pub(crate) struct View {
 async fn apply(client: &mut Client, action: Action) -> Result<Value> {
     Ok(match action {
         Action::Trust { origin } => serde_json::to_value(client.trust(&origin).await?)?,
+        Action::Servers => serde_json::to_value(client.servers())?,
+        Action::SelectServer { server_id } => serde_json::to_value(client.select_server(&server_id).await?)?,
+        Action::RemoveServer { server_id, local_only } => serde_json::to_value(client.remove_server(&server_id, local_only).await?)?,
+        Action::ArchiveServer { server_id } => serde_json::to_value(client.archive_server(&server_id).await?)?,
+        Action::BurnIdentity => serde_json::to_value(client.burn_identity().await?)?,
+        Action::RetryBurns => serde_json::to_value(client.retry_pending_burns().await?)?,
+        Action::DesignateSuccessor { account_id } => json!(client.designate_successor(&account_id).await?),
+        Action::AcceptSuccessor { designation_hash } => {
+            client.accept_successor(&designation_hash).await?;
+            json!(true)
+        }
+        Action::RecoverOwner { code } => {
+            let code = Zeroizing::new(code);
+            serde_json::to_value(client.recover_owner(&code).await?)?
+        }
         Action::ClaimOwnership { code } => {
             let code = Zeroizing::new(code);
             serde_json::to_value(client.claim_ownership(&code).await?)?
@@ -504,8 +528,29 @@ async fn synchronize(state: Arc<Mutex<Runtime>>, generation: u64) {
         let Some(client) = runtime.client.as_mut() else {
             break;
         };
+        if client.is_burned() {
+            let retry = client.retry_pending_burns().await;
+            runtime.connected = false;
+            runtime.error = retry.err().map(|e| format!("Identity-burn delivery retry failed: {e}"));
+            continue;
+        }
         if client.status().server_id.is_empty() {
             continue;
+        }
+        match client.refresh_ownership_state().await {
+            Ok(state) if state == "OWNER_LOCKDOWN" => {
+                if let Some(task) = socket.take() { task.abort(); }
+                receiver = None;
+                runtime.connected = false;
+                runtime.error = None;
+                continue;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                runtime.connected = false;
+                runtime.error = Some(format!("Signed server-status check failed: {error}"));
+                continue;
+            }
         }
         let result: Result<()> = async {
             if receiver.is_none() {

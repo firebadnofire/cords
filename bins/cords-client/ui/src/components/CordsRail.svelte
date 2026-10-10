@@ -1,14 +1,16 @@
 <script lang="ts">
   import { MessageSquareText, Plus, Settings2 } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
-  import { dmEntry, type Preferences, type Status } from '../model';
+  import { dmEntry, type Preferences, type ServerListing, type Status } from '../model';
 
   export let status: Status | null;
+  export let servers: ServerListing[];
   export let preferences: Preferences;
   export let section: 'server' | 'dms';
   export let select: (section: 'server' | 'dms') => void;
   export let connect: () => void;
   export let settings: () => void;
+  export let selectServer: (serverId: string) => void;
 </script>
 
 <nav class="server-rail" aria-label="Servers and direct messages">
@@ -49,16 +51,17 @@
   {/if}
 
   <div class="rail-divider"></div>
-  {#if status?.server_id}
+  {#each servers.filter((server) => !server.archived) as server (server.server_id)}
     <button
       class="server-button server-blue"
-      class:selected={section === 'server'}
-      title={status.origin}
-      aria-label={`Select server ${status.origin}`}
-      on:click={() => select('server')}
-      >{new URL(status.origin).hostname.slice(0, 1).toUpperCase()}</button
+      class:selected={section === 'server' && status?.server_id === server.server_id}
+      class:server-lockdown={server.ownership_state === 'OWNER_LOCKDOWN'}
+      title={server.ownership_state === 'OWNER_LOCKDOWN' ? `${server.origin} — owner recovery required` : server.origin}
+      aria-label={server.ownership_state === 'OWNER_LOCKDOWN' ? `Owner recovery required for ${server.origin}` : `Select server ${server.origin}`}
+      on:click={() => selectServer(server.server_id)}
+      >{new URL(server.origin).hostname.slice(0, 1).toUpperCase()}{#if server.ownership_state === 'OWNER_LOCKDOWN'}<span class="server-alert">!</span>{/if}</button
     >
-  {/if}
+  {/each}
   <button
     class="server-button rail-action"
     title="Connect to server"

@@ -25,9 +25,11 @@
     type MembershipRequest,
     type View,
     type Preferences,
+    type ServerListing,
   } from './model';
 
   let status: Status | null = null;
+  let servers: ServerListing[] = [];
   type LocalAccount = { account_id: string; nickname: string; avatar_data: string };
   let accounts: LocalAccount[] = [];
   let selectedAccount = '';
@@ -41,7 +43,7 @@
   let messages: Message[] = [];
   let route = '';
   let section: 'server' | 'dms' = 'server';
-  let overlay: 'connect' | 'settings' | 'admin' | 'create' | null = null;
+  let overlay: 'connect' | 'settings' | 'admin' | 'create' | 'recovery' | null = null;
   let confirm: { title: string; description: string; execute: () => Promise<void> } | null = null;
   let origin = '';
   let removalPassword = '';
@@ -52,6 +54,7 @@
   let error = '';
   let connectionError = '';
   let claimCode = '';
+  let recoveryCode = '';
   let connected = false;
   let busy = false;
   let refreshing = false;
@@ -76,7 +79,12 @@
     prefs = preferences(view.preferences);
     identity = view.identity;
     origin = opened.origin;
-    if (opened.server_id && opened.ownership_state === 'CLAIMED') {
+    servers = await action<ServerListing[]>('servers');
+    if (opened.burned) {
+      error = 'This identity has been burned. Failed server notices will retry; it cannot resume messaging.';
+    } else if (opened.ownership_state === 'OWNER_LOCKDOWN') {
+      overlay = null;
+    } else if (opened.server_id && opened.ownership_state === 'CLAIMED') {
       try {
         await action('authenticate');
         channels = await action<Channel[]>('channels');
@@ -94,6 +102,7 @@
     identity = null;
     prefs = defaults();
     channels = [];
+    servers = [];
     contacts = [];
     membershipRequests = [];
     messages = [];
@@ -105,6 +114,7 @@
     removalPassword = '';
     origin = '';
     claimCode = '';
+    recoveryCode = '';
     connected = false;
     connectionError = '';
     error = '';
@@ -151,7 +161,12 @@
     refreshing = true;
     try {
       const view = await invoke<View>('conversation_view', { route: route || null });
+      const oldGeneration = status?.ownership_generation;
+      const oldServer = status?.server_id;
       status = view.status;
+      if (oldGeneration !== status.ownership_generation || oldServer !== status.server_id) {
+        servers = await action<ServerListing[]>('servers');
+      }
       identity = view.identity;
       messages = view.messages;
       connected = view.connected;
@@ -183,12 +198,95 @@
   async function connect() {
     await run(async () => {
       status = await action<Status>('trust', { origin });
+      servers = await action<ServerListing[]>('servers');
       if (status.ownership_state === 'CLAIMED') {
         status = await action<Status>('authenticate');
         channels = await action<Channel[]>('channels');
         overlay = null;
         section = 'server';
+      } else if (status.ownership_state === 'OWNER_LOCKDOWN') {
+        overlay = null;
       }
+    });
+  }
+  async function selectServer(serverId: string) {
+    await run(async () => {
+      status = await action<Status>('select_server', { server_id: serverId });
+      route = '';
+      messages = [];
+      channels = [];
+      contacts = [];
+      section = 'server';
+      if (status.ownership_state === 'OWNER_LOCKDOWN') {
+        overlay = 'recovery';
+      } else if (!status.burned && status.ownership_state === 'CLAIMED') {
+        status = await action<Status>('authenticate');
+        channels = await action<Channel[]>('channels');
+      }
+      servers = await action<ServerListing[]>('servers');
+    });
+  }
+  function removeServer(serverId: string) {
+    overlay = null;
+    confirm = {
+      title: 'Remove server and erase its data?',
+      description: 'Cords will send a root-signed departure, wait for a verified server confirmation, then erase this server’s cached messages, MLS state, and local server data.',
+      execute: async () => {
+        try {
+          await action('remove_server', { server_id: serverId, local_only: false });
+          channels = []; route = ''; messages = [];
+          servers = await action<ServerListing[]>('servers');
+        } catch (caught) {
+          const message = String(caught);
+          if (/CORDS_SERVER_KEY_CHANGED|connect|timeout|timed out|dns|network/i.test(message)) {
+            confirm = {
+              title: 'Delete only the local server data?',
+              description: `The signed departure could not be verified: ${message}. Local deletion will erase cached messages and MLS state, but remote membership removal was NOT verified.`,
+              execute: async () => {
+                await action('remove_server', { server_id: serverId, local_only: true });
+                channels = []; route = ''; messages = [];
+                servers = await action<ServerListing[]>('servers');
+                error = 'Server deleted locally. Remote membership removal was not verified.';
+              },
+            };
+          } else throw caught;
+        }
+      },
+    };
+  }
+  function archiveServer(serverId: string) {
+    overlay = null;
+    confirm = {
+      title: 'Archive this server?',
+      description: 'Cords will attempt a signed departure, then remove the active connection and MLS state regardless of the response. The archive keeps only its URL, fingerprint, and departure status.',
+      execute: async () => {
+        const result = await action<{ remote_confirmed: boolean; warning: string | null }>('archive_server', { server_id: serverId });
+        channels = []; route = ''; messages = [];
+        servers = await action<ServerListing[]>('servers');
+        if (result.warning) error = result.warning;
+      },
+    };
+  }
+  function burnIdentity() {
+    overlay = null;
+    confirm = {
+      title: 'Permanently burn this identity?',
+      description: `This is for compromise or account deletion only. Cords will sign burn notices for ${servers.length} known server records. Failed deliveries remain pending; unknown historical servers cannot be reached. This account cannot resume messaging. There is no undo.`,
+      execute: async () => {
+        const result = await action<{ confirmed: number; pending: string[] }>('burn_identity');
+        status = (await invoke<View>('conversation_view', { route: null })).status;
+        if (result.pending.length) error = `Identity burned locally. Delivery still pending for: ${result.pending.join(', ')}`;
+      },
+    };
+  }
+  async function recoverOwner() {
+    await run(async () => {
+      const code = recoveryCode;
+      recoveryCode = '';
+      status = await action<Status>('recover_owner', { code });
+      servers = await action<ServerListing[]>('servers');
+      channels = await action<Channel[]>('channels');
+      overlay = null;
     });
   }
   async function selectChannel(id: string) {
@@ -301,6 +399,7 @@
     <div class="app-layout">
       <CordsRail
         {status}
+        {servers}
         preferences={prefs}
         {section}
         select={(next) => {
@@ -309,6 +408,7 @@
         }}
         connect={() => (overlay = 'connect')}
         settings={() => (overlay = 'settings')}
+        selectServer={(serverId) => void selectServer(serverId)}
       />
       <aside class="left-column">
         <ConversationSidebar
@@ -334,9 +434,7 @@
           preferences={prefs}
           {connected}
           openSettings={() => (overlay = 'settings')}
-          lockAccount={() => void returnToPicker('lock')}
           switchAccount={() => void returnToPicker('switch')}
-          signOut={() => void returnToPicker('sign_out')}
           removeAccount={() => (removingAccount = true)}
         />
       </aside>
@@ -398,10 +496,16 @@
         value={prefs}
         {identity}
         {status}
+        {servers}
         close={() => (overlay = null)}
         save={savePreferences}
         lockNow={() => returnToPicker('lock')}
         {revoke}
+        {removeServer}
+        {archiveServer}
+        {burnIdentity}
+        designateSuccessor={(accountId) => action<string>('designate_successor', { account_id: accountId })}
+        acceptSuccessor={(designationHash) => action<void>('accept_successor', { designation_hash: designationHash })}
       />{/if}
     {#if overlay === 'admin'}<Admin
         {status}
@@ -460,14 +564,20 @@
             </section>
           {/if}
           <div class="account-banner">
-            <LockKeyhole size={18} /><span
-              >This build supports one pinned server per local account. Existing encrypted state is
-              never reset to switch servers.</span
-            >
+            <LockKeyhole size={18} /><span>Each trusted server keeps its own pin, session, MLS state, and encrypted cache.</span>
           </div>
           {#if error}<p role="alert" class="error">{error}</p>{/if}
         </div></Modal
       >{/if}
+    {#if overlay === 'recovery'}<Modal title="Owner recovery required" close={() => (overlay = null)}>
+        <form class="modal-body" on:submit|preventDefault={recoverOwner}>
+          <p>This server is in OWNER_LOCKDOWN. Messages and membership changes are paused. The one-time recovery code is available only to the actual server operator through the server’s local administrative command or logs—not to ordinary members.</p>
+          <p>An incorrect code will not trigger another prompt. Ask the operator to generate and share a fresh code only if you are the intended new owner.</p>
+          <label>Operator recovery code<input type="password" bind:value={recoveryCode} minlength="43" maxlength="43" autocomplete="off" spellcheck="false" required /></label>
+          <button class="primary" disabled={busy || recoveryCode.length !== 43}>Claim recovered ownership</button>
+          {#if error}<p role="alert" class="error">{error}</p>{/if}
+        </form>
+      </Modal>{/if}
     {#if overlay === 'create'}<Modal title="Create encrypted channel" close={() => (overlay = null)}
         ><form
           class="modal-body"
@@ -533,8 +643,9 @@
               disabled={busy}
               on:click={() =>
                 void run(async () => {
-                  await confirm?.execute();
-                  confirm = null;
+                  const current = confirm;
+                  await current?.execute();
+                  if (confirm === current) confirm = null;
                 })}>Confirm action</button
             >
           </div>

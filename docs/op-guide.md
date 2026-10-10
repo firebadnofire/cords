@@ -131,6 +131,20 @@ The checked-in `deploy/compose.yaml` is a development topology: it builds from t
 contains a conspicuous development-only database password. Do not deploy it unchanged on a public
 host.
 
+Docker Compose recognizes both `compose.yaml` and the legacy `docker-compose.yml` project-file
+name. This guide uses `compose.yaml`, but operators who prefer `docker-compose.yml` may use that
+name for an operator-owned Compose file without changing its contents. Run Compose commands from
+the directory containing the file, or make the choice explicit everywhere:
+
+```sh
+docker compose -f docker-compose.yml config
+docker compose -f docker-compose.yml up -d --wait
+```
+
+Do not keep both names in the same directory unless every command uses `-f`; automatic discovery
+could otherwise select a different file than the operator intended. The filename choice does not
+make the checked-in development topology suitable for production.
+
 ### 1. Create private state and configuration
 
 Create a dedicated directory and a restrictive environment file. Generate a URL-safe database

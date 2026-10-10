@@ -2,6 +2,11 @@
 
 ## Status and purpose
 
+ADR 0006 adds explicitly public channels whose device-signed message bodies are
+intentionally readable by the server. This scoped exception changes message
+confidentiality only; account, device, MLS, server, TLS and local-vault key roles
+remain separate, and encrypted channels retain their existing guarantees.
+
 This document defines the long-lived cryptographic identity and key architecture for Cords. It is intended to remain valid across implementation phases and to provide the normative model from which protocol encodings, storage formats, APIs, recovery flows, and implementation-specific ADRs are derived.
 
 This document describes **roles, authority, trust relationships, lifecycle, and separation requirements**. It does not by itself define wire encodings, database schemas, user-interface details, or a concrete MLS library API. Those belong in versioned protocol documents, crate interfaces, and ADRs.

@@ -101,16 +101,25 @@
           class:active={route === channel.channel_id}
           on:click={() => selectChannel(channel.channel_id)}
           disabled={busy ||
-            !channel.members.some(
-              (member) => member.authorization.value.device_id === status.device_id,
-            )}
+            (channel.confidentiality_mode !== 'public' &&
+              !channel.locally_archived &&
+              !channel.members.some(
+                (member) => member.authorization.value.device_id === status.device_id,
+              ))}
           title={channel.members.some(
             (member) => member.authorization.value.device_id === status.device_id,
-          )
+          ) ||
+          channel.confidentiality_mode === 'public' ||
+          channel.locally_archived
             ? `Open #${channel.name}`
             : 'Visible server channel; waiting to be added to its encrypted conversation'}
         >
-          <Hash size={20} /><span>{channel.name}</span
+          <Hash size={20} /><span
+            >{channel.name}{channel.locally_archived
+              ? ' · retired'
+              : channel.confidentiality_mode === 'public'
+                ? ' · public'
+                : ''}</span
           >{#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}<LockKeyhole
               size={14}
             />{/if}

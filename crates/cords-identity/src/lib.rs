@@ -209,9 +209,9 @@ pub fn validate_contact(contact: &Contact, now: u64) -> Result<(), InvalidObject
     Ok(())
 }
 
-/// Verify a self-declared card against a certified device and bound its image before rendering.
+/// Verify a self-declared card against a certified device and bound its image reference.
 /// # Errors
-/// Rejects key substitution, tampering, invalid presentation, or oversized image data.
+/// Rejects key substitution, tampering, invalid presentation, unsafe URLs, or legacy image data.
 pub fn validate_user_card(
     authorization: &Signed<DeviceAuthorization>,
     card: &Signed<cords_protocol::messaging::UserCard>,
@@ -231,28 +231,44 @@ pub fn validate_user_card(
         return Err(InvalidObject);
     }
     if let Some(picture) = &value.avatar {
-        if picture.data.len() >= 900_000
-            || !matches!(picture.shape.as_str(), "circle" | "square")
+        if !matches!(picture.shape.as_str(), "circle" | "square")
             || picture.x > 100
             || picture.y > 100
             || !(1000..=4000).contains(&picture.zoom_milli)
+            || (!picture.url.is_empty() && !picture.data.is_empty())
         {
             return Err(InvalidObject);
         }
-        let data = picture
-            .data
-            .strip_prefix("data:image/png;base64,")
-            .ok_or(InvalidObject)?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .map_err(|_| InvalidObject)?;
-        if bytes.len() < 33 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" || &bytes[12..16] != b"IHDR" {
-            return Err(InvalidObject);
-        }
-        let width = u32::from_be_bytes(bytes[16..20].try_into().map_err(|_| InvalidObject)?);
-        let height = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| InvalidObject)?);
-        if !(1..=512).contains(&width) || !(1..=512).contains(&height) {
-            return Err(InvalidObject);
+        if picture.url.is_empty() {
+            let data = picture
+                .data
+                .strip_prefix("data:image/png;base64,")
+                .ok_or(InvalidObject)?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|_| InvalidObject)?;
+            if picture.data.len() >= 900_000
+                || bytes.len() < 33
+                || &bytes[..8] != b"\x89PNG\r\n\x1a\n"
+                || &bytes[12..16] != b"IHDR"
+            {
+                return Err(InvalidObject);
+            }
+            let width = u32::from_be_bytes(bytes[16..20].try_into().map_err(|_| InvalidObject)?);
+            let height = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| InvalidObject)?);
+            if !(1..=512).contains(&width) || !(1..=512).contains(&height) {
+                return Err(InvalidObject);
+            }
+        } else {
+            let url = url::Url::parse(&picture.url).map_err(|_| InvalidObject)?;
+            if picture.url.len() > 2048
+                || url.scheme() != "https"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.host_str().is_none()
+            {
+                return Err(InvalidObject);
+            }
         }
     }
     card.verify(&a.device_public_key)?;
@@ -310,6 +326,7 @@ mod tests {
         card = owner.sign_device(card.value)?;
         validate_user_card(&owner.authorization, &card, 10)?;
         card.value.avatar = Some(cords_protocol::messaging::UserCardPicture {
+            url: String::new(),
             data: "data:image/svg+xml;base64,PHN2Zz4=".into(),
             shape: "circle".into(),
             x: 50,
@@ -318,6 +335,16 @@ mod tests {
         });
         card = owner.sign_device(card.value)?;
         assert!(validate_user_card(&owner.authorization, &card, 10).is_err());
+        card.value.avatar = Some(cords_protocol::messaging::UserCardPicture {
+            url: "https://images.example/avatar.webp".into(),
+            data: String::new(),
+            shape: "circle".into(),
+            x: 50,
+            y: 50,
+            zoom_milli: 1000,
+        });
+        card = owner.sign_device(card.value)?;
+        validate_user_card(&owner.authorization, &card, 10)?;
         Ok(())
     }
     #[test]

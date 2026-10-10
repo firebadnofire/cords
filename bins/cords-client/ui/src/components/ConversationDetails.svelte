@@ -18,10 +18,12 @@
     <button aria-label="Close details" on:click={close}><X size={18} /></button>
   </header>
   <section class="detail-section">
-    <h3><LockKeyhole size={16} /> Encryption</h3>
+    <h3><LockKeyhole size={16} /> Confidentiality · permanent</h3>
     <p>
-      MLS authenticates messages to device identities. Server trust and human verification remain
-      separate.
+      {#if channel?.confidentiality_mode === 'public'}True public: signed plaintext messages
+        protected by HTTPS in transit. The server can read and retain them.{:else}End-to-end
+        encrypted with MLS. The server cannot read message contents.{/if} A different confidentiality
+      mode requires a new replacement channel.
     </p>
     {#if channel}<span class="detail-chip">Epoch {channel.epoch}</span>{/if}
   </section>
@@ -34,7 +36,9 @@
     <h3><Fingerprint size={16} /> Server identity</h3>
     <code>{status.server_id || 'No trusted server'}</code>
   </section>
-  {#if channel}<section class="detail-section">
+  {#if channel && channel.confidentiality_mode !== 'public' && !channel.locally_archived}<section
+      class="detail-section"
+    >
       <h3><Users size={16} /> MLS devices</h3>
       {#each channel.members as member (member.authorization.value.device_id)}<div
           class="detail-person"

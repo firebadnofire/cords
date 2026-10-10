@@ -16,6 +16,371 @@ async fn fixture() -> Result<(Service, tempfile::TempDir)> {
     Ok((service, directory))
 }
 
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real PostgreSQL"]
+async fn public_channel_signatures_identity_and_succession() -> Result<()> {
+    use cords_protocol::messaging::{ChannelSuccession, Message, PublicMessage};
+    let (s, _directory, code) = fixture_with_state(false).await?;
+    let (owner, contact) = identity()?;
+    let session = claim_ownership(
+        State(s.clone()),
+        Json(ownership_request(&s, &owner, contact.clone(), &code).await?),
+    )
+    .await?
+    .0;
+    let route = create_channel(
+        State(s.clone()),
+        headers(&session)?,
+        Json(ChannelCreate {
+            name: "same name".into(),
+            confidentiality_mode: ConfidentialityMode::Public,
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    let payload = owner.sign_device(PublicMessage {
+        version: 1,
+        server_id: s.0.identity.server_id(),
+        channel_id: route.clone(),
+        event_id: id(),
+        idempotency_key: id(),
+        contact: contact.clone(),
+        membership: session.membership.clone(),
+        message: Message {
+            schema_version: 1,
+            message_id: id(),
+            sender_account_id: owner.authorization.value.account_id.clone(),
+            sender_device_id: owner.authorization.value.device_id.clone(),
+            client_timestamp: now()?,
+            event_kind: "message.create".into(),
+            body: "PUBLIC_PLAINTEXT_MARKER".into(),
+        },
+    })?;
+    let upload = EventUpload {
+        protocol_version: 1,
+        event_id: payload.value.event_id.clone(),
+        route_kind: "channel".into(),
+        route_id: route.clone(),
+        sender_member_id: session.membership.value.member_id.clone(),
+        sender_device_id: owner.authorization.value.device_id.clone(),
+        client_created_at: payload.value.message.client_timestamp,
+        content_encoding: "public.signed".into(),
+        ciphertext: String::new(),
+        idempotency_key: payload.value.idempotency_key.clone(),
+        public_message: Some(payload.clone()),
+    };
+    let event = upload_event(
+        State(s.clone()),
+        headers(&session)?,
+        Path(route.clone()),
+        Json(upload.clone()),
+    )
+    .await?
+    .0;
+    let retry = upload_event(
+        State(s.clone()),
+        headers(&session)?,
+        Path(route.clone()),
+        Json(upload.clone()),
+    )
+    .await?
+    .0;
+    assert_eq!(event.server_sequence, retry.server_sequence);
+    let stored: String = sqlx::query_scalar("SELECT envelope FROM route_events WHERE route_id=$1")
+        .bind(&route)
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert!(stored.contains("PUBLIC_PLAINTEXT_MARKER"));
+    let mut tampered = upload.clone();
+    tampered
+        .public_message
+        .as_mut()
+        .context("missing public record")?
+        .value
+        .message
+        .body = "tampered".into();
+    assert!(
+        upload_event(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route.clone()),
+            Json(tampered)
+        )
+        .await
+        .is_err()
+    );
+    let other = create_channel(
+        State(s.clone()),
+        headers(&session)?,
+        Json(ChannelCreate {
+            name: "same name".into(),
+            confidentiality_mode: ConfidentialityMode::Public,
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    let mut replay = upload.clone();
+    replay.route_id = other.clone();
+    assert!(
+        upload_event(
+            State(s.clone()),
+            headers(&session)?,
+            Path(other),
+            Json(replay)
+        )
+        .await
+        .is_err()
+    );
+    for mode in ["encrypted", "public"] {
+        let target = if mode == "encrypted" {
+            "public"
+        } else {
+            "encrypted"
+        };
+        let r = if mode == "public" {
+            route.clone()
+        } else {
+            create_channel(
+                State(s.clone()),
+                headers(&session)?,
+                Json(ChannelCreate {
+                    name: "encrypted".into(),
+                    confidentiality_mode: ConfidentialityMode::Encrypted,
+                    idempotency_key: id(),
+                }),
+            )
+            .await?
+            .0
+        };
+        assert!(
+            sqlx::query("UPDATE channels SET confidentiality_mode=$1 WHERE id=$2")
+                .bind(target)
+                .bind(r)
+                .execute(s.0.store.pool())
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        sqlx::query("DELETE FROM channels WHERE id=$1")
+            .bind(&route)
+            .execute(s.0.store.pool())
+            .await
+            .is_err()
+    );
+    let predecessor = channel_view(&s, &route)
+        .await?
+        .identity
+        .context("missing identity")?;
+    let successor = id();
+    let request = ChannelReplace {
+        record: owner.sign_device(ChannelSuccession {
+            version: 1,
+            server_id: s.0.identity.server_id(),
+            predecessor,
+            successor_channel_id: successor.clone(),
+            name: "same name".into(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
+            initiator: contact,
+            membership: session.membership.clone(),
+            issued_at: now()?,
+            nonce: id(),
+        })?,
+        idempotency_key: id(),
+    };
+    assert_eq!(
+        replace_channel(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route.clone()),
+            Json(request.clone())
+        )
+        .await?
+        .0,
+        successor
+    );
+    assert_eq!(
+        replace_channel(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route.clone()),
+            Json(request)
+        )
+        .await?
+        .0,
+        successor
+    );
+    let new = channel_view(&s, &successor).await?;
+    assert!(
+        new.transition
+            .context("transition")?
+            .value
+            .succession
+            .is_some()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM route_events WHERE route_id=$1")
+        .bind(&successor)
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert_eq!(count, 0);
+    assert!(
+        upload_event(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route),
+            Json(upload)
+        )
+        .await
+        .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real TLS and PostgreSQL"]
+async fn public_successor_two_clients_restart_archive_and_acknowledgement() -> Result<()> {
+    use cords_client_core::client::Client;
+    let (base, _directory, code) = fixture_with_state(false).await?;
+    let service = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("test-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let pass = b"public succession independent vault test";
+    let a = root.path().join("a");
+    let b = root.path().join("b");
+    let mut owner = Client::open(&a, &migrations, Some(pass), Some(&ca)).await?;
+    let mut member = Client::open(&b, &migrations, Some(pass), Some(&ca)).await?;
+    assert_ne!(owner.status().account_id, member.status().account_id);
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    member.trust(&tls.origin).await?;
+    assert!(member.authenticate().await.is_err());
+    owner.approve_membership(&member.status().device_id).await?;
+    member.authenticate().await?;
+    let predecessor = owner.create_channel("reusable name").await?;
+    member.publish_key_package().await?;
+    owner
+        .add_member(&predecessor, &member.status().device_id)
+        .await?;
+    member.join_channel(&predecessor).await?;
+    owner.send(&predecessor, "ENCRYPTED_ARCHIVE_MARKER").await?;
+    member.sync_route(&predecessor).await?;
+    let old = member
+        .channels()
+        .await?
+        .into_iter()
+        .find(|c| c.channel_id == predecessor)
+        .context("predecessor")?;
+    assert_eq!(old.confidentiality_mode, ConfidentialityMode::Encrypted);
+    member.shutdown().await;
+    let successor = owner
+        .replace_channel(&predecessor, "reusable name", ConfidentialityMode::Public)
+        .await?;
+    assert_ne!(predecessor, successor);
+    assert!(owner.send(&successor, "must not be sent").await.is_err());
+    owner.acknowledge_public_successor(&successor).await?;
+    owner.send(&successor, "PUBLIC_NETWORK_MARKER").await?;
+    let mut member = Client::open(&b, &migrations, Some(pass), Some(&ca)).await?;
+    member.authenticate().await?;
+    let channels = member.channels().await?;
+    assert!(
+        channels
+            .iter()
+            .find(|c| c.channel_id == predecessor)
+            .context("original")?
+            .locally_archived
+    );
+    assert!(
+        channels
+            .iter()
+            .find(|c| c.channel_id == successor)
+            .context("successor")?
+            .requires_public_acknowledgement
+    );
+    assert_eq!(
+        member.history(&predecessor).await?[0].body,
+        "ENCRYPTED_ARCHIVE_MARKER"
+    );
+    member.join_channel(&successor).await?;
+    assert_eq!(member.history(&successor).await?.len(), 1);
+    assert_eq!(
+        member.history(&successor).await?[0].body,
+        "PUBLIC_NETWORK_MARKER"
+    );
+    assert!(member.send(&successor, "not acknowledged").await.is_err());
+    assert!(member.send(&predecessor, "archive write").await.is_err());
+    assert!(
+        member
+            .replace_channel(&successor, "unauthorized", ConfidentialityMode::Encrypted)
+            .await
+            .is_err()
+    );
+    member.acknowledge_public_successor(&successor).await?;
+    member.shutdown().await;
+    let mut member = Client::open(&b, &migrations, Some(pass), Some(&ca)).await?;
+    member.authenticate().await?;
+    member
+        .send(&successor, "PUBLIC_SECOND_CLIENT_MARKER")
+        .await?;
+    owner.synchronize().await?;
+    assert_eq!(owner.history(&successor).await?.len(), 2);
+    let raw: Vec<String> =
+        sqlx::query_scalar("SELECT envelope FROM route_events WHERE route_id=$1 ORDER BY sequence")
+            .bind(&successor)
+            .fetch_all(service.0.store.pool())
+            .await?;
+    assert!(
+        raw.iter()
+            .any(|v| v.contains("PUBLIC_SECOND_CLIENT_MARKER"))
+    );
+    assert!(!raw.iter().any(|v| v.contains("ENCRYPTED_ARCHIVE_MARKER")));
+    let snapshot = member.channel_archives();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(
+        snapshot[0].confidentiality_mode,
+        ConfidentialityMode::Encrypted
+    );
+    let server = member.status().server_id;
+    member.remove_server(&server, true).await?;
+    assert_eq!(
+        member.archived_channel_history(&server, &predecessor)?[0].body,
+        "ENCRYPTED_ARCHIVE_MARKER"
+    );
+    member.shutdown().await;
+    owner.shutdown().await;
+    for path in [&a, &b] {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                let bytes = std::fs::read(entry.path())?;
+                for marker in [
+                    "ENCRYPTED_ARCHIVE_MARKER",
+                    "PUBLIC_NETWORK_MARKER",
+                    "PUBLIC_SECOND_CLIENT_MARKER",
+                ] {
+                    assert!(
+                        !bytes.windows(marker.len()).any(|b| b == marker.as_bytes()),
+                        "unsealed local message data"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn fixture_with_state(
     claimed: bool,
 ) -> Result<(Service, tempfile::TempDir, zeroize::Zeroizing<String>)> {
@@ -173,6 +538,7 @@ async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and
     owner.claim_ownership(&code1).await?;
     member
         .save_ui_preferences(serde_json::json!({"version":1,"displayName":"Second network user", "avatar": {
+            "url": "https://images.example/second-user.webp",
             "data": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6X0AAAAASUVORK5CYII=",
             "shape":"square", "x":25, "y":75, "zoom":1.5
         }}))
@@ -198,6 +564,8 @@ async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and
         .avatar
         .as_ref()
         .context("missing avatar resolution data")?;
+    assert_eq!(avatar.url, "https://images.example/second-user.webp");
+    assert!(avatar.data.is_empty());
     assert_eq!(
         (&avatar.shape, avatar.x, avatar.y, avatar.zoom_milli),
         (&"square".to_string(), 25, 75, 1500)
@@ -424,6 +792,7 @@ async fn pending_admission_retains_signed_self_declared_card_and_denies_permissi
             State(s),
             headers(&member)?,
             Json(ChannelCreate {
+                confidentiality_mode: Default::default(),
                 name: "unauthorized".into(),
                 idempotency_key: id()
             })
@@ -475,6 +844,7 @@ async fn owner_burn_lockdown_recovery_is_atomic_one_time_and_revokes_old_authori
             State(s.clone()),
             headers(&old_session)?,
             Json(ChannelCreate {
+                confidentiality_mode: Default::default(),
                 name: "blocked".into(),
                 idempotency_key: id()
             })
@@ -1007,6 +1377,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         headers(&owner_session)?,
         Json(ChannelCreate {
+            confidentiality_mode: Default::default(),
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1059,6 +1430,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         HeaderMap::new(),
         Json(ChannelCreate {
+            confidentiality_mode: Default::default(),
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1094,6 +1466,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         headers(&other_session)?,
         Json(ChannelCreate {
+            confidentiality_mode: Default::default(),
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1114,6 +1487,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         headers(&other_session)?,
         Json(ChannelCreate {
+            confidentiality_mode: Default::default(),
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1489,6 +1863,7 @@ async fn route_permissions_sequence_concurrency_and_restart() -> Result<()> {
         State(s.clone()),
         headers(&sa)?,
         Json(ChannelCreate {
+            confidentiality_mode: Default::default(),
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1506,6 +1881,7 @@ async fn route_permissions_sequence_concurrency_and_restart() -> Result<()> {
         .is_err()
     );
     let upload = EventUpload {
+        public_message: None,
         protocol_version: 1,
         event_id: id(),
         route_kind: "channel".into(),
@@ -1625,6 +2001,7 @@ async fn failed_event_transaction_does_not_consume_sequence_or_idempotency() -> 
         State(s.clone()),
         headers(&session)?,
         Json(ChannelCreate {
+            confidentiality_mode: Default::default(),
             name: "rollback".into(),
             idempotency_key: id(),
         }),
@@ -1632,6 +2009,7 @@ async fn failed_event_transaction_does_not_consume_sequence_or_idempotency() -> 
     .await?
     .0;
     let upload = EventUpload {
+        public_message: None,
         protocol_version: 1,
         event_id: id(),
         route_kind: "channel".into(),
@@ -1815,6 +2193,7 @@ async fn initial_binding_is_authenticated_durable_and_idempotent() -> Result<()>
         State(s.clone()),
         headers(&issued)?,
         Json(ChannelCreate {
+            confidentiality_mode: Default::default(),
             name: "bound at creation".into(),
             idempotency_key: id(),
         }),

@@ -300,32 +300,87 @@ pub(crate) async fn record_activity(state: tauri::State<'_, Desktop>) -> Result<
 #[derive(Deserialize)] // Recovery/bootstrap codes must not appear in derived Debug output.
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Action {
-    Trust { origin: String },
+    Trust {
+        origin: String,
+    },
     Servers,
-    SelectServer { server_id: String },
-    RemoveServer { server_id: String, local_only: bool },
-    ArchiveServer { server_id: String },
+    SelectServer {
+        server_id: String,
+    },
+    DeselectServer,
+    RemoveServer {
+        server_id: String,
+        local_only: bool,
+    },
+    ArchiveServer {
+        server_id: String,
+    },
     BurnIdentity,
     RetryBurns,
-    DesignateSuccessor { account_id: String },
-    AcceptSuccessor { designation_hash: String },
-    RecoverOwner { code: String },
-    ClaimOwnership { code: String },
+    DesignateSuccessor {
+        account_id: String,
+    },
+    AcceptSuccessor {
+        designation_hash: String,
+    },
+    RecoverOwner {
+        code: String,
+    },
+    ClaimOwnership {
+        code: String,
+    },
     Authenticate,
     Publish,
     Channels,
-    Create { name: String },
-    Add { route: String, device: String },
-    Join { route: String },
-    Send { route: String, body: String },
+    Create {
+        name: String,
+        #[serde(default)]
+        confidentiality_mode: cords_protocol::messaging::ConfidentialityMode,
+    },
+    ReplaceChannel {
+        route: String,
+        name: String,
+        confidentiality_mode: cords_protocol::messaging::ConfidentialityMode,
+    },
+    RetireChannel {
+        route: String,
+    },
+    AcknowledgePublic {
+        route: String,
+    },
+    ChannelArchives,
+    ArchiveHistory {
+        server_id: String,
+        route: String,
+    },
+    Add {
+        route: String,
+        device: String,
+    },
+    Join {
+        route: String,
+    },
+    Send {
+        route: String,
+        body: String,
+    },
     Synchronize,
     Members,
     MembershipRequests,
-    ApproveMembership { device: String },
-    RejectMembership { device: String },
-    Remove { route: String, device: String },
+    ApproveMembership {
+        device: String,
+    },
+    RejectMembership {
+        device: String,
+    },
+    Remove {
+        route: String,
+        device: String,
+    },
     Revoke,
-    Preferences { value: Value },
+    Preferences {
+        value: Value,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -345,6 +400,7 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
         Action::SelectServer { server_id } => {
             serde_json::to_value(client.select_server(&server_id).await?)?
         }
+        Action::DeselectServer => serde_json::to_value(client.deselect_server().await?)?,
         Action::RemoveServer {
             server_id,
             local_only,
@@ -372,7 +428,35 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
         Action::Authenticate => serde_json::to_value(client.authenticate().await?)?,
         Action::Publish => client.publish_key_package().await?,
         Action::Channels => serde_json::to_value(client.channels().await?)?,
-        Action::Create { name } => json!(client.create_channel(&name).await?),
+        Action::Create {
+            name,
+            confidentiality_mode,
+        } => json!(
+            client
+                .create_channel_with_mode(&name, confidentiality_mode)
+                .await?
+        ),
+        Action::ReplaceChannel {
+            route,
+            name,
+            confidentiality_mode,
+        } => json!(
+            client
+                .replace_channel(&route, &name, confidentiality_mode)
+                .await?
+        ),
+        Action::RetireChannel { route } => {
+            client.retire_channel(&route).await?;
+            json!(true)
+        }
+        Action::AcknowledgePublic { route } => {
+            client.acknowledge_public_successor(&route).await?;
+            json!(true)
+        }
+        Action::ChannelArchives => serde_json::to_value(client.channel_archives())?,
+        Action::ArchiveHistory { server_id, route } => {
+            serde_json::to_value(client.archived_channel_history(&server_id, &route)?)?
+        }
         Action::Add { route, device } => {
             client.add_member(&route, &device).await?;
             json!(true)

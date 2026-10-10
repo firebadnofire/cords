@@ -74,6 +74,12 @@ A checkbox in `CHECKPOINT.md` MUST NOT be considered satisfied merely because a 
 
 # 2. Product vision
 
+Accepted ADR 0006 adds explicitly public, device-signed plaintext channels alongside
+MLS channels, permanent channel confidentiality, authenticated channel succession
+and partial sealed local channel archives. Its scoped confidentiality exceptions
+supersede the encrypted-only statements identified in that ADR; all identity,
+authorization, TLS and encrypted-channel guarantees remain mandatory.
+
 Cords is a Discord-shaped communication client without a single central Discord-owned account system. A user installs one client, maintains a portable cryptographic identity, and connects directly to independently operated Cords servers.
 
 A server is represented by its HTTPS origin, for example:

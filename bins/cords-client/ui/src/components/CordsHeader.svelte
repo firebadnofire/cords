@@ -21,7 +21,9 @@
       >{section === 'dms'
         ? 'Private conversations between authorized devices'
         : channel
-          ? `MLS epoch ${channel.epoch}`
+          ? channel.confidentiality_mode === 'public'
+            ? 'True public · signed plaintext'
+            : `MLS epoch ${channel.epoch}`
           : 'Right on the wire'}</span
     >
   </div>

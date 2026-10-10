@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ConfidentialitySelect from './components/ConfidentialitySelect.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { LockKeyhole } from '@lucide/svelte';
   import { onMount } from 'svelte';
@@ -37,13 +38,17 @@
   let legacyVault = false;
   let identity: Identity | null = null;
   let prefs = defaults();
+  let confidentialityMode: 'encrypted' | 'public' = 'encrypted';
+  let archives: Channel[] = [];
+  let archiveMessages: Message[] = [];
+  let archiveChannel: Channel | undefined;
   let channels: Channel[] = [];
   let contacts: Contact[] = [];
   let membershipRequests: MembershipRequest[] = [];
   let messages: Message[] = [];
   let route = '';
   let section: 'server' | 'dms' = 'server';
-  let overlay: 'connect' | 'settings' | 'admin' | 'create' | 'recovery' | null = null;
+  let overlay: 'connect' | 'settings' | 'admin' | 'create' | 'recovery' | 'archives' | null = null;
   let confirm: { title: string; description: string; execute: () => Promise<void> } | null = null;
   let origin = '';
   let removalPassword = '';
@@ -231,12 +236,27 @@
       section = 'server';
       if (status.ownership_state === 'OWNER_LOCKDOWN') {
         overlay = 'recovery';
+      } else if (status.ownership_state === 'UNCLAIMED') {
+        overlay = 'connect';
       } else if (!status.burned && status.ownership_state === 'CLAIMED') {
         status = await action<Status>('authenticate');
         channels = await action<Channel[]>('channels');
       }
       servers = await action<ServerListing[]>('servers');
     });
+  }
+  async function closeConnection() {
+    claimCode = '';
+    if (status?.server_id && status.ownership_state === 'UNCLAIMED') {
+      await run(async () => {
+        status = await action<Status>('deselect_server');
+        channels = [];
+        route = '';
+        messages = [];
+        servers = await action<ServerListing[]>('servers');
+        overlay = null;
+      });
+    } else overlay = null;
   }
   function removeServer(serverId: string) {
     overlay = null;
@@ -327,8 +347,8 @@
       channels = await action<Channel[]>('channels');
     });
   }
-  async function createChannel(channelName: string) {
-    const id = await action<string>('create', { name: channelName });
+  async function createChannel(channelName: string, mode: 'encrypted' | 'public' = 'encrypted') {
+    const id = await action<string>('create', { name: channelName, confidentiality_mode: mode });
     channels = await action<Channel[]>('channels');
     route = id;
     section = 'server';
@@ -481,7 +501,11 @@
           openSettings={() => (overlay = 'settings')}
         />
         {#if error || connectionError}<div role="alert" class="connection-error">
-            <strong>Action or connection failed</strong><span>{error || connectionError}</span>
+            <strong
+              >{(error || connectionError)?.includes('Channel Identity Conflict')
+                ? 'Channel Identity Conflict'
+                : 'Action or connection failed'}</strong
+            ><span>{error || connectionError}</span>
           </div>{/if}
         {#if status.admission_state === 'pending'}<div class="approval-notice" role="status">
             <strong>Waiting for approval</strong><span
@@ -498,6 +522,51 @@
             >
             <button on:click={() => (overlay = 'connect')}>Review connection</button>
           </div>{/if}
+        <button
+          on:click={() =>
+            void run(async () => {
+              archives = await action<Channel[]>('channel_archives');
+              archiveMessages = [];
+              archiveChannel = undefined;
+              overlay = 'archives';
+            })}>Archives · locally retained history</button
+        >
+        {#if selected?.transition?.value.succession}
+          {@const succession = selected.transition.value.succession.value}
+          <div class="approval-notice" role="status">
+            <strong
+              >Channel replaced: #{succession.predecessor.value.name} → #{succession.name}</strong
+            >
+            <p>
+              {succession.predecessor.value.confidentiality_mode} → {succession.confidentiality_mode}
+              · A new channel identity starts with empty history. Previously received history is retained
+              in Archives when available.
+            </p>
+            {#if selected.locally_archived}<button
+                on:click={() => void selectChannel(succession.successor_channel_id)}
+                >Open successor</button
+              >{/if}
+            {#if selected.requires_public_acknowledgement}
+              <p>
+                <strong
+                  >Future messages will not be end-to-end encrypted. The server and anyone with
+                  access can read, copy, and retain them.</strong
+                >
+              </p>
+              <button
+                disabled={busy}
+                on:click={() =>
+                  void run(async () => {
+                    await action('acknowledge_public', { route });
+                    channels = await action<Channel[]>('channels');
+                  })}>I understand — continue in the public channel</button
+              >
+            {/if}
+            <button on:click={() => status && void removeServer(status.server_id)}
+              >Leave server…</button
+            >
+          </div>
+        {/if}
         <ConversationView
           {section}
           channel={selected}
@@ -565,9 +634,23 @@
         close={() => (overlay = null)}
         create={createChannel}
         select={selectChannel}
+        replace={async (id, channelName, mode) => {
+          await action('replace_channel', {
+            route: id,
+            name: channelName,
+            confidentiality_mode: mode,
+          });
+          channels = await action<Channel[]>('channels');
+        }}
+        retire={async (id) => {
+          await action('retire_channel', { route: id });
+          channels = await action<Channel[]>('channels');
+        }}
         {decideMembership}
       />{/if}
-    {#if overlay === 'connect'}<Modal title="Connection and trust" close={() => (overlay = null)}
+    {#if overlay === 'connect'}<Modal
+        title="Connection and trust"
+        close={() => void closeConnection()}
         ><div class="modal-body connect-dialog">
           <p>
             Cords validates HTTPS, verifies signed discovery, and pins the server identity returned
@@ -593,8 +676,8 @@
             </section>
           {/if}
           <p class="hint">
-            Joining sends your self-declared nickname, profile picture and account fingerprint to
-            the server for membership review.
+            Joining sends your self-declared nickname, profile image URL and crop, and account
+            fingerprint to the server for membership review. Image bytes remain local.
           </p>
           <form on:submit|preventDefault={connect}>
             <label
@@ -677,22 +760,53 @@
           {#if error}<p role="alert" class="error">{error}</p>{/if}
         </form>
       </Modal>{/if}
-    {#if overlay === 'create'}<Modal title="Create encrypted channel" close={() => (overlay = null)}
+    {#if overlay === 'create'}<Modal title="Create channel" close={() => (overlay = null)}
         ><form
           class="modal-body"
           on:submit|preventDefault={() =>
             void run(async () => {
-              await createChannel(name);
+              await createChannel(name, confidentialityMode);
               name = '';
               overlay = null;
             })}
         >
-          <label>Channel name<input bind:value={name} required maxlength="100" /></label><button
+          <label>Channel name<input bind:value={name} required maxlength="100" /></label>
+          <ConfidentialitySelect bind:mode={confidentialityMode} /><button
             class="primary"
-            disabled={busy}>Create encrypted channel</button
+            disabled={busy}>Create channel</button
           >{#if error}<p role="alert" class="error">{error}</p>{/if}
         </form></Modal
       >{/if}
+    {#if overlay === 'archives'}<Modal title="Channel Archives" close={() => (overlay = null)} wide>
+        <div class="modal-body">
+          <p>
+            Partial locally retained history, sealed in this account vault. Archives contain only
+            messages this device received and are read-only.
+          </p>
+          {#each archives as archived (archived.channel_id)}
+            <button
+              on:click={() =>
+                void run(async () => {
+                  archiveChannel = archived;
+                  archiveMessages = await action<Message[]>('archive_history', {
+                    server_id: archived.identity?.value.server_id,
+                    route: archived.channel_id,
+                  });
+                })}
+              >#{archived.name} · {archived.confidentiality_mode} · {archived.channel_id}</button
+            >
+          {:else}<p>No retired channel history retained.</p>{/each}
+          {#if archiveChannel}<h3>
+              #{archiveChannel.name} · {archiveChannel.confidentiality_mode} · read-only
+            </h3>
+            <p>Server identity: {archiveChannel.identity?.value.server_id}</p>
+            {#each archiveMessages as message (message.message_id)}<article>
+                <strong>{message.sender_device_id}</strong>
+                <p>{message.body}</p>
+              </article>{:else}<p>No messages were retained locally.</p>{/each}
+          {/if}
+        </div>
+      </Modal>{/if}
     {#if removingAccount}<Modal
         title="Remove Account From Device"
         close={() => (removingAccount = false)}

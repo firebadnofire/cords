@@ -296,7 +296,11 @@ impl Statement for UserCard {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserCardPicture {
-    /// Bounded, client-normalized PNG. Servers never fetch user-provided image URLs.
+    /// HTTPS source selected by the user. Servers store but never fetch this URL.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+    /// Legacy bounded inline PNG accepted for stored-card compatibility. New clients omit it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub data: String,
     pub shape: String,
     pub x: u16,
@@ -465,7 +469,132 @@ pub struct KeyPackageUpload {
 #[serde(deny_unknown_fields)]
 pub struct ChannelCreate {
     pub name: String,
+    #[serde(default)]
+    pub confidentiality_mode: ConfidentialityMode,
     pub idempotency_key: String,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfidentialityMode {
+    #[default]
+    Encrypted,
+    Public,
+}
+impl ConfidentialityMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Encrypted => "encrypted",
+            Self::Public => "public",
+        }
+    }
+}
+
+/// Immutable server-certified identity, retained locally even after retirement.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelIdentity {
+    pub version: u16,
+    pub server_id: String,
+    pub channel_id: String,
+    pub name: String,
+    pub creator_device_id: String,
+    pub confidentiality_mode: ConfidentialityMode,
+    pub created_at: u64,
+}
+impl Statement for ChannelIdentity {
+    const DOMAIN: &'static str = "CORDS-CHANNEL-IDENTITY-V1";
+}
+
+/// The authorized device chooses a fresh proposed ID; the server atomically adopts it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSuccession {
+    pub version: u16,
+    pub server_id: String,
+    pub predecessor: Signed<ChannelIdentity>,
+    pub successor_channel_id: String,
+    pub name: String,
+    pub confidentiality_mode: ConfidentialityMode,
+    pub initiator: Contact,
+    pub membership: Signed<Membership>,
+    pub issued_at: u64,
+    pub nonce: String,
+}
+impl Statement for ChannelSuccession {
+    const DOMAIN: &'static str = "CORDS-CHANNEL-SUCCESSION-V1";
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelTransition {
+    pub version: u16,
+    pub server_id: String,
+    pub channel_id: String,
+    pub retired: bool,
+    pub generation: u64,
+    pub succession: Option<Signed<ChannelSuccession>>,
+}
+impl Statement for ChannelTransition {
+    const DOMAIN: &'static str = "CORDS-CHANNEL-TRANSITION-V1";
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelReplace {
+    pub record: Signed<ChannelSuccession>,
+    pub idempotency_key: String,
+}
+
+/// Plaintext signed with the device identity key, never an MLS key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicMessage {
+    pub version: u16,
+    pub server_id: String,
+    pub channel_id: String,
+    pub event_id: String,
+    pub idempotency_key: String,
+    pub contact: Contact,
+    pub membership: Signed<Membership>,
+    pub message: Message,
+}
+impl Statement for PublicMessage {
+    const DOMAIN: &'static str = "CORDS-PUBLIC-MESSAGE-V1";
+}
+
+impl Signed<PublicMessage> {
+    /// Verify all routing and author bindings. Identity freshness is enforced by the caller.
+    pub fn validate(
+        &self,
+        server_id: &str,
+        channel_id: &str,
+        server_key: &str,
+    ) -> Result<(), InvalidObject> {
+        let v = &self.value;
+        let a = &v.contact.authorization.value;
+        let m = &v.membership.value;
+        let message = &v.message;
+        self.verify(&a.device_public_key)?;
+        v.membership.verify(server_key)?;
+        if v.version != 1
+            || v.server_id != server_id
+            || v.channel_id != channel_id
+            || m.server_id != server_id
+            || m.account_id != a.account_id
+            || m.device_id != a.device_id
+            || m.status != "active"
+            || !m.capabilities.iter().any(|c| c == "channel.write")
+            || message.schema_version != 1
+            || message.event_kind != "message.create"
+            || message.sender_account_id != a.account_id
+            || message.sender_device_id != a.device_id
+            || message.body.len() > MAX_TEXT
+            || uuid::Uuid::parse_str(&message.message_id).is_err()
+            || uuid::Uuid::parse_str(&v.event_id).is_err()
+            || v.idempotency_key.is_empty()
+        {
+            return Err(InvalidObject);
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -476,6 +605,17 @@ pub struct Channel {
     pub epoch: u64,
     pub members: Vec<Contact>,
     pub binding: Option<Signed<GroupBinding>>,
+    #[serde(default)]
+    pub confidentiality_mode: ConfidentialityMode,
+    #[serde(default)]
+    pub identity: Option<Signed<ChannelIdentity>>,
+    #[serde(default)]
+    pub transition: Option<Signed<ChannelTransition>>,
+    /// Client-derived state; network metadata cannot authorize acknowledgement.
+    #[serde(default)]
+    pub requires_public_acknowledgement: bool,
+    #[serde(default)]
+    pub locally_archived: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -545,6 +685,8 @@ pub struct EventUpload {
     pub content_encoding: String,
     pub ciphertext: String,
     pub idempotency_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_message: Option<Signed<PublicMessage>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

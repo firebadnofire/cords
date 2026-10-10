@@ -8,11 +8,12 @@ use cords_identity::{Identity, validate_contact, validate_transition};
 use cords_protocol::{
     ServerOrigin, SignedServerMetadataV1,
     messaging::{
-        Challenge, ChallengeRequest, Channel, ChannelBind, ChannelCreate, CommitUpload, Contact,
-        DepartureProof, DepartureReceipt, DepartureRequest, DeviceAuthorization, EventUpload,
-        GroupBinding, IdentityBurn, KeyPackageUpload, MAX_TEXT, MembershipRequest, Message,
-        OwnershipClaim, OwnershipProof, OwnershipRecoveryClaim, OwnershipRecoveryProof,
-        OwnershipState, PolicyRemoval, RevocationRequest, RosterAction, RosterOperation,
+        Challenge, ChallengeRequest, Channel, ChannelBind, ChannelCreate, ChannelReplace,
+        ChannelSuccession, CommitUpload, ConfidentialityMode, Contact, DepartureProof,
+        DepartureReceipt, DepartureRequest, DeviceAuthorization, EventUpload, GroupBinding,
+        IdentityBurn, KeyPackageUpload, MAX_TEXT, MembershipRequest, Message, OwnershipClaim,
+        OwnershipProof, OwnershipRecoveryClaim, OwnershipRecoveryProof, OwnershipState,
+        PolicyRemoval, PublicMessage, RevocationRequest, RosterAction, RosterOperation,
         RosterRequest, RouteEvent, ServerDeparture, Session, SessionRequest, Signed,
         SuccessorAcceptance, SuccessorDesignation, SuccessorRequest, WS_PROTOCOL, canonical,
         decode, encode, hash,
@@ -74,6 +75,17 @@ struct Durable {
     pending_departures: BTreeMap<String, DepartureRequest<ServerDeparture>>,
     #[serde(default)]
     burned: bool,
+    #[serde(default)]
+    channel_identities: BTreeMap<String, LocalChannel>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct LocalChannel {
+    channel: Channel,
+    acknowledged: bool,
+    #[serde(default)]
+    archived: bool,
+    #[serde(default)]
+    retained_history: Vec<Message>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct ServerSnapshot {
@@ -337,11 +349,11 @@ impl Client {
             .unwrap_or("You")
             .to_owned();
         let picture = preferences.get("avatar");
-        let data = picture
-            .and_then(|p| p.get("data"))
+        let url = picture
+            .and_then(|p| p.get("url"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
-        let avatar = if data.is_empty() {
+        let avatar = if url.is_empty() {
             None
         } else {
             // Quantization is explicit and bounded; malformed preferences must not silently clamp.
@@ -360,7 +372,8 @@ impl Client {
                     .unwrap_or(default)
             };
             Some(cords_protocol::messaging::UserCardPicture {
-                data: data.into(),
+                url: url.into(),
+                data: String::new(),
                 shape: picture
                     .and_then(|p| p.get("shape"))
                     .and_then(serde_json::Value::as_str)
@@ -766,6 +779,19 @@ impl Client {
         self.persist(&[], &[]).await?;
         Ok(self.status())
     }
+    /// Clear the active server without removing its trusted snapshot or cached data.
+    /// # Errors
+    /// Refuses unreadable state or failed persistent storage.
+    pub async fn deselect_server(&mut self) -> Result<Status> {
+        if !self.durable.server_id.is_empty() {
+            self.durable
+                .servers
+                .insert(self.durable.server_id.clone(), self.active_snapshot()?);
+        }
+        self.clear_active_server()?;
+        self.persist(&[], &[]).await?;
+        Ok(self.status())
+    }
     async fn persist(
         &mut self,
         messages: &[(String, u64, Message)],
@@ -801,7 +827,7 @@ impl Client {
         }
         for event in events {
             sqlx::query("INSERT INTO ciphertext_cache(server_id,route_id,sequence,envelope) VALUES(?1,?2,?3,?4) ON CONFLICT(server_id,route_id,sequence) DO NOTHING")
-                .bind(&self.durable.server_id).bind(&event.envelope.route_id).bind(i64::try_from(event.server_sequence)?).bind(serde_json::to_vec(event)?).execute(&mut *tx).await?;
+                .bind(&self.durable.server_id).bind(&event.envelope.route_id).bind(i64::try_from(event.server_sequence)?).bind(protection::seal(&self.key, format!("{}/event/{}/{}/{}", self.installation, self.durable.server_id, event.envelope.route_id, event.server_sequence).as_bytes(), &Zeroizing::new(serde_json::to_vec(event)?))?).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -1695,10 +1721,16 @@ impl Client {
                     self.durable.revoked = true;
                     self.durable.session = None;
                 }
-                "create" => {
+                "create" | "replace" => {
                     let route = value.as_str().context("invalid channel response")?;
-                    self.crypto.create(route)?;
+                    let channel = self.fetch_channel(route).await?;
                     self.durable.cursors.insert(route.into(), 0);
+                    if channel.confidentiality_mode == ConfidentialityMode::Public {
+                        self.durable.pending = None;
+                        self.persist(&[], &[]).await?;
+                        continue;
+                    }
+                    self.crypto.create(route)?;
                     let binding = self.identity.sign_device(GroupBinding {
                         version: 1,
                         server_id: self.durable.server_id.clone(),
@@ -1752,12 +1784,22 @@ impl Client {
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn create_channel(&mut self, name: &str) -> Result<String> {
+        self.create_channel_with_mode(name, ConfidentialityMode::Encrypted)
+            .await
+    }
+    /// Create a permanently classified channel; encryption remains the default.
+    pub async fn create_channel_with_mode(
+        &mut self,
+        name: &str,
+        mode: ConfidentialityMode,
+    ) -> Result<String> {
         self.ensure_session().await?;
         self.flush().await?;
         let value = self
             .queue(
                 "/api/v1/channels".into(),
                 ChannelCreate {
+                    confidentiality_mode: mode,
                     name: name.into(),
                     idempotency_key: id(),
                 },
@@ -1805,7 +1847,266 @@ impl Client {
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn channels(&mut self) -> Result<Vec<Channel>> {
         self.ensure_session().await?;
-        self.get("/api/v1/channels").await
+        let channels: Vec<Channel> = self.get("/api/v1/channels").await?;
+        let mut verified = Vec::new();
+        for channel in channels {
+            verified.push(self.observe_channel(channel).await?);
+        }
+        self.persist(&[], &[]).await?;
+        Ok(verified)
+    }
+
+    async fn fetch_channel(&mut self, route: &str) -> Result<Channel> {
+        let channel: Channel = self.get(&format!("/api/v1/channels/{route}")).await?;
+        ensure!(
+            channel.channel_id == route,
+            "Channel Identity Conflict: response changed the requested channel identity"
+        );
+        self.observe_channel(channel).await
+    }
+
+    async fn observe_channel(&mut self, mut channel: Channel) -> Result<Channel> {
+        const CONFLICT: &str = "Channel Identity Conflict: This server attempted to change the confidentiality mode or established identity of an existing channel. Cords has rejected the change because it violates the channel's established security properties.";
+        let identity = channel
+            .identity
+            .as_ref()
+            .context("Channel identity verification unavailable: upgrade the server")?;
+        identity.verify(&self.durable.server_key)?;
+        let v = &identity.value;
+        ensure!(
+            v.version == 1
+                && v.server_id == self.durable.server_id
+                && v.channel_id == channel.channel_id
+                && uuid::Uuid::parse_str(&v.channel_id).is_ok()
+                && v.confidentiality_mode == channel.confidentiality_mode
+                && v.name == channel.name
+                && v.creator_device_id == channel.creator_device_id,
+            CONFLICT
+        );
+        let transition = channel
+            .transition
+            .as_ref()
+            .context("missing authenticated channel state")?;
+        transition.verify(&self.durable.server_key)?;
+        let t = &transition.value;
+        ensure!(
+            t.version == 1 && t.server_id == v.server_id && t.channel_id == v.channel_id,
+            CONFLICT
+        );
+        let key = format!("{}/{}", v.server_id, v.channel_id);
+        // Upgrade continuity: existing MLS state predates signed mode metadata.
+        // It is already proof that this locally established route is encrypted.
+        if self.crypto.epoch(&channel.channel_id).is_ok() {
+            ensure!(
+                v.confidentiality_mode == ConfidentialityMode::Encrypted,
+                CONFLICT
+            );
+        }
+        let previous = self.durable.channel_identities.get(&key).cloned();
+        if let Some(previous) = &previous {
+            ensure!(
+                canonical(&previous.channel.identity)? == canonical(&channel.identity)?,
+                CONFLICT
+            );
+            let old = previous
+                .channel
+                .transition
+                .as_ref()
+                .context("missing retained channel state")?;
+            ensure!(
+                t.generation >= old.value.generation
+                    && (t.generation != old.value.generation
+                        || canonical(transition)? == canonical(old)?)
+                    && (!old.value.retired || t.retired),
+                "Channel Identity Conflict: retired or authenticated channel state was rolled back"
+            );
+            if old.value.succession.is_some() {
+                ensure!(
+                    canonical(&old.value.succession)? == canonical(&t.succession)?,
+                    "Channel Identity Conflict: succession changed"
+                );
+            }
+        }
+        let mut downgrade = false;
+        if let Some(record) = &t.succession {
+            let s = &record.value;
+            s.predecessor.verify(&self.durable.server_key)?;
+            validate_contact(&s.initiator, s.issued_at)?;
+            record.verify(&s.initiator.authorization.value.device_public_key)?;
+            s.membership.verify(&self.durable.server_key)?;
+            let m = &s.membership.value;
+            let a = &s.initiator.authorization.value;
+            let original = &s.predecessor.value;
+            ensure!(
+                s.version == 1
+                    && original.version == 1
+                    && s.server_id == v.server_id
+                    && original.server_id == v.server_id
+                    && original.channel_id != s.successor_channel_id
+                    && uuid::Uuid::parse_str(&s.successor_channel_id).is_ok()
+                    && uuid::Uuid::parse_str(&s.nonce).is_ok()
+                    && m.server_id == v.server_id
+                    && m.status == "active"
+                    && m.device_id == a.device_id
+                    && m.account_id == a.account_id
+                    && m.capabilities.iter().any(|c| c == "channel.create")
+                    && (original.creator_device_id == a.device_id
+                        || m.capabilities.iter().any(|c| c == "channel.manage")),
+                "invalid channel succession authority"
+            );
+            let original_key = format!("{}/{}", v.server_id, original.channel_id);
+            if let Some(known) = self.durable.channel_identities.get(&original_key) {
+                ensure!(
+                    canonical(&known.channel.identity)? == canonical(&Some(s.predecessor.clone()))?,
+                    CONFLICT
+                );
+            }
+            if v.channel_id == original.channel_id {
+                ensure!(
+                    t.retired && canonical(identity)? == canonical(&s.predecessor)?,
+                    "invalid predecessor retirement"
+                );
+            } else {
+                ensure!(
+                    v.channel_id == s.successor_channel_id
+                        && v.confidentiality_mode == s.confidentiality_mode
+                        && v.name == s.name
+                        && v.creator_device_id == a.device_id,
+                    "invalid successor identity"
+                );
+                downgrade = original.confidentiality_mode == ConfidentialityMode::Encrypted
+                    && v.confidentiality_mode == ConfidentialityMode::Public;
+            }
+        }
+        let archived = t.retired || previous.as_ref().is_some_and(|p| p.archived);
+        let acknowledged = previous.as_ref().is_some_and(|p| p.acknowledged);
+        let retained_history = if let Some(old) = &previous {
+            if old.archived {
+                old.retained_history.clone()
+            } else if archived {
+                self.history(&channel.channel_id).await?
+            } else {
+                Vec::new()
+            }
+        } else if archived {
+            self.history(&channel.channel_id).await?
+        } else {
+            Vec::new()
+        };
+        channel.requires_public_acknowledgement = downgrade && !acknowledged;
+        channel.locally_archived = archived;
+        self.durable.channel_identities.insert(
+            key,
+            LocalChannel {
+                channel: channel.clone(),
+                acknowledged,
+                archived,
+                retained_history,
+            },
+        );
+        self.persist(&[], &[]).await?;
+        Ok(channel)
+    }
+
+    /// Explicit user action, durably scoped to this successor identity.
+    pub async fn acknowledge_public_successor(&mut self, route: &str) -> Result<()> {
+        let channel = self.fetch_channel(route).await?;
+        ensure!(
+            channel.confidentiality_mode == ConfidentialityMode::Public
+                && !channel.locally_archived,
+            "not an active public channel"
+        );
+        let local = self
+            .durable
+            .channel_identities
+            .get_mut(&format!("{}/{route}", self.durable.server_id))
+            .context("missing channel identity")?;
+        local.acknowledged = true;
+        self.persist(&[], &[]).await
+    }
+
+    /// Atomically retire the predecessor and establish a fresh server-adopted UUID.
+    pub async fn replace_channel(
+        &mut self,
+        route: &str,
+        name: &str,
+        mode: ConfidentialityMode,
+    ) -> Result<String> {
+        self.ensure_session().await?;
+        self.flush().await?;
+        let channel = self.fetch_channel(route).await?;
+        ensure!(!channel.locally_archived, "CHANNEL_RETIRED");
+        let request = ChannelReplace {
+            record: self.identity.sign_device(ChannelSuccession {
+                version: 1,
+                server_id: self.durable.server_id.clone(),
+                predecessor: channel.identity.context("missing predecessor identity")?,
+                successor_channel_id: id(),
+                name: name.into(),
+                confidentiality_mode: mode,
+                initiator: self.identity.contact(&self.crypto.public_key())?,
+                membership: self
+                    .durable
+                    .session
+                    .as_ref()
+                    .context("missing session")?
+                    .membership
+                    .clone(),
+                issued_at: now()?,
+                nonce: id(),
+            })?,
+            idempotency_key: id(),
+        };
+        let value = self
+            .queue(
+                format!("/api/v1/channels/{route}/replace"),
+                request,
+                "replace",
+                route,
+            )
+            .await?;
+        self.fetch_channel(route).await?;
+        Ok(value
+            .as_str()
+            .context("invalid replacement response")?
+            .into())
+    }
+
+    pub async fn retire_channel(&mut self, route: &str) -> Result<()> {
+        self.ensure_session().await?;
+        self.flush().await?;
+        self.queue(
+            format!("/api/v1/channels/{route}/retire"),
+            id(),
+            "retire",
+            route,
+        )
+        .await?;
+        self.fetch_channel(route).await?;
+        Ok(())
+    }
+
+    /// Partial history actually received by this vault, always read-only and sealed at rest.
+    pub fn channel_archives(&self) -> Vec<Channel> {
+        self.durable
+            .channel_identities
+            .values()
+            .filter(|l| l.archived)
+            .map(|l| {
+                let mut channel = l.channel.clone();
+                channel.locally_archived = true;
+                channel
+            })
+            .collect()
+    }
+    pub fn archived_channel_history(&self, server: &str, route: &str) -> Result<Vec<Message>> {
+        let local = self
+            .durable
+            .channel_identities
+            .get(&format!("{server}/{route}"))
+            .context("channel archive unavailable")?;
+        ensure!(local.archived, "channel is not archived");
+        Ok(local.retained_history.clone())
     }
     /// List pending requests visible to a server manager.
     /// # Errors
@@ -1919,8 +2220,11 @@ impl Client {
         let channel: Channel = self
             .get(&format!("/api/v1/channels/{route}?epoch={epoch}"))
             .await?;
+        self.observe_channel(channel.clone()).await?;
         ensure!(
-            channel.channel_id == route && channel.epoch == epoch,
+            channel.confidentiality_mode == ConfidentialityMode::Encrypted
+                && channel.channel_id == route
+                && channel.epoch == epoch,
             "channel binding mismatch"
         );
         let binding = channel
@@ -2125,6 +2429,16 @@ impl Client {
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn join_channel(&mut self, route: &str) -> Result<()> {
         self.ensure_session().await?;
+        let channel = self.fetch_channel(route).await?;
+        if channel.locally_archived {
+            return Ok(());
+        }
+        if channel.confidentiality_mode == ConfidentialityMode::Public {
+            self.durable.cursors.entry(route.into()).or_insert(0);
+            self.persist(&[], &[]).await?;
+            self.sync_route(route).await?;
+            return Ok(());
+        }
         if self.durable.cursors.contains_key(route) {
             return Ok(());
         }
@@ -2143,6 +2457,15 @@ impl Client {
         self.ensure_session().await?;
         self.flush().await?;
         self.sync_route(route).await?;
+        let channel = self.fetch_channel(route).await?;
+        ensure!(
+            !channel.locally_archived,
+            "CHANNEL_RETIRED: archived channels are read-only"
+        );
+        ensure!(
+            !channel.requires_public_acknowledgement,
+            "PUBLIC_ACKNOWLEDGEMENT_REQUIRED: future messages will not be end-to-end encrypted"
+        );
         ensure!(body.len() <= MAX_TEXT, "message exceeds text limit");
         let message = Message {
             schema_version: 1,
@@ -2153,29 +2476,42 @@ impl Client {
             event_kind: "message.create".into(),
             body: body.into(),
         };
-        let bytes = self
-            .crypto
-            .encrypt(route, &Zeroizing::new(serde_json::to_vec(&message)?))?;
-        let request = EventUpload {
+        let session = self
+            .durable
+            .session
+            .as_ref()
+            .context("missing membership")?;
+        let mut request = EventUpload {
             protocol_version: 1,
             event_id: id(),
             route_kind: "channel".into(),
             route_id: route.into(),
-            sender_member_id: self
-                .durable
-                .session
-                .as_ref()
-                .context("missing membership")?
-                .membership
-                .value
-                .member_id
-                .clone(),
+            sender_member_id: session.membership.value.member_id.clone(),
             sender_device_id: message.sender_device_id.clone(),
             client_created_at: message.client_timestamp,
             content_encoding: "mls.application".into(),
-            ciphertext: encode(bytes),
+            ciphertext: String::new(),
             idempotency_key: id(),
+            public_message: None,
         };
+        if channel.confidentiality_mode == ConfidentialityMode::Public {
+            request.content_encoding = "public.signed".into();
+            request.public_message = Some(self.identity.sign_device(PublicMessage {
+                version: 1,
+                server_id: self.durable.server_id.clone(),
+                channel_id: route.into(),
+                event_id: request.event_id.clone(),
+                idempotency_key: request.idempotency_key.clone(),
+                contact: self.identity.contact(&self.crypto.public_key())?,
+                membership: session.membership.clone(),
+                message: message.clone(),
+            })?);
+        } else {
+            request.ciphertext = encode(
+                self.crypto
+                    .encrypt(route, &Zeroizing::new(serde_json::to_vec(&message)?))?,
+            );
+        }
         self.durable
             .own_events
             .insert(request.event_id.clone(), message.message_id.clone());
@@ -2212,6 +2548,13 @@ impl Client {
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn sync_route(&mut self, route: &str) -> Result<SyncResult> {
+        let channel = self.fetch_channel(route).await?;
+        if channel.locally_archived {
+            return Ok(SyncResult {
+                fetched: 0,
+                messages: Vec::new(),
+            });
+        }
         let mut fetched = 0;
         let mut messages = Vec::new();
         loop {
@@ -2234,6 +2577,61 @@ impl Client {
                 ensure!(
                     event.server_sequence == cursor + 1 && event.envelope.route_id == route,
                     "CORDS_MLS_EPOCH_GAP"
+                );
+                if channel.confidentiality_mode == ConfidentialityMode::Public {
+                    let signed = event
+                        .envelope
+                        .public_message
+                        .as_ref()
+                        .context("missing signed public message")?;
+                    signed.validate(&self.durable.server_id, route, &self.durable.server_key)?;
+                    let v = &signed.value;
+                    ensure!(
+                        event.envelope.protocol_version == 1
+                            && event.envelope.route_kind == "channel"
+                            && event.envelope.content_encoding == "public.signed"
+                            && event.envelope.ciphertext.is_empty()
+                            && v.event_id == event.envelope.event_id
+                            && v.idempotency_key == event.envelope.idempotency_key
+                            && v.membership.value.member_id == event.envelope.sender_member_id
+                            && v.message.sender_device_id == event.envelope.sender_device_id
+                            && v.message.client_timestamp == event.envelope.client_created_at,
+                        "invalid public envelope binding"
+                    );
+                    self.observe_contact(&v.contact)?;
+                    let own = self.durable.own_events.get(&event.envelope.event_id);
+                    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM message_cache WHERE server_id=?1 AND route_id=?2 AND message_id=?3)")
+                        .bind(&self.durable.server_id).bind(route).bind(&v.message.message_id).fetch_one(self.store.pool()).await?;
+                    ensure!(
+                        !exists || own == Some(&v.message.message_id),
+                        "replayed public message identifier"
+                    );
+                    if let Some(own) = own {
+                        ensure!(
+                            canonical(&self.cached_message(route, own).await?)?
+                                == canonical(&v.message)?,
+                            "altered own public message"
+                        );
+                    }
+                    self.durable
+                        .cursors
+                        .insert(route.into(), event.server_sequence);
+                    self.persist(
+                        &[(route.into(), event.server_sequence, v.message.clone())],
+                        std::slice::from_ref(&event),
+                    )
+                    .await?;
+                    messages.push(v.message.clone());
+                    fetched += 1;
+                    continue;
+                }
+                ensure!(
+                    event.envelope.public_message.is_none()
+                        && matches!(
+                            event.envelope.content_encoding.as_str(),
+                            "mls.application" | "mls.commit"
+                        ),
+                    "encrypted channel received non-MLS data"
                 );
                 if let Some(own) = self
                     .durable
@@ -2325,7 +2723,12 @@ impl Client {
             let next = self.sync_route(&route).await?;
             result.fetched += next.fetched;
             result.messages.extend(next.messages);
-            let channel: Channel = self.get(&format!("/api/v1/channels/{route}")).await?;
+            let channel = self.fetch_channel(&route).await?;
+            if channel.locally_archived
+                || channel.confidentiality_mode == ConfidentialityMode::Public
+            {
+                continue;
+            }
             let manage = self.durable.session.as_ref().is_some_and(|session| {
                 session
                     .membership
@@ -2373,6 +2776,15 @@ impl Client {
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn history(&self, route: &str) -> Result<Vec<Message>> {
+        if let Some(local) = self
+            .durable
+            .channel_identities
+            .get(&format!("{}/{}", self.durable.server_id, route))
+        {
+            if local.archived {
+                return Ok(local.retained_history.clone());
+            }
+        }
         let ids: Vec<String> = sqlx::query_scalar(
             "SELECT message_id FROM message_cache WHERE server_id=?1 AND route_id=?2 ORDER BY sequence,message_id",
         )
@@ -2583,6 +2995,63 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
+    async fn deselected_server_remains_trusted_and_can_be_reselected_after_restart() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        seed_server(&mut client, "server-a", "retained server A history").await?;
+
+        let status = client.deselect_server().await?;
+        assert!(status.server_id.is_empty());
+        assert_eq!(client.servers().len(), 1);
+        assert!(!client.servers()[0].active);
+        client.shutdown().await;
+
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        assert!(client.status().server_id.is_empty());
+        assert!(!client.servers()[0].active);
+        client.select_server("server-a").await?;
+        assert_eq!(client.status().server_id, "server-a");
+        assert_eq!(
+            client.history("same-route").await?[0].body,
+            "retained server A history"
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn user_card_publishes_avatar_url_without_local_png_cache() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        client
+            .save_ui_preferences(serde_json::json!({
+                "version": 1,
+                "displayName": "URL profile",
+                "avatar": {
+                    "url": "https://images.example/profile.webp",
+                    "data": "data:image/png;base64,local-only-cache",
+                    "shape": "square",
+                    "x": 25,
+                    "y": 75,
+                    "zoom": 1.5
+                }
+            }))
+            .await?;
+
+        let contact = client.self_contact()?;
+        let avatar = contact
+            .user_card
+            .context("missing user card")?
+            .value
+            .avatar
+            .context("missing avatar")?;
+        assert_eq!(avatar.url, "https://images.example/profile.webp");
+        assert!(avatar.data.is_empty());
+        let encoded = serde_json::to_string(&avatar)?;
+        assert!(!encoded.contains("data:image"));
+        assert!(!encoded.contains("\"data\""));
+        assert_eq!((avatar.x, avatar.y, avatar.zoom_milli), (25, 75, 1500));
+        Ok(())
+    }
+    #[tokio::test]
     async fn burn_delivery_failures_persist_backoff_and_disable_ordinary_requests() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
@@ -2721,6 +3190,115 @@ mod tests {
             .execute(a.store.pool())
             .await?;
         assert!(a.history(route).await.is_err());
+        Ok(())
+    }
+    #[tokio::test]
+    async fn channel_identity_conflict_tombstone_survives_restart() -> Result<()> {
+        use cords_protocol::messaging::{ChannelIdentity, ChannelTransition};
+        let temp = tempfile::tempdir()?;
+        let server = Identity::generate(now()?)?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        client.durable.server_id = "test-server".into();
+        client.durable.server_key = server.authorization.value.root_public_key.clone();
+        client.durable.origin = "https://example.com".into();
+        let route = id();
+        let mut channel = Channel {
+            channel_id: route.clone(),
+            name: "same display name".into(),
+            creator_device_id: client.status().device_id,
+            epoch: 0,
+            members: Vec::new(),
+            binding: None,
+            confidentiality_mode: ConfidentialityMode::Encrypted,
+            identity: None,
+            transition: None,
+            requires_public_acknowledgement: false,
+            locally_archived: false,
+        };
+        channel.identity = Some(server.sign_root(ChannelIdentity {
+            version: 1,
+            server_id: "test-server".into(),
+            channel_id: route.clone(),
+            name: channel.name.clone(),
+            creator_device_id: channel.creator_device_id.clone(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
+            created_at: 1,
+        })?);
+        channel.transition = Some(server.sign_root(ChannelTransition {
+            version: 1,
+            server_id: "test-server".into(),
+            channel_id: route.clone(),
+            retired: false,
+            generation: 0,
+            succession: None,
+        })?);
+        client.observe_channel(channel.clone()).await?;
+        let message = Message {
+            schema_version: 1,
+            message_id: id(),
+            sender_account_id: client.status().account_id,
+            sender_device_id: client.status().device_id,
+            client_timestamp: now()?,
+            event_kind: "message.create".into(),
+            body: "SEALED_ARCHIVE_SECRET".into(),
+        };
+        client.persist(&[(route.clone(), 1, message)], &[]).await?;
+        channel.transition = Some(server.sign_root(ChannelTransition {
+            version: 1,
+            server_id: "test-server".into(),
+            channel_id: route.clone(),
+            retired: true,
+            generation: 2,
+            succession: None,
+        })?);
+        assert!(
+            client
+                .observe_channel(channel.clone())
+                .await?
+                .locally_archived
+        );
+        assert_eq!(
+            client
+                .archived_channel_history("test-server", &route)?
+                .len(),
+            1
+        );
+        client.shutdown().await;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        let mut conflicting = channel.clone();
+        conflicting.confidentiality_mode = ConfidentialityMode::Public;
+        let mut identity = conflicting
+            .identity
+            .as_ref()
+            .context("identity")?
+            .value
+            .clone();
+        identity.confidentiality_mode = ConfidentialityMode::Public;
+        conflicting.identity = Some(server.sign_root(identity)?);
+        let error = client
+            .observe_channel(conflicting)
+            .await
+            .err()
+            .context("accepted identity reuse")?;
+        assert!(error.to_string().contains("Channel Identity Conflict"));
+        let mut rollback = channel.clone();
+        rollback.transition = Some(server.sign_root(ChannelTransition {
+            version: 1,
+            server_id: "test-server".into(),
+            channel_id: route.clone(),
+            retired: false,
+            generation: 0,
+            succession: None,
+        })?);
+        assert!(client.observe_channel(rollback).await.is_err());
+        assert_eq!(
+            client.channel_archives()[0].confidentiality_mode,
+            ConfidentialityMode::Encrypted
+        );
+        assert_eq!(
+            client.history(&route).await?[0].body,
+            "SEALED_ARCHIVE_SECRET"
+        );
         Ok(())
     }
 }

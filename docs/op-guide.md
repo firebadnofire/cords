@@ -593,3 +593,32 @@ into an isolated environment first, verify it, and only then replace the failed 
 
 If a corrective action would delete a volume, reset trust, replace `server-signing.key`, restore a
 database, or discard an existing owner record, stop and take a verified backup first.
+# Public channels and channel replacement
+
+Upgrade server and desktop together for PostgreSQL schema 11. Back up the database
+and matching server signing key, plus client vaults, before applying migrations.
+Restore matching pre-migration artifacts for rollback; never roll back live MLS
+state or regenerate the established server key.
+
+Channel creation defaults to end-to-end encrypted. **True public** sends signed
+plaintext over verified HTTPS: the server and readers can read, copy, index and
+retain bodies. Confidentiality is separate from read/write/management permission;
+public posting still requires an authorized root-certified device and membership.
+Current public channels are readable/writable by admitted members with the existing
+channel capabilities; anonymous reads and finer channel overrides are deferred.
+
+Confidentiality settings are read-only. In Server settings → Channels, the owner
+may explicitly confirm retirement or create a successor with a new ID and empty
+history. A pending MLS roster operation must finish first. Identical names are
+allowed. Old keys and messages never move to the successor. Encrypted-to-public
+successors require each client user's acknowledgement before sending.
+
+Retirement preserves channel identity tombstones. Clients reject **Channel Identity
+Conflict** rather than accepting changed modes or rollback. On reconnect, refresh
+channel metadata to discover authenticated succession. Previously received history
+is retained as a partial, read-only channel Archive sealed in the local account
+vault; it survives server removal. Whole-account removal deletes that vault.
+Broader server/DM history backups and complete history export are not implemented.
+See [public-channel protocol](protocol/public-channels.md) and
+[ADR 0006](adr/0006-public-channels-and-channel-succession.md).
+

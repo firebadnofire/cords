@@ -154,7 +154,7 @@
             <div>
               <strong>{draft.displayName || 'You'}</strong><span>Portable Cords identity</span
               ><small
-                >Nickname and profile picture are shared with servers when you request membership.</small
+                >Nickname, profile image URL and crop are shared when you request membership.</small
               >
             </div>
           </div>
@@ -174,14 +174,15 @@
           <div>
             <strong>Local presentation</strong>
             <p>
-              Images are normalized to bounded PNG data and stored with encrypted local preferences.
+              The HTTPS URL and crop are public presentation metadata. The normalized preview stays
+              encrypted on this installation.
             </p>
           </div>
         </div>
         <ImageEditor title="Profile image source and crop" bind:value={draft.avatar} />
         <div class="account-banner">
           <Info size={19} /><span
-            >No profile publication API exists. Other participants do not receive this local image.</span
+            >Signed user cards publish the HTTPS URL and crop, not the locally cached image bytes.</span
           >
         </div>
       {:else if page === 'Jewel'}

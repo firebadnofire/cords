@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('admission and recovery presentation', () => {
-  async function open(pending: boolean) {
+  async function open(pending: boolean, ownershipState = 'CLAIMED') {
     vi.useFakeTimers();
     Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
       configurable: true,
@@ -25,13 +25,16 @@ describe('admission and recovery presentation', () => {
         this.setAttribute('open', '');
       },
     });
+    const server = {
+      origin: 'https://server.example',
+      server_id: 'server',
+      ownership_state: ownershipState,
+      ownership_generation: 2,
+    };
     let status: Status = {
       account_id: 'account',
       device_id: 'device',
-      origin: 'https://server.example',
-      server_id: 'server',
-      ownership_state: 'CLAIMED',
-      ownership_generation: 2,
+      ...server,
       burned: false,
       admission_state: 'active',
       join_policy: ['moderator_approval'],
@@ -70,10 +73,8 @@ describe('admission and recovery presentation', () => {
         if (kind === 'servers')
           return [
             {
-              origin: status.origin,
-              server_id: 'server',
-              ownership_state: status.ownership_state,
-              active: true,
+              ...server,
+              active: status.server_id === server.server_id,
               archived: false,
               remote_drop_confirmed: false,
             },
@@ -82,7 +83,24 @@ describe('admission and recovery presentation', () => {
           status.admission_state = 'pending';
           throw new Error('CORDS_APPROVAL_PENDING: HTTP 403 Forbidden');
         }
-        if (kind === 'authenticate' || kind === 'select_server') return { ...status };
+        if (kind === 'select_server') {
+          status = { ...status, ...server };
+          return { ...status };
+        }
+        if (kind === 'deselect_server') {
+          status = {
+            ...status,
+            origin: '',
+            server_id: '',
+            ownership_state: '',
+            ownership_generation: 0,
+            admission_state: '',
+            join_policy: [],
+            cursors: {},
+          };
+          return { ...status };
+        }
+        if (kind === 'authenticate') return { ...status };
         if (kind === 'channels') return [];
         throw new Error(`Unexpected UI request: ${command}/${kind}`);
       },
@@ -104,6 +122,8 @@ describe('admission and recovery presentation', () => {
       target,
       component,
       lockdown() {
+        server.ownership_state = 'OWNER_LOCKDOWN';
+        server.ownership_generation = 3;
         status = { ...status, ownership_state: 'OWNER_LOCKDOWN', ownership_generation: 3 };
       },
     };
@@ -152,6 +172,32 @@ describe('admission and recovery presentation', () => {
       expect(
         invokeMock.mock.calls.filter((call) => call[1]?.action?.kind === 'recover_owner'),
       ).toHaveLength(0);
+    } finally {
+      await unmount(app.component);
+      app.target.remove();
+    }
+  });
+  it('closing an ownership claim deselects the server and its icon reopens the claim', async () => {
+    const app = await open(false, 'UNCLAIMED');
+    try {
+      expect(app.target.querySelector('.ownership-claim')).not.toBeNull();
+      expect(app.target.querySelector('.server-button.selected')).not.toBeNull();
+
+      app.target
+        .querySelector<HTMLButtonElement>('[aria-label="Close Connection and trust"]')!
+        .click();
+      await settle();
+
+      expect(app.target.querySelector('dialog[aria-label="Connection and trust"]')).toBeNull();
+      expect(app.target.querySelector('.server-button.selected')).toBeNull();
+      expect(
+        invokeMock.mock.calls.filter((call) => call[1]?.action?.kind === 'deselect_server'),
+      ).toHaveLength(1);
+
+      app.target.querySelector<HTMLButtonElement>('.server-button.server-blue')!.click();
+      await settle();
+      expect(app.target.querySelector('.ownership-claim')).not.toBeNull();
+      expect(app.target.querySelector('.server-button.selected')).not.toBeNull();
     } finally {
       await unmount(app.component);
       app.target.remove();

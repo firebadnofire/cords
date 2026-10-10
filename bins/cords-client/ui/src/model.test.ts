@@ -19,6 +19,10 @@ describe('persisted presentation boundary', () => {
     expect(p.avatar.data).toBe('');
     expect(p.jewelColor).toBe('#477da3');
     expect(p.theme).toBe('dark');
+    expect(picture({ url: 'https://images.example/avatar.webp' }).url).toBe(
+      'https://images.example/avatar.webp',
+    );
+    expect(picture({ url: 'http://images.example/avatar.webp' }).url).toBe('');
   });
   it('has exactly one DM entry for each Jewel action', () => {
     expect(dmEntry('dms')).toBe('jewel');

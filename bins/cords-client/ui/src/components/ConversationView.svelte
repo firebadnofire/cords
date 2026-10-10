@@ -37,15 +37,25 @@
       <div class="conversation-intro">
         <span class="intro-icon">C</span>
         <h1>Welcome to Cords</h1>
-        <p>Select an encrypted channel or connect to your server.</p>
+        <p>Select a channel or connect to your server.</p>
       </div>
     {:else}
       <div class="conversation-intro">
         <span class="intro-icon">#</span>
         <h1>#{channel.name}</h1>
-        <p>Encrypted conversation · MLS epoch {channel.epoch}</p>
+        <p>
+          {channel.confidentiality_mode === 'public'
+            ? 'True public · signed messages · no end-to-end encryption'
+            : `Encrypted conversation · MLS epoch ${channel.epoch}`}
+        </p>
+        {#if channel.locally_archived}<p>
+            Retired channel · partial local archive · read-only
+          </p>{/if}
         <div class="intro-note">
-          New devices receive current and future state, not earlier plaintext.
+          {#if channel.confidentiality_mode === 'public'}The server and anyone with access can read,
+            copy, and retain these messages. Sender identities are cryptographically verified. HTTPS
+            protects transport.{:else}New devices receive current and future state, not earlier
+            plaintext.{/if}
         </div>
       </div>
       <div class="timeline-divider"><span>Local history</span></div>
@@ -127,7 +137,12 @@
       autocomplete="off"
       value={body}
       on:input={(event) => setBody(event.currentTarget.value)}
-      disabled={!channel || section === 'dms' || busy || revoked}
+      disabled={!channel ||
+        section === 'dms' ||
+        busy ||
+        revoked ||
+        channel?.locally_archived ||
+        channel?.requires_public_acknowledgement}
       placeholder={section === 'dms'
         ? 'Direct messaging is not available'
         : channel
@@ -136,9 +151,15 @@
     />
     <button
       type="submit"
-      disabled={!channel || section === 'dms' || busy || revoked || !body.trim()}
-      title="Send encrypted message"
-      aria-label="Send encrypted message"><Send size={19} /></button
+      disabled={!channel ||
+        section === 'dms' ||
+        busy ||
+        revoked ||
+        channel?.locally_archived ||
+        channel?.requires_public_acknowledgement ||
+        !body.trim()}
+      title="Send message"
+      aria-label="Send message"><Send size={19} /></button
     >
   </form>
 </main>

@@ -11,11 +11,45 @@ export type UserCard = {
   account_id: string;
   device_id: string;
   nickname: string;
-  avatar: { data: string; shape: string; x: number; y: number; zoom_milli: number } | null;
+  avatar: {
+    url?: string;
+    data?: string;
+    shape: string;
+    x: number;
+    y: number;
+    zoom_milli: number;
+  } | null;
   issued_at: number;
 };
 export type Contact = { authorization: { value: Authorization }; user_card?: { value: UserCard } };
+export type ConfidentialityMode = 'encrypted' | 'public';
 export type Channel = {
+  confidentiality_mode?: ConfidentialityMode;
+  identity?: {
+    value: {
+      server_id: string;
+      channel_id: string;
+      name: string;
+      confidentiality_mode: ConfidentialityMode;
+    };
+  };
+  transition?: {
+    value: {
+      retired: boolean;
+      succession: {
+        value: {
+          predecessor: {
+            value: { channel_id: string; name: string; confidentiality_mode: ConfidentialityMode };
+          };
+          successor_channel_id: string;
+          name: string;
+          confidentiality_mode: ConfidentialityMode;
+        };
+      } | null;
+    };
+  };
+  requires_public_acknowledgement?: boolean;
+  locally_archived?: boolean;
   channel_id: string;
   name: string;
   creator_device_id: string;
@@ -72,6 +106,7 @@ export type View = {
   messages: Message[];
 };
 export type Picture = {
+  url: string;
   data: string;
   shape: 'circle' | 'square';
   x: number;
@@ -95,7 +130,14 @@ export type Preferences = {
   lockOnOsLock: boolean;
   lockOnSuspend: boolean;
 };
-export const blankPicture = (): Picture => ({ data: '', shape: 'circle', x: 50, y: 50, zoom: 1 });
+export const blankPicture = (): Picture => ({
+  url: '',
+  data: '',
+  shape: 'circle',
+  x: 50,
+  y: 50,
+  zoom: 1,
+});
 export const defaults = (): Preferences => ({
   version: 1,
   displayName: 'You',
@@ -118,6 +160,10 @@ const bounded = (n: unknown, min: number, max: number, fallback: number) =>
 export function picture(value: unknown): Picture {
   const p = (value && typeof value === 'object' ? value : {}) as Partial<Picture>;
   return {
+    url:
+      typeof p.url === 'string' && /^https:\/\/[^\s@]+$/i.test(p.url) && p.url.length <= 2048
+        ? p.url
+        : '',
     data:
       typeof p.data === 'string' &&
       /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(p.data) &&

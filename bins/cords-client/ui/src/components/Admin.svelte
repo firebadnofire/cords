@@ -11,8 +11,9 @@
     Users,
   } from '@lucide/svelte';
   import Modal from './Modal.svelte';
+  import ConfidentialitySelect from './ConfidentialitySelect.svelte';
   import AdminUnavailable from './AdminUnavailable.svelte';
-  import Avatar from './Avatar.svelte';
+  import RemoteAvatar from './RemoteAvatar.svelte';
   import {
     picture,
     type Channel,
@@ -27,7 +28,30 @@
   export let contacts: Contact[];
   export let membershipRequests: MembershipRequest[];
   export let close: () => void;
-  export let create: (name: string) => Promise<void>;
+  export let create: (name: string, mode?: 'encrypted' | 'public') => Promise<void>;
+  export let replace:
+    | ((id: string, name: string, mode: 'encrypted' | 'public') => Promise<void>)
+    | undefined = undefined;
+  export let retire: ((id: string) => Promise<void>) | undefined = undefined;
+  let mode: 'encrypted' | 'public' = 'encrypted';
+  let replacementMode: 'encrypted' | 'public' = 'encrypted';
+  let replacementName = '';
+  let confirmRetirement = false;
+  async function manageChannel(replacement: boolean) {
+    if (!channel || !confirmRetirement) return;
+    busy = true;
+    error = '';
+    try {
+      if (replacement && replace)
+        await replace(channel.channel_id, replacementName || channel.name, replacementMode);
+      else if (retire) await retire(channel.channel_id);
+      confirmRetirement = false;
+    } catch (caught) {
+      error = String(caught);
+    } finally {
+      busy = false;
+    }
+  }
   export let select: (id: string) => Promise<void>;
   export let decideMembership: (device: string, approve: boolean) => Promise<void>;
   type Page =
@@ -61,7 +85,7 @@
     busy = true;
     error = '';
     try {
-      await create(name);
+      await create(name, mode);
       name = '';
     } catch (caught) {
       error = String(caught);
@@ -173,7 +197,7 @@
               <h2>Membership requests</h2>
               {#each membershipRequests as request (request.device_id)}
                 <div class="membership-request-card">
-                  <Avatar
+                  <RemoteAvatar
                     value={picture(
                       request.user_card?.value.avatar
                         ? {
@@ -392,7 +416,10 @@
               {#if channel}<h2>#{channel.name}</h2>
                 <div class="admin-form-grid compact">
                   <label>Channel name<input readonly value={channel.name} /></label><label
-                    >MLS epoch<input readonly value={channel.epoch} /></label
+                    >Confidentiality (permanent)<input
+                      readonly
+                      value={channel.confidentiality_mode ?? 'encrypted'}
+                    /></label
                   ><label
                     >Topic<textarea
                       class="dev-unimplemented"
@@ -403,8 +430,12 @@
                     ></textarea></label
                   >
                 </div>
+                <p>
+                  A different confidentiality mode requires replacement with a new channel identity.
+                  Old history and encryption keys are never transferred.
+                </p>
                 <h3 class="section-label"><Users size={15} />Device membership</h3>
-                {#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
+                {#if channel.confidentiality_mode !== 'public' && !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
                   <p>
                     You can see this channel, but have not been added to its encrypted conversation.
                   </p>
@@ -416,24 +447,53 @@
                       >Generation {member.authorization.value.generation}</small
                     >
                   </div>{/each}<button
-                  disabled={!channel.members.some(
-                    (member) => member.authorization.value.device_id === status.device_id,
-                  )}
+                  disabled={channel.confidentiality_mode !== 'public' &&
+                    !channel.locally_archived &&
+                    !channel.members.some(
+                      (member) => member.authorization.value.device_id === status.device_id,
+                    )}
                   on:click={async () => {
                     await select(channel.channel_id);
                     close();
                   }}>Open conversation</button
-                ><button
-                  class="admin-danger-link dev-unimplemented"
-                  disabled
-                  aria-disabled="true"
-                  title={pending}>Delete channel</button
-                >{:else}<p>No channels available.</p>{/if}
+                >
+                {#if !channel.locally_archived && manager}
+                  <label
+                    >Replacement display name<input
+                      bind:value={replacementName}
+                      placeholder={channel.name}
+                      maxlength="100"
+                    /></label
+                  >
+                  <ConfidentialitySelect bind:mode={replacementMode} />
+                  <label
+                    ><input type="checkbox" bind:checked={confirmRetirement} />I understand the
+                    original channel will be permanently retired and its locally received history
+                    retained as a partial archive. A replacement begins empty.</label
+                  >
+                  <button
+                    disabled={busy || !confirmRetirement || !replace}
+                    on:click={() => manageChannel(true)}
+                    >Create successor and retire original</button
+                  >
+                  <button
+                    class="admin-danger-link"
+                    disabled={busy || !confirmRetirement || !retire}
+                    on:click={() => manageChannel(false)}>Retire channel without replacement</button
+                  >
+                {/if}
+                {#if channel.locally_archived}<p>
+                    Retired · read-only · original confidentiality preserved.
+                  </p>{/if}
+              {:else}<p>No channels available.</p>{/if}
             </div>
           </div>
           <form class="admin-create-channel" on:submit|preventDefault={createChannel}>
-            <label>New encrypted channel<input maxlength="100" required bind:value={name} /></label
-            ><button class="primary" disabled={busy || !manager}>Create channel</button>
+            <ConfidentialitySelect bind:mode />
+            <label>New channel<input maxlength="100" required bind:value={name} /></label><button
+              class="primary"
+              disabled={busy || !manager}>Create channel</button
+            >
           </form>
         {:else}
           <AdminUnavailable {page} {status} {identity} />

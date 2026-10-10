@@ -5,6 +5,12 @@ import { defaults, type Status } from '../model';
 import CordsRail from './CordsRail.svelte';
 import Admin from './Admin.svelte';
 
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+vi.mock('../images', () => ({
+  importImage: vi.fn(async () => 'data:image/png;base64,cmVzb2x2ZWQ='),
+}));
+
 const status: Status = {
   account_id: 'account',
   device_id: 'device',
@@ -82,6 +88,7 @@ describe('server membership interface', () => {
   });
 
   it('shows a self-declared nickname, avatar resolution information and full fingerprint', async () => {
+    invokeMock.mockResolvedValue(btoa('remote image bytes'));
     Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
       configurable: true,
       value() {
@@ -125,7 +132,7 @@ describe('server membership interface', () => {
                 nickname: 'Second user',
                 issued_at: 1,
                 avatar: {
-                  data: 'data:image/png;base64,aGVsbG8=',
+                  url: 'https://images.example/second-user.webp',
                   shape: 'square',
                   x: 25,
                   y: 75,
@@ -148,7 +155,12 @@ describe('server membership interface', () => {
     expect(target.textContent).toContain('Second user');
     expect(target.textContent).toContain(fingerprint);
     expect(target.textContent).toContain('Self-declared');
+    for (let index = 0; index < 10; index++) await Promise.resolve();
+    await tick();
     const avatar = target.querySelector<HTMLImageElement>('.membership-request-card img');
+    expect(invokeMock).toHaveBeenCalledWith('load_image_url', {
+      url: 'https://images.example/second-user.webp',
+    });
     expect(avatar?.getAttribute('src')).toContain('data:image/png');
     expect(avatar?.getAttribute('style')).toContain('25% 75%');
     await unmount(component);

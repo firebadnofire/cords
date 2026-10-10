@@ -11,10 +11,11 @@ use axum::{
 };
 use cords_identity::{validate_contact, validate_transition};
 use cords_protocol::messaging::{
-    Challenge, ChallengeRequest, Channel, ChannelCreate, CommitUpload, Contact, EventUpload,
-    InvalidObject, KeyPackageUpload, MAX_ENVELOPE, Membership, MembershipRequest, OwnershipClaim,
-    OwnershipState, RosterAction, RosterOperation, RosterRequest, RouteEvent, Session,
-    SessionRequest, Signed, Statement, WS_PROTOCOL, canonical, decode, encode, hash, notification,
+    Challenge, ChallengeRequest, Channel, ChannelCreate, ChannelIdentity, ChannelReplace,
+    ChannelTransition, CommitUpload, ConfidentialityMode, Contact, EventUpload, InvalidObject,
+    KeyPackageUpload, MAX_ENVELOPE, Membership, MembershipRequest, OwnershipClaim, OwnershipState,
+    RosterAction, RosterOperation, RosterRequest, RouteEvent, Session, SessionRequest, Signed,
+    Statement, WS_PROTOCOL, canonical, decode, encode, hash, notification,
 };
 use cords_storage::PostgresStore;
 use rand_core::{OsRng, RngCore as _};
@@ -244,7 +245,7 @@ impl Service {
         Ok(member)
     }
     async fn route_access(&self, route: &str, member: &Membership, manage: bool) -> Result<()> {
-        let row = sqlx::query("SELECT c.creator FROM channels c JOIN channel_members m ON m.channel_id=c.id WHERE c.id=$1 AND m.device_id=$2 AND m.active AND m.delivery_active")
+        let row = sqlx::query("SELECT c.creator FROM channels c WHERE c.id=$1 AND (c.confidentiality_mode='public' OR EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$2 AND m.active AND m.delivery_active))")
             .bind(route).bind(&member.device_id).fetch_optional(self.0.store.pool()).await?.ok_or_else(denied)?;
         if manage
             && row.try_get::<String, _>("creator")? != member.device_id
@@ -299,15 +300,20 @@ impl Service {
             return Err(ApiError(StatusCode::CONFLICT, "OWNER_RECOVERY_REQUIRED"));
         }
         if let Some((route, manage)) = route {
-            let creator: String =
-                sqlx::query_scalar("SELECT creator FROM channels WHERE id=$1 FOR UPDATE")
-                    .bind(route)
-                    .fetch_optional(&mut **tx)
-                    .await?
-                    .ok_or_else(denied)?;
+            let row = sqlx::query(
+                "SELECT creator,confidentiality_mode,retired FROM channels WHERE id=$1 FOR UPDATE",
+            )
+            .bind(route)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(denied)?;
             let permitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_members WHERE channel_id=$1 AND device_id=$2 AND active AND delivery_active)")
                 .bind(route).bind(&member.value.device_id).fetch_one(&mut **tx).await?;
-            if !permitted
+            let creator: String = row.try_get("creator")?;
+            if row.try_get::<bool, _>("retired")? {
+                return Err(ApiError(StatusCode::CONFLICT, "CHANNEL_RETIRED"));
+            }
+            if (!permitted && row.try_get::<String, _>("confidentiality_mode")? != "public")
                 || (manage
                     && creator != member.value.device_id
                     && !member
@@ -415,6 +421,8 @@ pub fn router(service: Service) -> Router {
         .route("/api/v1/key-packages", post(upload_package))
         .route("/api/v1/key-packages/{account}", get(packages))
         .route("/api/v1/channels", get(channels).post(create_channel))
+        .route("/api/v1/channels/{route}/replace", post(replace_channel))
+        .route("/api/v1/channels/{route}/retire", post(retire_channel))
         .route("/api/v1/channels/{route}", get(channel))
         .route("/api/v1/channels/{route}/binding", post(lifecycle::bind))
         .route(
@@ -1214,10 +1222,12 @@ async fn create_channel(
         return Ok(Json(result));
     }
     let route = id();
-    sqlx::query("INSERT INTO channels(id,name,creator) VALUES($1,$2,$3)")
+    sqlx::query("INSERT INTO channels(id,name,creator,confidentiality_mode,created_at) VALUES($1,$2,$3,$4,$5)")
         .bind(&route)
         .bind(&request.name)
         .bind(&member.value.device_id)
+        .bind(request.confidentiality_mode.as_str())
+        .bind(int(now()?)?)
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO channel_members(channel_id,device_id) VALUES($1,$2)")
@@ -1231,9 +1241,159 @@ async fn create_channel(
 }
 async fn channel_view(s: &Service, route: &str) -> Result<Channel> {
     let mut tx = s.0.store.pool().begin().await?;
-    let view = channel_view_in(&mut tx, route).await?;
+    let mut view = channel_view_in(&mut tx, route).await?;
+    let row = sqlx::query("SELECT created_at,retired,succession FROM channels WHERE id=$1")
+        .bind(route)
+        .fetch_one(&mut *tx)
+        .await?;
+    view.identity = Some(s.sign(ChannelIdentity {
+        version: 1,
+        server_id: s.0.identity.server_id(),
+        channel_id: route.into(),
+        name: view.name.clone(),
+        creator_device_id: view.creator_device_id.clone(),
+        confidentiality_mode: view.confidentiality_mode,
+        created_at: uint(row.try_get("created_at")?)?,
+    })?);
+    let succession = row
+        .try_get::<Option<String>, _>("succession")?
+        .map(|v| parse(&v))
+        .transpose()?;
+    let retired = row.try_get("retired")?;
+    view.transition = Some(s.sign(ChannelTransition {
+        version: 1,
+        server_id: s.0.identity.server_id(),
+        channel_id: route.into(),
+        retired,
+        generation: if retired {
+            2
+        } else {
+            u64::from(succession.is_some())
+        },
+        succession,
+    })?);
     tx.commit().await?;
     Ok(view)
+}
+
+async fn replace_channel(
+    State(s): State<Service>,
+    headers: HeaderMap,
+    Path(route): Path<String>,
+    Json(request): Json<ChannelReplace>,
+) -> Result<Json<String>> {
+    let member = s.authenticate(&headers, "channel.create").await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_mutation(&mut tx, &headers, &member, None)
+        .await?;
+    let scope = format!("replace:{route}:{}", member.value.device_id);
+    if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
+        return Ok(Json(result));
+    }
+    s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
+        .await?;
+    let owner: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE account_id=$1)")
+            .bind(&member.value.account_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !owner {
+        return Err(denied());
+    }
+    let v = &request.record.value;
+    let key = encode(s.0.identity.signing_key.verifying_key().as_bytes());
+    v.predecessor.verify(&key)?;
+    validate_contact(&v.initiator, now()?)?;
+    request
+        .record
+        .verify(&v.initiator.authorization.value.device_public_key)?;
+    let predecessor = channel_view_in(&mut tx, &route).await?;
+    let stored: String =
+        sqlx::query_scalar("SELECT contact FROM device_contacts WHERE device_id=$1")
+            .bind(&member.value.device_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let stored: Contact = parse(&stored)?;
+    if v.version != 1
+        || v.server_id != s.0.identity.server_id()
+        || v.predecessor.value.server_id != v.server_id
+        || v.predecessor.value.channel_id != route
+        || v.predecessor.value.confidentiality_mode != predecessor.confidentiality_mode
+        || v.predecessor.value.creator_device_id != predecessor.creator_device_id
+        || v.predecessor.value.name != predecessor.name
+        || canonical(&stored.authorization)? != canonical(&v.initiator.authorization)?
+        || canonical(&v.membership)? != canonical(&member)?
+        || v.name.is_empty()
+        || v.name.chars().count() > 100
+        || uuid::Uuid::parse_str(&v.successor_channel_id).is_err()
+        || v.successor_channel_id == route
+        || uuid::Uuid::parse_str(&v.nonce).is_err()
+        || v.issued_at > now()?.saturating_add(cords_identity::STATEMENT_CLOCK_SKEW_SECONDS)
+        || now()?.saturating_sub(v.issued_at) > 300
+    {
+        return Err(bad());
+    }
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM roster_operations WHERE channel_id=$1 AND NOT complete)",
+    )
+    .bind(&route)
+    .fetch_one(&mut *tx)
+    .await?;
+    if pending {
+        return Err(conflict());
+    }
+    let evidence = json(&request.record)?;
+    sqlx::query("INSERT INTO channels(id,name,creator,confidentiality_mode,created_at,succession,replaces_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7)")
+        .bind(&v.successor_channel_id).bind(&v.name).bind(&member.value.device_id)
+        .bind(v.confidentiality_mode.as_str()).bind(int(now()?)?).bind(&evidence).bind(&route)
+        .execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO channel_members(channel_id,device_id) VALUES($1,$2)")
+        .bind(&v.successor_channel_id)
+        .bind(&member.value.device_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE channels SET retired=TRUE,succession=$1 WHERE id=$2")
+        .bind(evidence)
+        .bind(&route)
+        .execute(&mut *tx)
+        .await?;
+    remember(
+        &mut tx,
+        &scope,
+        &request.idempotency_key,
+        &request,
+        &v.successor_channel_id,
+    )
+    .await?;
+    tx.commit().await?;
+    let _ = s.0.notifications.send((route, 0));
+    Ok(Json(v.successor_channel_id.clone()))
+}
+
+async fn retire_channel(
+    State(s): State<Service>,
+    headers: HeaderMap,
+    Path(route): Path<String>,
+    Json(key): Json<String>,
+) -> Result<Json<bool>> {
+    let member = s.authenticate(&headers, "channel.read").await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_mutation(&mut tx, &headers, &member, None)
+        .await?;
+    let scope = format!("retire:{route}:{}", member.value.device_id);
+    if let Some(result) = previous(&mut tx, &scope, &key, &key).await? {
+        return Ok(Json(result));
+    }
+    s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
+        .await?;
+    sqlx::query("UPDATE channels SET retired=TRUE WHERE id=$1")
+        .bind(&route)
+        .execute(&mut *tx)
+        .await?;
+    remember(&mut tx, &scope, &key, &key, &true).await?;
+    tx.commit().await?;
+    let _ = s.0.notifications.send((route, 0));
+    Ok(Json(true))
 }
 fn roster_contact(record: &str) -> Result<Contact> {
     let mut contact: Contact = parse(record)?;
@@ -1242,13 +1402,22 @@ fn roster_contact(record: &str) -> Result<Contact> {
     Ok(contact)
 }
 async fn channel_view_in(tx: &mut Tx<'_>, route: &str) -> Result<Channel> {
-    let row = sqlx::query("SELECT name,creator,epoch,binding FROM channels WHERE id=$1 FOR SHARE")
+    let row = sqlx::query("SELECT name,creator,epoch,binding,confidentiality_mode FROM channels WHERE id=$1 FOR SHARE")
         .bind(route)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or_else(denied)?;
     let contacts:Vec<String>=sqlx::query_scalar("SELECT d.contact FROM channel_members m JOIN device_contacts d ON d.device_id=m.device_id WHERE m.channel_id=$1 AND m.active ORDER BY d.device_id").bind(route).fetch_all(&mut **tx).await?;
     Ok(Channel {
+        confidentiality_mode: if row.try_get::<String, _>("confidentiality_mode")? == "public" {
+            ConfidentialityMode::Public
+        } else {
+            ConfidentialityMode::Encrypted
+        },
+        identity: None,
+        transition: None,
+        requires_public_acknowledgement: false,
+        locally_archived: false,
         channel_id: route.into(),
         name: row.try_get("name")?,
         creator_device_id: row.try_get("creator")?,
@@ -1270,18 +1439,14 @@ async fn channels(State(s): State<Service>, headers: HeaderMap) -> Result<Json<V
     let mut result = Vec::new();
     for row in rows {
         let route: String = row.try_get("id")?;
-        if row.try_get::<bool, _>("joined")? {
-            result.push(channel_view(&s, &route).await?);
-        } else {
-            result.push(Channel {
-                channel_id: route,
-                name: row.try_get("name")?,
-                creator_device_id: row.try_get("creator")?,
-                epoch: uint(row.try_get("epoch")?)?,
-                members: Vec::new(),
-                binding: None,
-            });
+        let mut view = channel_view(&s, &route).await?;
+        if !row.try_get::<bool, _>("joined")?
+            && view.confidentiality_mode == ConfidentialityMode::Encrypted
+        {
+            view.members.clear();
+            view.binding = None;
         }
+        result.push(view);
     }
     Ok(Json(result))
 }
@@ -1305,7 +1470,12 @@ async fn channel(
                 .fetch_optional(s.0.store.pool())
                 .await?;
         if let Some(view) = view {
-            return Ok(Json(parse(&view)?));
+            let mut historical: Channel = parse(&view)?;
+            let current = channel_view(&s, &route).await?;
+            historical.identity = current.identity;
+            historical.transition = current.transition;
+            historical.confidentiality_mode = current.confidentiality_mode;
+            return Ok(Json(historical));
         }
         let current = channel_view(&s, &route).await?;
         if current.epoch != epoch {
@@ -1324,6 +1494,9 @@ async fn roster(
 ) -> Result<Json<RosterOperation>> {
     let member = s.authenticate(&headers, "channel.mls.commit").await?;
     s.route_access(&route, &member.value, true).await?;
+    if channel_view(&s, &route).await?.confidentiality_mode != ConfidentialityMode::Encrypted {
+        return Err(bad());
+    }
     let mut tx = s.0.store.pool().begin().await?;
     let scope = format!("roster:{route}:{}", member.value.device_id);
     s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
@@ -1401,6 +1574,9 @@ async fn commit(
 ) -> Result<Json<RouteEvent>> {
     let member = s.authenticate(&headers, "channel.mls.commit").await?;
     s.route_access(&route, &member.value, true).await?;
+    if channel_view(&s, &route).await?.confidentiality_mode != ConfidentialityMode::Encrypted {
+        return Err(bad());
+    }
     let current = channel_view(&s, &route).await?;
     let creator = current
         .members
@@ -1452,6 +1628,7 @@ async fn commit(
     let event = append(
         &mut tx,
         EventUpload {
+            public_message: None,
             protocol_version: 1,
             event_id: id(),
             route_kind: "channel".into(),
@@ -1500,6 +1677,9 @@ async fn welcome(
 ) -> Result<Json<serde_json::Value>> {
     let member = s.authenticate(&headers, "channel.read").await?;
     s.route_access(&route, &member.value, false).await?;
+    if channel_view(&s, &route).await?.confidentiality_mode != ConfidentialityMode::Encrypted {
+        return Err(bad());
+    }
     let row =
         sqlx::query("SELECT sequence,welcome FROM welcomes WHERE channel_id=$1 AND device_id=$2")
             .bind(route)
@@ -1524,11 +1704,48 @@ async fn upload_event(
         || request.route_id != route
         || request.sender_device_id != member.value.device_id
         || request.sender_member_id != member.value.member_id
-        || request.content_encoding != "mls.application"
         || uuid::Uuid::parse_str(&request.event_id).is_err()
-        || decode(&request.ciphertext)?.is_empty()
     {
         return Err(bad());
+    }
+    let current = channel_view(&s, &route).await?;
+    match current.confidentiality_mode {
+        ConfidentialityMode::Encrypted => {
+            if request.content_encoding != "mls.application"
+                || request.public_message.is_some()
+                || decode(&request.ciphertext)?.is_empty()
+            {
+                return Err(bad());
+            }
+        }
+        ConfidentialityMode::Public => {
+            let signed = request.public_message.as_ref().ok_or_else(bad)?;
+            signed.validate(
+                &s.0.identity.server_id(),
+                &route,
+                &encode(s.0.identity.signing_key.verifying_key().as_bytes()),
+            )?;
+            validate_contact(&signed.value.contact, now()?)?;
+            let v = &signed.value;
+            if request.content_encoding != "public.signed"
+                || !request.ciphertext.is_empty()
+                || v.event_id != request.event_id
+                || v.idempotency_key != request.idempotency_key
+                || v.message.client_timestamp != request.client_created_at
+                || canonical(&v.membership)? != canonical(&member)?
+            {
+                return Err(bad());
+            }
+            let contact: String =
+                sqlx::query_scalar("SELECT contact FROM device_contacts WHERE device_id=$1")
+                    .bind(&member.value.device_id)
+                    .fetch_one(s.0.store.pool())
+                    .await?;
+            let stored: Contact = parse(&contact)?;
+            if canonical(&stored.authorization)? != canonical(&v.contact.authorization)? {
+                return Err(denied());
+            }
+        }
     }
     let mut tx = s.0.store.pool().begin().await?;
     let scope = format!("event:{route}:{}", member.value.device_id);
@@ -1556,7 +1773,7 @@ async fn history(
 ) -> Result<Json<Vec<RouteEvent>>> {
     let member = s.authenticate(&headers, "channel.read").await?;
     s.route_access(&route, &member.value, false).await?;
-    let rows=sqlx::query("SELECT e.sequence,e.envelope,e.received_at FROM route_events e JOIN channel_members m ON m.channel_id=e.route_id WHERE e.route_id=$1 AND m.device_id=$2 AND m.active AND m.delivery_active AND e.sequence>$3 AND e.sequence>m.joined_sequence ORDER BY e.sequence LIMIT 8")
+    let rows=sqlx::query("SELECT e.sequence,e.envelope,e.received_at FROM route_events e JOIN channels c ON c.id=e.route_id WHERE e.route_id=$1 AND e.sequence>$3 AND (c.confidentiality_mode='public' OR EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$2 AND m.active AND m.delivery_active AND e.sequence>m.joined_sequence)) ORDER BY e.sequence LIMIT 8")
         .bind(route).bind(&member.value.device_id).bind(int(query.after)?).fetch_all(s.0.store.pool()).await?;
     Ok(Json(
         rows.iter()

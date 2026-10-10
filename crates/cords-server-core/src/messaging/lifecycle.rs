@@ -25,6 +25,9 @@ pub(super) async fn bind(
         return Ok(Json(result));
     }
     let channel = channel_view_in(&mut tx, &route).await?;
+    if channel.confidentiality_mode != cords_protocol::messaging::ConfidentialityMode::Encrypted {
+        return Err(bad());
+    }
     let creator = channel
         .members
         .iter()

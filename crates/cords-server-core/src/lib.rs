@@ -210,6 +210,8 @@ async fn capabilities() -> Json<CapabilitiesV1> {
 fn server_features() -> Vec<String> {
     [
         "mls-v1",
+        "public-channels-v1",
+        "channel-succession-v1",
         "channel-sync-v1",
         "server-departure-v1",
         "identity-burn-v1",

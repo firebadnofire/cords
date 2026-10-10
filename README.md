@@ -40,6 +40,8 @@ docker compose --profile proxy up --build --wait
 
 Caddy uses its internal CA for this local example. Trust that CA explicitly before inspecting `https://localhost:4848`; Cords never disables normal TLS validation. Production deployments should use a publicly trusted certificate and set `CORDS_SERVER__PUBLIC_ORIGIN` to the matching HTTPS origin.
 
+The example server requires owner approval for new device membership by default. The owner reviews pending requests under Server settings → Members. Set `server.join_policy = "public"` explicitly for immediate admission. Approved members can discover channel names and stable channel IDs, but cannot read encrypted contents until added to each channel's MLS group. Channel creation is owner-only.
+
 The Compose file uses a conspicuous development-only PostgreSQL password. A deployment must apply `deploy/compose.production.example.yaml` as an override and provide a matching, URL-encoded `CORDS_DATABASE__URL`; do not reuse the development credential publicly.
 
 Clients join with the HTTPS URL only. Cords validates the certificate, verifies signed discovery,

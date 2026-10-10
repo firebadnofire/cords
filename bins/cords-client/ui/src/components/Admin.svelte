@@ -12,14 +12,16 @@
   } from '@lucide/svelte';
   import Modal from './Modal.svelte';
   import AdminUnavailable from './AdminUnavailable.svelte';
-  import type { Channel, Contact, Identity, Status } from '../model';
+  import type { Channel, Contact, Identity, MembershipRequest, Status } from '../model';
   export let status: Status;
   export let identity: Identity | null;
   export let channels: Channel[];
   export let contacts: Contact[];
+  export let membershipRequests: MembershipRequest[];
   export let close: () => void;
   export let create: (name: string) => Promise<void>;
   export let select: (id: string) => Promise<void>;
+  export let decideMembership: (device: string, approve: boolean) => Promise<void>;
   type Page =
     | 'Overview'
     | 'Members'
@@ -44,6 +46,7 @@
   let busy = false;
   let selectedContact: Contact | null = null;
   let selectedChannel = channels[0]?.channel_id ?? '';
+  $: manager = identity?.membership?.capabilities.includes('server.manage') ?? false;
   const pending = 'Not implemented yet';
   async function createChannel() {
     busy = true;
@@ -125,11 +128,7 @@
                 placeholder="Not exposed by the server API"
               ></textarea></label
             ><label
-              >Join policy<select
-                class="dev-unimplemented"
-                disabled
-                aria-disabled="true"
-                title={pending}><option>Not exposed</option></select
+              >Join policy<select disabled aria-disabled="true"><option>{status.join_policy.join(', ') || 'Unknown'}</option></select
               ></label
             >
           </div>
@@ -159,6 +158,28 @@
               title={pending}>Invite member</button
             >
           </header>
+          {#if manager}
+            <section class="settings-card">
+              <h2>Membership requests</h2>
+              {#each membershipRequests as request (request.device_id)}
+                <div class="override-row">
+                  <span><strong>{request.account_id}</strong><br /><small>{request.device_id} · {request.status}</small></span>
+                  <button disabled={busy} on:click={async () => {
+                    busy = true; error = '';
+                    try { await decideMembership(request.device_id, true); }
+                    catch (caught) { error = String(caught); }
+                    finally { busy = false; }
+                  }}>Approve</button>
+                  <button disabled={busy || request.status !== 'pending'} on:click={async () => {
+                    busy = true; error = '';
+                    try { await decideMembership(request.device_id, false); }
+                    catch (caught) { error = String(caught); }
+                    finally { busy = false; }
+                  }}>Reject</button>
+                </div>
+              {:else}<p>No pending or rejected requests.</p>{/each}
+            </section>
+          {/if}
           <div class="admin-toolbar">
             <label
               ><Search size={16} /><input
@@ -322,6 +343,9 @@
                   >
                 </div>
                 <h3 class="section-label"><Users size={15} />Device membership</h3>
+                {#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
+                  <p>You can see this channel, but have not been added to its encrypted conversation.</p>
+                {/if}
                 {#each channel.members as member (member.authorization.value.device_id)}<div
                     class="override-row"
                   >
@@ -329,6 +353,7 @@
                       >Generation {member.authorization.value.generation}</small
                     >
                   </div>{/each}<button
+                  disabled={!channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
                   on:click={async () => {
                     await select(channel.channel_id);
                     close();
@@ -345,7 +370,7 @@
             <label>New encrypted channel<input maxlength="100" required bind:value={name} /></label
             ><button
               class="primary"
-              disabled={busy || !identity?.membership?.capabilities.includes('channel.create')}
+              disabled={busy || !manager}
               >Create channel</button
             >
           </form>

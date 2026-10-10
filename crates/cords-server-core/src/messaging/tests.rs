@@ -58,7 +58,11 @@ async fn fixture_with_state(
         sqlx::query("UPDATE server_ownership_bootstrap SET state='CLAIMED',claim_code_hash=NULL,claimed_at=1 WHERE singleton=TRUE")
             .execute(store.pool()).await?;
     }
-    Ok((Service::new(store, identity, 60, 900)?, directory, code))
+    Ok((
+        Service::with_policy(store, identity, 60, 900, JoinPolicy::Public)?,
+        directory,
+        code,
+    ))
 }
 fn identity() -> Result<(Identity, Contact)> {
     let identity = Identity::generate(now()?)?;
@@ -386,6 +390,355 @@ fn headers(session: &Session) -> Result<HeaderMap> {
     );
     Ok(headers)
 }
+async fn grant_fixture_owner(s: &Service, mut session: Session) -> Result<Session> {
+    let member = session.membership.value.clone();
+    sqlx::query("INSERT INTO server_ownership(singleton,account_id,claimed_by_device_id,claimed_at) VALUES(TRUE,$1,$2,$3)")
+        .bind(&member.account_id).bind(&member.device_id).bind(int(now()?)?)
+        .execute(s.0.store.pool()).await?;
+    let mut elevated = member.clone();
+    elevated.capabilities = member_capabilities(true);
+    elevated.generation += 1;
+    session.membership = s.sign(elevated)?;
+    sqlx::query("UPDATE memberships SET credential=$2 WHERE device_id=$1")
+        .bind(&member.device_id)
+        .bind(json(&session.membership)?)
+        .execute(s.0.store.pool())
+        .await?;
+    Ok(session)
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
+#[allow(clippy::too_many_lines)] // The full two-identity lifecycle is one regression scenario.
+async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
+    let (base, _directory, code) = fixture_with_state(false).await?;
+    let s = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let discovery =
+        s.0.identity
+            .signed_metadata_with_policy("Test", s.0.join_policy.as_str())?;
+    discovery.metadata.verify(&discovery.signature)?;
+    assert_eq!(discovery.metadata.join_policy, ["moderator_approval"]);
+    let (owner, owner_contact) = identity()?;
+    let owner_session = claim_ownership(
+        State(s.clone()),
+        Json(ownership_request(&s, &owner, owner_contact, &code).await?),
+    )
+    .await?
+    .0;
+    let (other, other_contact) = identity()?;
+    assert_ne!(
+        owner.authorization.value.account_id,
+        other.authorization.value.account_id
+    );
+    let route = create_channel(
+        State(s.clone()),
+        headers(&owner_session)?,
+        Json(ChannelCreate {
+            name: "test".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    let pending_challenge = join_challenge(
+        State(s.clone()),
+        Json(ChallengeRequest {
+            contact: other_contact.clone(),
+            purpose: "join".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    let pending_request = SessionRequest {
+        proof: other.sign_device(pending_challenge)?,
+        idempotency_key: id(),
+    };
+    let pending = session(State(s.clone()), Json(pending_request.clone()))
+        .await
+        .err()
+        .context("unapproved account got a session")?;
+    assert_eq!(pending.1, "CORDS_APPROVAL_PENDING");
+    assert_eq!(
+        session(State(s.clone()), Json(pending_request))
+            .await
+            .err()
+            .context("pending replay succeeded")?
+            .1,
+        "CORDS_APPROVAL_PENDING"
+    );
+    let membership_count: i64 = sqlx::query_scalar("SELECT count(*) FROM memberships")
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert_eq!(membership_count, 1);
+    assert_eq!(
+        membership_requests(State(s.clone()), headers(&owner_session)?)
+            .await?
+            .0
+            .len(),
+        1
+    );
+    let unauthenticated = create_channel(
+        State(s.clone()),
+        HeaderMap::new(),
+        Json(ChannelCreate {
+            name: "test".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await
+    .err()
+    .context("unauthenticated channel creation succeeded")?;
+    assert_eq!(unauthenticated.0, StatusCode::FORBIDDEN);
+    let _approved = approve_membership(
+        State(s.clone()),
+        headers(&owner_session)?,
+        Path(other.authorization.value.device_id.clone()),
+    )
+    .await?;
+    let other_session = join(&s, &other, other_contact).await?;
+    assert_eq!(
+        owner_session.membership.value.server_id,
+        discovery.metadata.server_id
+    );
+    assert_eq!(
+        other_session.membership.value.server_id,
+        discovery.metadata.server_id
+    );
+    assert!(
+        !other_session
+            .membership
+            .value
+            .capabilities
+            .iter()
+            .any(|v| v == "channel.create" || v == "server.manage")
+    );
+    let denied = create_channel(
+        State(s.clone()),
+        headers(&other_session)?,
+        Json(ChannelCreate {
+            name: "test".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await
+    .err()
+    .context("ordinary member created a channel")?;
+    assert_eq!(denied.0, StatusCode::FORBIDDEN);
+    let mut legacy = other_session.membership.value.clone();
+    legacy.capabilities.push("channel.create".into());
+    let legacy = s.sign(legacy)?;
+    sqlx::query("UPDATE memberships SET credential=$2 WHERE device_id=$1")
+        .bind(&other.authorization.value.device_id)
+        .bind(json(&legacy)?)
+        .execute(s.0.store.pool())
+        .await?;
+    let denied_legacy = create_channel(
+        State(s.clone()),
+        headers(&other_session)?,
+        Json(ChannelCreate {
+            name: "test".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await
+    .err()
+    .context("legacy member capability bypassed owner gate")?;
+    assert_eq!(denied_legacy.0, StatusCode::FORBIDDEN);
+    let owner_channels = channels(State(s.clone()), headers(&owner_session)?)
+        .await?
+        .0;
+    let other_channels = channels(State(s.clone()), headers(&other_session)?)
+        .await?
+        .0;
+    assert_eq!(owner_channels.len(), 1);
+    assert_eq!(other_channels.len(), 1);
+    assert_eq!(owner_channels[0].channel_id, route);
+    assert_eq!(other_channels[0].channel_id, route);
+    assert!(other_channels[0].members.is_empty());
+    assert!(
+        channel(
+            State(s.clone()),
+            headers(&other_session)?,
+            Path(route.clone()),
+            Query(ChannelQuery { epoch: None })
+        )
+        .await
+        .is_err()
+    );
+    let persisted: (String, String) = sqlx::query_as("SELECT id,creator FROM channels WHERE id=$1")
+        .bind(&route)
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert_eq!(
+        persisted,
+        (route.clone(), owner.authorization.value.device_id.clone())
+    );
+    let restarted = Service::with_policy(
+        s.0.store.clone(),
+        s.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    assert_eq!(
+        channels(State(restarted.clone()), headers(&other_session)?)
+            .await?
+            .0[0]
+            .channel_id,
+        route
+    );
+    assert_eq!(
+        ownership_state(State(restarted)).await?.0.value.state,
+        "CLAIMED"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
+#[allow(clippy::too_many_lines)] // Rejection and explicit public admission share one persistent fixture.
+async fn rejected_request_stays_nonmember_and_public_policy_is_explicit() -> Result<()> {
+    let (base, _directory, code) = fixture_with_state(false).await?;
+    let approval = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let (owner, owner_contact) = identity()?;
+    let owner_session = claim_ownership(
+        State(approval.clone()),
+        Json(ownership_request(&approval, &owner, owner_contact, &code).await?),
+    )
+    .await?
+    .0;
+    let (other, contact) = identity()?;
+    let ch = join_challenge(
+        State(approval.clone()),
+        Json(ChallengeRequest {
+            contact: contact.clone(),
+            purpose: "join".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    assert_eq!(
+        session(
+            State(approval.clone()),
+            Json(SessionRequest {
+                proof: other.sign_device(ch)?,
+                idempotency_key: id(),
+            })
+        )
+        .await
+        .err()
+        .context("unapproved account got a session")?
+        .1,
+        "CORDS_APPROVAL_PENDING"
+    );
+    assert_eq!(
+        reject_membership(
+            State(approval.clone()),
+            headers(&owner_session)?,
+            Path(other.authorization.value.device_id.clone())
+        )
+        .await?,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        membership_requests(State(approval.clone()), headers(&owner_session)?)
+            .await?
+            .0[0]
+            .status,
+        "rejected"
+    );
+    let ch = join_challenge(
+        State(approval.clone()),
+        Json(ChallengeRequest {
+            contact: contact.clone(),
+            purpose: "join".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    assert_eq!(
+        session(
+            State(approval.clone()),
+            Json(SessionRequest {
+                proof: other.sign_device(ch)?,
+                idempotency_key: id(),
+            })
+        )
+        .await
+        .err()
+        .context("rejected account got a session")?
+        .1,
+        "CORDS_JOIN_REJECTED"
+    );
+    assert!(
+        membership_requests(State(approval.clone()), headers(&owner_session)?)
+            .await?
+            .0
+            .is_empty()
+    );
+    let retry_challenge = join_challenge(
+        State(approval.clone()),
+        Json(ChallengeRequest {
+            contact: contact.clone(),
+            purpose: "join".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    assert_eq!(
+        session(
+            State(approval.clone()),
+            Json(SessionRequest {
+                proof: other.sign_device(retry_challenge)?,
+                idempotency_key: id(),
+            })
+        )
+        .await
+        .err()
+        .context("reapplication got a session")?
+        .1,
+        "CORDS_APPROVAL_PENDING"
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM memberships WHERE device_id=$1")
+        .bind(&other.authorization.value.device_id)
+        .fetch_one(approval.0.store.pool())
+        .await?;
+    assert_eq!(count, 0);
+    let public = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::Public,
+    )?;
+    let (public_account, public_contact) = identity()?;
+    let issued = join(&public, &public_account, public_contact).await?;
+    assert!(
+        !issued
+            .membership
+            .value
+            .capabilities
+            .iter()
+            .any(|v| v == "channel.create" || v == "server.manage")
+    );
+    Ok(())
+}
 
 #[tokio::test]
 #[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
@@ -551,7 +904,7 @@ async fn route_permissions_sequence_concurrency_and_restart() -> Result<()> {
     let (s, _directory) = fixture().await?;
     let (a, ac) = identity()?;
     let (b, bc) = identity()?;
-    let sa = join(&s, &a, ac).await?;
+    let sa = grant_fixture_owner(&s, join(&s, &a, ac).await?).await?;
     let sb = join(&s, &b, bc).await?;
     let route = create_channel(
         State(s.clone()),
@@ -688,7 +1041,7 @@ async fn parser_limits_and_device_session_revocation() -> Result<()> {
 async fn failed_event_transaction_does_not_consume_sequence_or_idempotency() -> Result<()> {
     let (s, _directory) = fixture().await?;
     let (a, contact) = identity()?;
-    let session = join(&s, &a, contact).await?;
+    let session = grant_fixture_owner(&s, join(&s, &a, contact).await?).await?;
     let route = create_channel(
         State(s.clone()),
         headers(&session)?,
@@ -878,7 +1231,7 @@ async fn initial_binding_is_authenticated_durable_and_idempotent() -> Result<()>
     use cords_protocol::messaging::{ChannelBind, GroupBinding};
     let (s, _directory) = fixture().await?;
     let (a, contact) = identity()?;
-    let issued = join(&s, &a, contact).await?;
+    let issued = grant_fixture_owner(&s, join(&s, &a, contact).await?).await?;
     let route = create_channel(
         State(s.clone()),
         headers(&issued)?,

@@ -65,6 +65,7 @@ explicit command-line overrides. Nested TOML names use a double underscore in en
 | `server.listen`                    | `CORDS_SERVER__LISTEN`                    | Private address and port used by `cords-server` |
 | `server.public_origin`             | `CORDS_SERVER__PUBLIC_ORIGIN`             | Bare HTTPS origin clients join                  |
 | `server.name`                      | `CORDS_SERVER__NAME`                      | Public server display name                      |
+| `server.join_policy`               | `CORDS_SERVER__JOIN_POLICY`               | `moderator_approval` (default) or `public`      |
 | `server.data_dir`                  | `CORDS_SERVER__DATA_DIR`                  | Persistent server signing-key directory         |
 | `database.url`                     | `CORDS_DATABASE__URL`                     | PostgreSQL connection URL                       |
 | `database.migrations_dir`          | `CORDS_DATABASE__MIGRATIONS_DIR`          | Migrations packaged with the running release    |
@@ -302,6 +303,7 @@ Create `/etc/cords/server.toml` with mode `0640`, owned by `root:cords`:
 listen = "127.0.0.1:4849"
 public_origin = "https://cords.example.com"
 name = "My Cords Server"
+join_policy = "moderator_approval"
 data_dir = "/var/lib/cords"
 
 [database]
@@ -312,6 +314,15 @@ migrations_dir = "/opt/cords/current/migrations/postgres"
 challenge_seconds = 60
 session_seconds = 900
 ```
+
+`server.join_policy` defaults to `moderator_approval`. A verified new device then
+receives a pending response and cannot authenticate until the owner approves it
+in Server settings → Members. Set `join_policy = "public"` explicitly only when
+immediate admission is intended. Admission does not grant `channel.create`:
+only the claimed owner can create channels in this implementation. Approval
+does not add a device to an MLS conversation; an authorized existing channel
+member must separately add it before ciphertext and history are available.
+Existing memberships and channel records are not rewritten by the migration.
 
 Protect it:
 

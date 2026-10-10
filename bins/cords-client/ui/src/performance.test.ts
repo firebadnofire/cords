@@ -27,6 +27,7 @@ describe('representative conversation performance guard', () => {
       origin: 'https://server.example:4848',
       server_id: 'server',
       ownership_state: 'CLAIMED',
+      join_policy: ['moderator_approval'],
       cursors: {},
     } satisfies Status;
     const runtime = globalThis as typeof globalThis & {

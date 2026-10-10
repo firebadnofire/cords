@@ -22,6 +22,7 @@
     type Channel,
     type Contact,
     type Message,
+    type MembershipRequest,
     type View,
     type Preferences,
   } from './model';
@@ -36,6 +37,7 @@
   let prefs = defaults();
   let channels: Channel[] = [];
   let contacts: Contact[] = [];
+  let membershipRequests: MembershipRequest[] = [];
   let messages: Message[] = [];
   let route = '';
   let section: 'server' | 'dms' = 'server';
@@ -54,7 +56,7 @@
   let busy = false;
   let refreshing = false;
   let details = true;
-  const drafts: Record<string, string> = {};
+  let drafts: Record<string, string> = {};
 
   $: selected = selectedChannel(channels, route);
   $: manager = canManage(selected, status, identity);
@@ -75,8 +77,16 @@
     identity = view.identity;
     origin = opened.origin;
     if (opened.server_id && opened.ownership_state === 'CLAIMED') {
-      await action('authenticate');
-      channels = await action<Channel[]>('channels');
+      try {
+        await action('authenticate');
+        channels = await action<Channel[]>('channels');
+      } catch (caught) {
+        if (!/CORDS_APPROVAL_PENDING|CORDS_JOIN_REJECTED/.test(String(caught))) throw caught;
+        error = String(caught).includes('CORDS_JOIN_REJECTED')
+          ? 'Your membership request was rejected. Contact the server owner.'
+          : 'Your membership request is awaiting owner approval. Try again after approval.';
+        overlay = 'connect';
+      }
     } else overlay = 'connect';
   }
   function clearSensitiveUi() {
@@ -85,13 +95,19 @@
     prefs = defaults();
     channels = [];
     contacts = [];
+    membershipRequests = [];
     messages = [];
     route = '';
     body = '';
+    drafts = {};
+    name = '';
+    query = '';
+    removalPassword = '';
     origin = '';
     claimCode = '';
     connected = false;
     connectionError = '';
+    error = '';
     overlay = null;
     confirm = null;
   }
@@ -196,8 +212,16 @@
     await run(async () => {
       contacts = await action<Contact[]>('members');
       channels = await action<Channel[]>('channels');
+      membershipRequests = identity?.membership?.capabilities.includes('server.manage')
+        ? await action<MembershipRequest[]>('membership_requests')
+        : [];
       overlay = 'admin';
     });
+  }
+  async function decideMembership(device: string, approve: boolean) {
+    await action(approve ? 'approve_membership' : 'reject_membership', { device });
+    membershipRequests = await action<MembershipRequest[]>('membership_requests');
+    contacts = await action<Contact[]>('members');
   }
   async function savePreferences(value: Preferences) {
     const normalized = preferences(value);
@@ -384,9 +408,11 @@
         {identity}
         {channels}
         {contacts}
+        {membershipRequests}
         close={() => (overlay = null)}
         create={createChannel}
         select={selectChannel}
+        decideMembership={decideMembership}
       />{/if}
     {#if overlay === 'connect'}<Modal title="Connection and trust" close={() => (overlay = null)}
         ><div class="modal-body connect-dialog">

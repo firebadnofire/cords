@@ -311,6 +311,9 @@ pub(crate) enum Action {
     Send { route: String, body: String },
     Synchronize,
     Members,
+    MembershipRequests,
+    ApproveMembership { device: String },
+    RejectMembership { device: String },
     Remove { route: String, device: String },
     Revoke,
     Preferences { value: Value },
@@ -348,6 +351,14 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
         Action::Send { route, body } => json!(client.send(&route, &body).await?),
         Action::Synchronize => serde_json::to_value(client.synchronize().await?)?,
         Action::Members => serde_json::to_value(client.members().await?)?,
+        Action::MembershipRequests => serde_json::to_value(client.membership_requests().await?)?,
+        Action::ApproveMembership { device } => {
+            serde_json::to_value(client.approve_membership(&device).await?)?
+        }
+        Action::RejectMembership { device } => {
+            client.reject_membership(&device).await?;
+            json!(true)
+        }
         Action::Remove { route, device } => {
             client.remove_member(&route, &device).await?;
             json!(true)

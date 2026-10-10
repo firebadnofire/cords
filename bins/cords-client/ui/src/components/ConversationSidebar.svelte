@@ -75,7 +75,7 @@
         <ChevronDown size={12} />TEXT CHANNELS
         <button
           aria-label="Create channel"
-          disabled={!identity?.membership?.capabilities.includes('channel.create') || busy}
+          disabled={!identity?.membership?.capabilities.includes('server.manage') || busy}
           on:click={createChannel}><Plus size={15} /></button
         >
       </div>
@@ -86,9 +86,12 @@
           class="channel-row"
           class:active={route === channel.channel_id}
           on:click={() => selectChannel(channel.channel_id)}
-          disabled={busy}
+          disabled={busy || !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
+          title={channel.members.some((member) => member.authorization.value.device_id === status.device_id)
+            ? `Open #${channel.name}`
+            : 'Visible server channel; waiting to be added to its encrypted conversation'}
         >
-          <Hash size={20} /><span>{channel.name}</span>
+          <Hash size={20} /><span>{channel.name}</span>{#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}<LockKeyhole size={14} />{/if}
         </button>
       {:else}
         <div class="sidebar-empty compact"><small>No accessible channels.</small></div>

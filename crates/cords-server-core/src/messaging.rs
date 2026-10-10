@@ -12,9 +12,9 @@ use axum::{
 use cords_identity::{validate_contact, validate_transition};
 use cords_protocol::messaging::{
     Challenge, ChallengeRequest, Channel, ChannelCreate, CommitUpload, Contact, EventUpload,
-    InvalidObject, KeyPackageUpload, MAX_ENVELOPE, Membership, OwnershipClaim, OwnershipState,
-    RosterAction, RosterOperation, RosterRequest, RouteEvent, Session, SessionRequest, Signed,
-    Statement, WS_PROTOCOL, canonical, decode, encode, hash, notification,
+    InvalidObject, KeyPackageUpload, MAX_ENVELOPE, Membership, MembershipRequest, OwnershipClaim,
+    OwnershipState, RosterAction, RosterOperation, RosterRequest, RouteEvent, Session,
+    SessionRequest, Signed, Statement, WS_PROTOCOL, canonical, decode, encode, hash, notification,
 };
 use cords_storage::PostgresStore;
 use rand_core::{OsRng, RngCore as _};
@@ -41,6 +41,24 @@ struct Inner {
     session_seconds: u64,
     authentication_budget: Mutex<(Instant, u32)>,
     ownership_budget: Mutex<(Instant, u32)>,
+    join_policy: JoinPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinPolicy {
+    Public,
+    #[default]
+    ModeratorApproval,
+}
+impl JoinPolicy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::ModeratorApproval => "moderator_approval",
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,9 +66,14 @@ struct Inner {
 pub struct ApiError(StatusCode, &'static str);
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let retry = match self.1 {
+            "CORDS_APPROVAL_PENDING" => "after_approval",
+            "CORDS_JOIN_REJECTED" => "contact_owner",
+            _ => "never",
+        };
         (
             self.0,
-            Json(serde_json::json!({"code":self.1,"message":self.1,"retry":"never"})),
+            Json(serde_json::json!({"code":self.1,"message":self.1,"retry":retry})),
         )
             .into_response()
     }
@@ -116,6 +139,24 @@ impl Service {
         challenge_seconds: u64,
         session_seconds: u64,
     ) -> Result<Self> {
+        Self::with_policy(
+            store,
+            identity,
+            challenge_seconds,
+            session_seconds,
+            JoinPolicy::ModeratorApproval,
+        )
+    }
+
+    /// # Errors
+    /// Returns an error when authentication lifetime settings are outside supported bounds.
+    pub fn with_policy(
+        store: PostgresStore,
+        identity: crate::ServerIdentity,
+        challenge_seconds: u64,
+        session_seconds: u64,
+        join_policy: JoinPolicy,
+    ) -> Result<Self> {
         if !(1..=600).contains(&challenge_seconds) || !(1..=86400).contains(&session_seconds) {
             return Err(bad());
         }
@@ -127,6 +168,7 @@ impl Service {
             session_seconds,
             authentication_budget: Mutex::new((Instant::now(), 0)),
             ownership_budget: Mutex::new((Instant::now(), 0)),
+            join_policy,
         })))
     }
     fn limit_authentication(&self) -> Result<()> {
@@ -331,6 +373,15 @@ pub fn router(service: Service) -> Router {
         .route("/api/v1/ownership/claim", post(claim_ownership))
         .route("/api/v1/devices/revoke", post(lifecycle::revoke))
         .route("/api/v1/members", get(members))
+        .route("/api/v1/membership-requests", get(membership_requests))
+        .route(
+            "/api/v1/membership-requests/{device}/approve",
+            post(approve_membership),
+        )
+        .route(
+            "/api/v1/membership-requests/{device}/reject",
+            post(reject_membership),
+        )
         .route("/api/v1/key-packages", post(upload_package))
         .route("/api/v1/key-packages/{account}", get(packages))
         .route("/api/v1/channels", get(channels).post(create_channel))
@@ -356,7 +407,6 @@ fn member_capabilities(owner: bool) -> Vec<String> {
     let mut capabilities = vec![
         "channel.read".into(),
         "channel.write".into(),
-        "channel.create".into(),
         "channel.mls.commit".into(),
         "keypackage.publish".into(),
     ];
@@ -366,6 +416,7 @@ fn member_capabilities(owner: bool) -> Vec<String> {
             "server.member.ban".into(),
             "server.invite.create".into(),
             "channel.manage".into(),
+            "channel.create".into(),
         ]);
     }
     capabilities
@@ -512,6 +563,7 @@ fn session_token(s: &Service, challenge_id: &str, expires_at: u64) -> Result<Str
     ))
 }
 
+#[allow(clippy::too_many_lines)] // Keep proof, admission, and token issuance in one auditable transaction.
 async fn session(
     State(s): State<Service>,
     Json(request): Json<SessionRequest>,
@@ -577,6 +629,42 @@ async fn session(
                 .bind(&expected.account_id)
                 .fetch_one(&mut *tx)
                 .await?;
+        if !owner && s.0.join_policy == JoinPolicy::ModeratorApproval {
+            let prior: Option<String> = sqlx::query_scalar(
+                "SELECT status FROM membership_requests WHERE device_id=$1 FOR UPDATE",
+            )
+            .bind(device)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if prior.as_deref() != Some("approved") {
+                let result_code = if prior.as_deref() == Some("rejected") {
+                    "CORDS_JOIN_REJECTED"
+                } else {
+                    "CORDS_APPROVAL_PENDING"
+                };
+                if prior.is_none() {
+                    sqlx::query("INSERT INTO membership_requests(device_id,account_id,contact,requested_at,status) VALUES($1,$2,$3,$4,'pending')")
+                        .bind(device).bind(&expected.account_id).bind(json(&contact)?).bind(int(time)?)
+                        .execute(&mut *tx).await?;
+                } else if prior.as_deref() == Some("rejected") {
+                    // Report the rejection once to the proven device, then allow a
+                    // later fresh request instead of leaving it permanently stuck.
+                    sqlx::query("DELETE FROM membership_requests WHERE device_id=$1")
+                        .bind(device)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                sqlx::query("UPDATE auth_challenges SET consumed=TRUE,pending_request_hash=$2,pending_idempotency_key=$3,pending_result_code=$4 WHERE id=$1")
+                    .bind(&expected.challenge_id)
+                    .bind(hash(canonical(&request)?))
+                    .bind(&request.idempotency_key)
+                    .bind(result_code)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                return Err(ApiError(StatusCode::FORBIDDEN, result_code));
+            }
+        }
         let credential = s.sign(Membership {
             version: 1,
             server_id: s.0.identity.server_id(),
@@ -591,6 +679,10 @@ async fn session(
         sqlx::query("INSERT INTO memberships(device_id,credential) VALUES($1,$2)")
             .bind(device)
             .bind(json(&credential)?)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM membership_requests WHERE device_id=$1")
+            .bind(device)
             .execute(&mut *tx)
             .await?;
         credential
@@ -766,6 +858,25 @@ async fn recover_session(
     expected: &Challenge,
     time: u64,
 ) -> Result<Json<Session>> {
+    let pending = sqlx::query("SELECT pending_request_hash,pending_idempotency_key,pending_result_code FROM auth_challenges WHERE id=$1")
+        .bind(&expected.challenge_id).fetch_one(&mut **tx).await?;
+    if let (Some(request_hash), Some(key)) = (
+        pending.try_get::<Option<String>, _>("pending_request_hash")?,
+        pending.try_get::<Option<String>, _>("pending_idempotency_key")?,
+    ) {
+        if request_hash != hash(canonical(request)?) || key != request.idempotency_key {
+            return Err(conflict());
+        }
+        let code: Option<String> = pending.try_get("pending_result_code")?;
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            if code.as_deref() == Some("CORDS_JOIN_REJECTED") {
+                "CORDS_JOIN_REJECTED"
+            } else {
+                "CORDS_APPROVAL_PENDING"
+            },
+        ));
+    }
     let old=sqlx::query("SELECT s.expires_at,s.request_hash,s.idempotency_key,m.credential FROM sessions s JOIN memberships m ON m.device_id=s.device_id WHERE s.challenge_id=$1 AND s.active AND m.active").bind(&expected.challenge_id).fetch_optional(&mut **tx).await?.ok_or_else(denied)?;
     let expiry = uint(old.try_get("expires_at")?)?;
     if old.try_get::<String, _>("request_hash")? != hash(canonical(&request)?)
@@ -789,6 +900,97 @@ async fn members(State(s): State<Service>, headers: HeaderMap) -> Result<Json<Ve
     Ok(Json(
         values.iter().map(|v| parse(v)).collect::<Result<_>>()?,
     ))
+}
+async fn membership_requests(
+    State(s): State<Service>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<MembershipRequest>>> {
+    s.authenticate(&headers, "server.manage").await?;
+    let rows = sqlx::query("SELECT account_id,device_id,requested_at,status FROM membership_requests WHERE status IN ('pending','rejected') ORDER BY requested_at,device_id LIMIT 1000")
+        .fetch_all(s.0.store.pool()).await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| {
+                Ok(MembershipRequest {
+                    account_id: row.try_get("account_id")?,
+                    device_id: row.try_get("device_id")?,
+                    requested_at: uint(row.try_get("requested_at")?)?,
+                    status: row.try_get("status")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+    ))
+}
+async fn approve_membership(
+    State(s): State<Service>,
+    headers: HeaderMap,
+    Path(device): Path<String>,
+) -> Result<Json<Signed<Membership>>> {
+    let actor = s.authenticate(&headers, "server.manage").await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_mutation(&mut tx, &headers, &actor, None)
+        .await?;
+    let row = sqlx::query(
+        "SELECT account_id,contact,status FROM membership_requests WHERE device_id=$1 FOR UPDATE",
+    )
+    .bind(&device)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(denied)?;
+    if !matches!(
+        row.try_get::<String, _>("status")?.as_str(),
+        "pending" | "rejected"
+    ) {
+        return Err(conflict());
+    }
+    let contact: Contact = parse(row.try_get("contact")?)?;
+    validate_contact(&contact, now()?)?;
+    let account: String = row.try_get("account_id")?;
+    if contact.authorization.value.account_id != account
+        || contact.authorization.value.device_id != device
+    {
+        return Err(denied());
+    }
+    // Revalidate revocation and the current account head at the approval boundary.
+    persist_contact(&mut tx, &contact).await?;
+    let time = now()?;
+    let credential = s.sign(Membership {
+        version: 1,
+        server_id: s.0.identity.server_id(),
+        member_id: id(),
+        account_id: account,
+        device_id: device.clone(),
+        generation: 1,
+        issued_at: time,
+        capabilities: member_capabilities(false),
+        status: "active".into(),
+    })?;
+    sqlx::query("INSERT INTO memberships(device_id,credential) VALUES($1,$2)")
+        .bind(&device)
+        .bind(json(&credential)?)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE membership_requests SET status='approved',decided_by=$2,decided_at=$3 WHERE device_id=$1")
+        .bind(&device).bind(&actor.value.device_id).bind(int(time)?).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(credential))
+}
+async fn reject_membership(
+    State(s): State<Service>,
+    headers: HeaderMap,
+    Path(device): Path<String>,
+) -> Result<StatusCode> {
+    let actor = s.authenticate(&headers, "server.manage").await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_mutation(&mut tx, &headers, &actor, None)
+        .await?;
+    let changed = sqlx::query("UPDATE membership_requests SET status='rejected',decided_by=$2,decided_at=$3 WHERE device_id=$1 AND status='pending'")
+        .bind(&device).bind(&actor.value.device_id).bind(int(now()?)?).execute(&mut *tx).await?.rows_affected();
+    if changed != 1 {
+        return Err(conflict());
+    }
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn upload_package(
     State(s): State<Service>,
@@ -857,6 +1059,16 @@ async fn create_channel(
     Json(request): Json<ChannelCreate>,
 ) -> Result<Json<String>> {
     let member = s.authenticate(&headers, "channel.create").await?;
+    // Older signed credentials could contain channel.create from the former
+    // public-member default. The owner record is the authoritative gate.
+    let owner: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE account_id=$1)")
+            .bind(&member.value.account_id)
+            .fetch_one(s.0.store.pool())
+            .await?;
+    if !owner {
+        return Err(denied());
+    }
     if request.name.is_empty() || request.name.chars().count() > 100 {
         return Err(bad());
     }
@@ -910,10 +1122,23 @@ async fn channel_view_in(tx: &mut Tx<'_>, route: &str) -> Result<Channel> {
 }
 async fn channels(State(s): State<Service>, headers: HeaderMap) -> Result<Json<Vec<Channel>>> {
     let member = s.authenticate(&headers, "channel.read").await?;
-    let ids:Vec<String>=sqlx::query_scalar("SELECT channel_id FROM channel_members WHERE device_id=$1 AND active AND delivery_active ORDER BY channel_id LIMIT 1000").bind(&member.value.device_id).fetch_all(s.0.store.pool()).await?;
+    let rows = sqlx::query("SELECT c.id,c.name,c.creator,c.epoch,EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$1 AND m.active AND m.delivery_active) AS joined FROM channels c ORDER BY c.id LIMIT 1000")
+        .bind(&member.value.device_id).fetch_all(s.0.store.pool()).await?;
     let mut result = Vec::new();
-    for route in ids {
-        result.push(channel_view(&s, &route).await?);
+    for row in rows {
+        let route: String = row.try_get("id")?;
+        if row.try_get::<bool, _>("joined")? {
+            result.push(channel_view(&s, &route).await?);
+        } else {
+            result.push(Channel {
+                channel_id: route,
+                name: row.try_get("name")?,
+                creator_device_id: row.try_get("creator")?,
+                epoch: uint(row.try_get("epoch")?)?,
+                members: Vec::new(),
+                binding: None,
+            });
+        }
     }
     Ok(Json(result))
 }

@@ -10,9 +10,9 @@ use cords_protocol::{
     messaging::{
         Challenge, ChallengeRequest, Channel, ChannelBind, ChannelCreate, CommitUpload, Contact,
         DeviceAuthorization, DeviceRevocation, EventUpload, GroupBinding, KeyPackageUpload,
-        MAX_TEXT, Message, OwnershipClaim, OwnershipProof, OwnershipState, RevocationRequest,
-        RosterAction, RosterOperation, RosterRequest, RouteEvent, Session, SessionRequest, Signed,
-        WS_PROTOCOL, canonical, decode, encode, hash,
+        MAX_TEXT, MembershipRequest, Message, OwnershipClaim, OwnershipProof, OwnershipState,
+        RevocationRequest, RosterAction, RosterOperation, RosterRequest, RouteEvent, Session,
+        SessionRequest, Signed, WS_PROTOCOL, canonical, decode, encode, hash,
     },
 };
 use cords_storage::SqliteStore;
@@ -47,6 +47,8 @@ struct Durable {
     server_key: String,
     #[serde(default)]
     ownership_state: String,
+    #[serde(default)]
+    join_policy: Vec<String>,
     session: Option<Session>,
     cursors: BTreeMap<String, u64>,
     contacts: BTreeMap<String, Signed<DeviceAuthorization>>,
@@ -98,6 +100,7 @@ pub struct Status {
     pub server_id: String,
     pub origin: String,
     pub ownership_state: String,
+    pub join_policy: Vec<String>,
     pub cursors: BTreeMap<String, u64>,
 }
 #[derive(Debug, Serialize)]
@@ -410,6 +413,7 @@ impl Client {
             server_id: self.durable.server_id.clone(),
             origin: self.durable.origin.clone(),
             ownership_state: self.durable.ownership_state.clone(),
+            join_policy: self.durable.join_policy.clone(),
             cursors: self.durable.cursors.clone(),
         }
     }
@@ -493,6 +497,8 @@ impl Client {
                 Some("CORDS_STORAGE_UNAVAILABLE") => "CORDS_STORAGE_UNAVAILABLE",
                 Some("CORDS_OWNERSHIP_STATE_CONFLICT") => "CORDS_OWNERSHIP_STATE_CONFLICT",
                 Some("CORDS_OWNERSHIP_UNAVAILABLE") => "CORDS_OWNERSHIP_UNAVAILABLE",
+                Some("CORDS_APPROVAL_PENDING") => "CORDS_APPROVAL_PENDING",
+                Some("CORDS_JOIN_REJECTED") => "CORDS_JOIN_REJECTED",
                 _ => "CORDS_HTTP_ERROR",
             };
             bail!("{code}: HTTP {status}");
@@ -560,6 +566,7 @@ impl Client {
         self.durable.origin = origin.to_string();
         self.durable.server_id = discovered;
         self.durable.server_key = signed.metadata.server_signing_key;
+        self.durable.join_policy = signed.metadata.join_policy;
         let ownership: Signed<OwnershipState> = Self::response(
             self.http
                 .get(origin.join("/api/v1/ownership")?)
@@ -856,6 +863,59 @@ impl Client {
     pub async fn channels(&mut self) -> Result<Vec<Channel>> {
         self.ensure_session().await?;
         self.get("/api/v1/channels").await
+    }
+    /// List pending requests visible to a server manager.
+    /// # Errors
+    /// Returns an error when the session lacks server management permission or transport fails.
+    pub async fn membership_requests(&mut self) -> Result<Vec<MembershipRequest>> {
+        self.ensure_session().await?;
+        self.get("/api/v1/membership-requests").await
+    }
+    /// Approve a verified pending device request.
+    /// # Errors
+    /// Returns an error when approval is unauthorized or the request is no longer pending.
+    pub async fn approve_membership(
+        &mut self,
+        device: &str,
+    ) -> Result<Signed<cords_protocol::messaging::Membership>> {
+        self.ensure_session().await?;
+        let result: Signed<cords_protocol::messaging::Membership> = self
+            .post(
+                &format!("/api/v1/membership-requests/{device}/approve"),
+                &serde_json::json!({}),
+                true,
+            )
+            .await?;
+        result.verify(&self.durable.server_key)?;
+        ensure!(
+            result.value.server_id == self.durable.server_id
+                && result.value.device_id == device
+                && result.value.status == "active",
+            "invalid approved membership"
+        );
+        Ok(result)
+    }
+    /// Reject a pending device request.
+    /// # Errors
+    /// Returns an error when rejection is unauthorized or the request is no longer pending.
+    pub async fn reject_membership(&mut self, device: &str) -> Result<()> {
+        self.ensure_session().await?;
+        let session = self.durable.session.as_ref().context("not authenticated")?;
+        let response = self
+            .http
+            .post(format!(
+                "{}/api/v1/membership-requests/{device}/reject",
+                self.durable.origin
+            ))
+            .bearer_auth(&session.token)
+            .send()
+            .await?;
+        ensure!(
+            response.status() == reqwest::StatusCode::NO_CONTENT,
+            "membership rejection failed: HTTP {}",
+            response.status()
+        );
+        Ok(())
     }
     fn observe_contact(&mut self, contact: &Contact) -> Result<()> {
         validate_contact(contact, now()?)?;

@@ -207,6 +207,14 @@ pub struct Membership {
     pub capabilities: Vec<String>,
     pub status: String,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MembershipRequest {
+    pub account_id: String,
+    pub device_id: String,
+    pub requested_at: u64,
+    pub status: String,
+}
 impl Statement for Membership {
     const DOMAIN: &'static str = "CORDS-MEMBERSHIP-V1";
 }

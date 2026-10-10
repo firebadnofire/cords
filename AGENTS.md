@@ -463,6 +463,8 @@ Until an acceptable Rust OPAQUE implementation and interoperability tests are se
 
 The server records a pending request containing only the public identity, requested display name, and admission evidence. A moderator approves or rejects it. Approval issues the membership credential.
 
+The deployed server MUST advertise its configured admission policy in signed discovery metadata and enforce it before issuing a membership or session. The initial configuration defaults to `moderator_approval`; an operator MAY explicitly select `public`. A pending or rejected request is not a membership and grants no authenticated capability. Rejection MUST leave a path for a verified device to submit a fresh request.
+
 ## 9.3 Routine authentication
 
 After registration, the client authenticates by signing a fresh server challenge with its authorized device key and presenting the current server membership credential.
@@ -503,6 +505,8 @@ call.start
 ```
 
 Roles map to capabilities. Protocol logic MUST check capabilities, not display labels such as `admin`.
+
+Until server role assignment is implemented, `channel.create` is granted only to the verified server owner. The server MUST also check the durable owner record before creating a channel so a previously issued overbroad credential cannot retain that authority.
 
 # 11. Conversation encryption with MLS
 
@@ -567,6 +571,8 @@ Clients MUST replenish KeyPackages before the pool reaches a configurable low-wa
 The channel creator's device creates the initial MLS group and publishes signed group metadata tied to the server and channel identifiers.
 
 The server MUST reject a group binding that does not match the channel, server ID, protocol version, or authorized creator.
+
+Approved server members MAY discover channel names and server-generated channel IDs without being MLS members. That metadata discovery MUST NOT grant ciphertext delivery, history access, or conversation membership. Channel IDs, not names, determine identity; duplicate display names are permitted.
 
 ## 11.7 Membership changes and commit coordination
 

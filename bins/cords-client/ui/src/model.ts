@@ -14,12 +14,19 @@ export type Channel = {
   epoch: number;
   members: Contact[];
 };
+export type MembershipRequest = {
+  account_id: string;
+  device_id: string;
+  requested_at: number;
+  status: string;
+};
 export type Status = {
   account_id: string;
   device_id: string;
   origin: string;
   server_id: string;
   ownership_state: string;
+  join_policy: string[];
   cursors: Record<string, number>;
 };
 export type Message = {

@@ -76,6 +76,17 @@ impl ServerIdentity {
         &self,
         server_name: &str,
     ) -> Result<SignedServerMetadataV1, IdentityError> {
+        self.signed_metadata_with_policy(server_name, "moderator_approval")
+    }
+
+    /// Sign discovery metadata for the configured admission policy.
+    /// # Errors
+    /// Returns an error if deterministic encoding fails.
+    pub fn signed_metadata_with_policy(
+        &self,
+        server_name: &str,
+        join_policy: &str,
+    ) -> Result<SignedServerMetadataV1, IdentityError> {
         let metadata = ServerMetadataV1 {
             protocol_min: PROTOCOL_V1,
             protocol_max: PROTOCOL_V1,
@@ -84,7 +95,7 @@ impl ServerIdentity {
             api_base: "/api/v1".into(),
             websocket_path: "/api/v1/events".into(),
             server_signing_key: URL_SAFE_NO_PAD.encode(self.signing_key.verifying_key().to_bytes()),
-            join_policy: vec!["public".into()],
+            join_policy: vec![join_policy.into()],
             features: vec!["mls-v1".into(), "channel-sync-v1".into()],
         };
         let signature = self.signing_key.sign(&metadata.signing_bytes()?).to_bytes();

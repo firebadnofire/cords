@@ -93,6 +93,8 @@ struct ServerSettings {
     public_origin: String,
     name: String,
     data_dir: PathBuf,
+    #[serde(default)]
+    join_policy: cords_server_core::messaging::JoinPolicy,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -254,13 +256,17 @@ async fn main() -> Result<()> {
             }
 
             let metadata = identity
-                .signed_metadata(&settings.server.name)
+                .signed_metadata_with_policy(
+                    &settings.server.name,
+                    settings.server.join_policy.as_str(),
+                )
                 .context("failed to sign server metadata")?;
-            let service = cords_server_core::messaging::Service::new(
+            let service = cords_server_core::messaging::Service::with_policy(
                 store.clone(),
                 identity,
                 settings.authentication.challenge_seconds,
                 settings.authentication.session_seconds,
+                settings.server.join_policy,
             )
             .map_err(|_| anyhow::anyhow!("authentication lifetime configuration is invalid"))?;
             let app = router(AppState::new(metadata).with_store(store))

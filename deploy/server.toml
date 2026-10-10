@@ -2,6 +2,7 @@
 listen = "0.0.0.0:4848"
 public_origin = "https://localhost:4848"
 name = "Cords Development Server"
+join_policy = "moderator_approval"
 data_dir = "/var/lib/cords"
 
 [database]

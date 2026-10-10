@@ -297,7 +297,7 @@ pub(crate) async fn record_activity(state: tauri::State<'_, Desktop>) -> Result<
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)] // Recovery/bootstrap codes must not appear in derived Debug output.
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Action {
     Trust { origin: String },
@@ -342,12 +342,21 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
     Ok(match action {
         Action::Trust { origin } => serde_json::to_value(client.trust(&origin).await?)?,
         Action::Servers => serde_json::to_value(client.servers())?,
-        Action::SelectServer { server_id } => serde_json::to_value(client.select_server(&server_id).await?)?,
-        Action::RemoveServer { server_id, local_only } => serde_json::to_value(client.remove_server(&server_id, local_only).await?)?,
-        Action::ArchiveServer { server_id } => serde_json::to_value(client.archive_server(&server_id).await?)?,
+        Action::SelectServer { server_id } => {
+            serde_json::to_value(client.select_server(&server_id).await?)?
+        }
+        Action::RemoveServer {
+            server_id,
+            local_only,
+        } => serde_json::to_value(client.remove_server(&server_id, local_only).await?)?,
+        Action::ArchiveServer { server_id } => {
+            serde_json::to_value(client.archive_server(&server_id).await?)?
+        }
         Action::BurnIdentity => serde_json::to_value(client.burn_identity().await?)?,
         Action::RetryBurns => serde_json::to_value(client.retry_pending_burns().await?)?,
-        Action::DesignateSuccessor { account_id } => json!(client.designate_successor(&account_id).await?),
+        Action::DesignateSuccessor { account_id } => {
+            json!(client.designate_successor(&account_id).await?)
+        }
         Action::AcceptSuccessor { designation_hash } => {
             client.accept_successor(&designation_hash).await?;
             json!(true)
@@ -470,12 +479,18 @@ pub(crate) async fn conversation_action(
             Ok(value)
         }
         Err(error) => {
-            let message = error.to_string();
+            let message = format!("{error:#}");
             if let Err(reload) = client.reload().await {
                 runtime.client = None;
                 runtime.error = Some(format!("Storage recovery failed: {reload}"));
             } else {
-                runtime.error = Some(message.clone());
+                runtime.error = if message.contains("CORDS_APPROVAL_PENDING")
+                    || message.contains("CORDS_JOIN_REJECTED")
+                {
+                    None
+                } else {
+                    Some(message.clone())
+                };
             }
             Err(message)
         }
@@ -509,6 +524,7 @@ pub(crate) async fn conversation_view(
 async fn synchronize(state: Arc<Mutex<Runtime>>, generation: u64) {
     let mut receiver = None;
     let mut socket: Option<tokio::task::JoinHandle<()>> = None;
+    let mut socket_server = String::new();
     let mut timer = tokio::time::interval(Duration::from_secs(3));
     loop {
         let disconnected = tokio::select! {
@@ -528,10 +544,19 @@ async fn synchronize(state: Arc<Mutex<Runtime>>, generation: u64) {
         let Some(client) = runtime.client.as_mut() else {
             break;
         };
+        if socket_server != client.status().server_id || client.is_burned() {
+            if let Some(task) = socket.take() {
+                task.abort();
+            }
+            receiver = None;
+            socket_server = client.status().server_id;
+        }
         if client.is_burned() {
             let retry = client.retry_pending_burns().await;
             runtime.connected = false;
-            runtime.error = retry.err().map(|e| format!("Identity-burn delivery retry failed: {e}"));
+            runtime.error = retry
+                .err()
+                .map(|e| format!("Identity-burn delivery retry failed: {e}"));
             continue;
         }
         if client.status().server_id.is_empty() {
@@ -539,7 +564,9 @@ async fn synchronize(state: Arc<Mutex<Runtime>>, generation: u64) {
         }
         match client.refresh_ownership_state().await {
             Ok(state) if state == "OWNER_LOCKDOWN" => {
-                if let Some(task) = socket.take() { task.abort(); }
+                if let Some(task) = socket.take() {
+                    task.abort();
+                }
                 receiver = None;
                 runtime.connected = false;
                 runtime.error = None;
@@ -551,6 +578,14 @@ async fn synchronize(state: Arc<Mutex<Runtime>>, generation: u64) {
                 runtime.error = Some(format!("Signed server-status check failed: {error}"));
                 continue;
             }
+        }
+        if matches!(
+            client.status().admission_state.as_str(),
+            "pending" | "rejected" | "removed"
+        ) {
+            runtime.connected = false;
+            runtime.error = None;
+            continue;
         }
         let result: Result<()> = async {
             if receiver.is_none() {

@@ -49,8 +49,14 @@ enum Command {
         #[command(subcommand)]
         command: OwnershipBootstrapCommand,
     },
-    /// Generate a fresh, one-use owner recovery code during OWNER_LOCKDOWN.
+    /// Generate a fresh, one-use owner recovery code during `OWNER_LOCKDOWN`.
     OwnershipRecoveryCode,
+    /// Explicitly freeze a claimed server for operator-led ownership recovery.
+    OwnershipLockdown {
+        /// Acknowledge that messaging and membership mutations will stop.
+        #[arg(long, required = true)]
+        confirm: bool,
+    },
     /// Check the local readiness endpoint and exit.
     Healthcheck {
         #[arg(long, default_value = "http://127.0.0.1:4848/health/ready")]
@@ -184,6 +190,7 @@ async fn load_server_identity(
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)] // Keep the administrative command dispatch visible together.
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     if let Command::Healthcheck { url } = &cli.command {
@@ -230,10 +237,26 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::OwnershipRecoveryCode => {
-            store.require_current().await.context("database schema is not current")?;
+            store
+                .require_current()
+                .await
+                .context("database schema is not current")?;
             let identity = load_server_identity(&store, &settings.server.data_dir).await?;
             let code = ownership::rotate_recovery_code(&store, &identity.server_id()).await?;
             warn!(recovery_code = %code.as_str(), "One-time Cords owner recovery code; give it only to the intended new owner and store it securely");
+            Ok(())
+        }
+        Command::OwnershipLockdown { confirm } => {
+            anyhow::ensure!(confirm, "ownership lockdown requires --confirm");
+            store
+                .require_current()
+                .await
+                .context("database schema is not current")?;
+            let identity = load_server_identity(&store, &settings.server.data_dir).await?;
+            ownership::begin_recovery(&store, &identity.server_id()).await?;
+            warn!(
+                "OWNER_LOCKDOWN: data preserved; generate an ownership-recovery-code for the intended new owner"
+            );
             Ok(())
         }
         Command::Serve {

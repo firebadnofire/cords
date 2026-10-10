@@ -96,7 +96,7 @@ impl ServerIdentity {
             websocket_path: "/api/v1/events".into(),
             server_signing_key: URL_SAFE_NO_PAD.encode(self.signing_key.verifying_key().to_bytes()),
             join_policy: vec![join_policy.into()],
-            features: vec!["mls-v1".into(), "channel-sync-v1".into()],
+            features: server_features(),
         };
         let signature = self.signing_key.sign(&metadata.signing_bytes()?).to_bytes();
         Ok(SignedServerMetadataV1 {
@@ -203,8 +203,23 @@ async fn capabilities() -> Json<CapabilitiesV1> {
     Json(CapabilitiesV1 {
         protocol_min: PROTOCOL_V1,
         protocol_max: PROTOCOL_V1,
-        features: vec!["mls-v1".into(), "channel-sync-v1".into()],
+        features: server_features(),
     })
+}
+
+fn server_features() -> Vec<String> {
+    [
+        "mls-v1",
+        "channel-sync-v1",
+        "server-departure-v1",
+        "identity-burn-v1",
+        "ownership-recovery-v1",
+        "user-cards-v1",
+        "member-pages-v1",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 #[derive(Debug, Error)]

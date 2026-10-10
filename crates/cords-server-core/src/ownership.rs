@@ -87,8 +87,43 @@ pub async fn rotate_recovery_code(
         .bind(now()?)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("INSERT INTO server_owner_audit(id,action,occurred_at,details_hash) VALUES($1,'operator_code_rotated',$2,$3)")
+        .bind(uuid::Uuid::now_v7().to_string()).bind(now()?)
+        .bind(hash(server_id)).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(code)
+}
+
+/// Explicit local-operator intervention; never callable using an owner account key.
+/// Idempotent lockdown preserves data and does not reopen bootstrap.
+/// # Errors
+/// Refuses an unclaimed server or unavailable storage.
+pub async fn begin_recovery(store: &PostgresStore, server_id: &str) -> Result<(), BootstrapError> {
+    let mut tx = store.pool().begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('server-ownership',0))")
+        .execute(&mut *tx)
+        .await?;
+    let claimed: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE singleton=TRUE)")
+            .fetch_one(&mut *tx)
+            .await?;
+    if !claimed {
+        return Err(BootstrapError::NotInitialized);
+    }
+    let changed = sqlx::query("UPDATE server_owner_control SET locked_down=TRUE,recovery_code_hash=NULL,recovery_issued_at=NULL WHERE singleton=TRUE AND NOT locked_down")
+        .execute(&mut *tx).await?.rows_affected();
+    if changed != 0 {
+        sqlx::query(
+            "UPDATE server_ownership_bootstrap SET generation=generation+1 WHERE singleton=TRUE",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("INSERT INTO server_owner_audit(id,action,occurred_at,details_hash) VALUES($1,'operator_lockdown',$2,$3)")
+            .bind(uuid::Uuid::now_v7().to_string()).bind(now()?).bind(hash(server_id))
+            .execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Ensure a fresh database has durable unclaimed state. Existing populated databases fail closed.

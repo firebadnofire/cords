@@ -13,6 +13,8 @@
   export let openAdmin: () => void;
   export let openConnection: () => void;
   export let synchronize: () => void;
+  export let leaveServer: () => void;
+  export let archiveServer: () => void;
   let filter = '';
   const directMessages = availability(false);
 </script>
@@ -34,6 +36,15 @@
           <button role="menuitem" on:click={openConnection}>Connection and trust</button>
           <button role="menuitem" disabled={!status.server_id || busy} on:click={synchronize}
             >Refresh and synchronize</button
+          >
+          <button
+            role="menuitem"
+            class="danger"
+            disabled={!status.server_id || busy}
+            on:click={leaveServer}>Leave server…</button
+          >
+          <button role="menuitem" disabled={!status.server_id || busy} on:click={archiveServer}
+            >Archive server…</button
           >
           <button
             class="dev-unimplemented divided"
@@ -75,7 +86,10 @@
         <ChevronDown size={12} />TEXT CHANNELS
         <button
           aria-label="Create channel"
-          disabled={!identity?.membership?.capabilities.includes('server.manage') || busy}
+          disabled={!identity?.membership?.capabilities.includes('channel.create') ||
+            busy ||
+            status.ownership_state === 'OWNER_LOCKDOWN' ||
+            status.burned}
           on:click={createChannel}><Plus size={15} /></button
         >
       </div>
@@ -86,12 +100,20 @@
           class="channel-row"
           class:active={route === channel.channel_id}
           on:click={() => selectChannel(channel.channel_id)}
-          disabled={busy || !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
-          title={channel.members.some((member) => member.authorization.value.device_id === status.device_id)
+          disabled={busy ||
+            !channel.members.some(
+              (member) => member.authorization.value.device_id === status.device_id,
+            )}
+          title={channel.members.some(
+            (member) => member.authorization.value.device_id === status.device_id,
+          )
             ? `Open #${channel.name}`
             : 'Visible server channel; waiting to be added to its encrypted conversation'}
         >
-          <Hash size={20} /><span>{channel.name}</span>{#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}<LockKeyhole size={14} />{/if}
+          <Hash size={20} /><span>{channel.name}</span
+          >{#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}<LockKeyhole
+              size={14}
+            />{/if}
         </button>
       {:else}
         <div class="sidebar-empty compact"><small>No accessible channels.</small></div>

@@ -58,8 +58,8 @@
     /></label
   >
   <p class="hint">
-    Loading contacts this host directly. Images remain local; SVG scripts, references, fonts and CSS
-    are rejected.
+    Loading contacts this host directly. Profile pictures are normalized before being shared in your
+    signed user card; SVG scripts, references, fonts and CSS are rejected.
   </p>
   <div class="actions">
     <button disabled={busy || !url} on:click={remote}>{busy ? 'Loading…' : 'Load URL'}</button

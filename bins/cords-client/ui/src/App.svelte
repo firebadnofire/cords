@@ -81,7 +81,8 @@
     origin = opened.origin;
     servers = await action<ServerListing[]>('servers');
     if (opened.burned) {
-      error = 'This identity has been burned. Failed server notices will retry; it cannot resume messaging.';
+      error =
+        'This identity has been burned. Failed server notices will retry; it cannot resume messaging.';
     } else if (opened.ownership_state === 'OWNER_LOCKDOWN') {
       overlay = null;
     } else if (opened.server_id && opened.ownership_state === 'CLAIMED') {
@@ -90,9 +91,8 @@
         channels = await action<Channel[]>('channels');
       } catch (caught) {
         if (!/CORDS_APPROVAL_PENDING|CORDS_JOIN_REJECTED/.test(String(caught))) throw caught;
-        error = String(caught).includes('CORDS_JOIN_REJECTED')
-          ? 'Your membership request was rejected. Contact the server owner.'
-          : 'Your membership request is awaiting owner approval. Try again after approval.';
+        error = '';
+        status = (await invoke<View>('conversation_view', { route: null })).status;
         overlay = 'connect';
       }
     } else overlay = 'connect';
@@ -190,7 +190,19 @@
       await operation();
       await refresh();
     } catch (caught) {
-      error = String(caught);
+      const message = String(caught);
+      if (/CORDS_APPROVAL_PENDING|CORDS_JOIN_REJECTED/.test(message)) {
+        error = '';
+        await refresh();
+      } else if (message.includes('CORDS_PERMISSION_DENIED')) {
+        error =
+          overlay === 'recovery'
+            ? 'The recovery code or identity proof was not accepted. Ask the actual server operator to verify the intended new owner and generate a fresh code.'
+            : 'Your server membership does not permit this action.';
+      } else if (message.includes('OWNER_RECOVERY_REQUIRED')) {
+        error = '';
+        await refresh();
+      } else error = message;
     } finally {
       busy = false;
     }
@@ -230,21 +242,30 @@
     overlay = null;
     confirm = {
       title: 'Remove server and erase its data?',
-      description: 'Cords will send a root-signed departure, wait for a verified server confirmation, then erase this server’s cached messages, MLS state, and local server data.',
+      description:
+        'Cords will send a root-signed departure, wait for a verified server confirmation, then erase this server’s cached messages, MLS state, and local server data.',
       execute: async () => {
         try {
           await action('remove_server', { server_id: serverId, local_only: false });
-          channels = []; route = ''; messages = [];
+          channels = [];
+          route = '';
+          messages = [];
           servers = await action<ServerListing[]>('servers');
         } catch (caught) {
           const message = String(caught);
-          if (/CORDS_SERVER_KEY_CHANGED|connect|timeout|timed out|dns|network/i.test(message)) {
+          if (
+            /CORDS_SERVER_KEY_CHANGED|connect|timeout|timed out|dns|network|HTTP 404|HTTP 410/i.test(
+              message,
+            )
+          ) {
             confirm = {
               title: 'Delete only the local server data?',
               description: `The signed departure could not be verified: ${message}. Local deletion will erase cached messages and MLS state, but remote membership removal was NOT verified.`,
               execute: async () => {
                 await action('remove_server', { server_id: serverId, local_only: true });
-                channels = []; route = ''; messages = [];
+                channels = [];
+                route = '';
+                messages = [];
                 servers = await action<ServerListing[]>('servers');
                 error = 'Server deleted locally. Remote membership removal was not verified.';
               },
@@ -258,10 +279,16 @@
     overlay = null;
     confirm = {
       title: 'Archive this server?',
-      description: 'Cords will attempt a signed departure, then remove the active connection and MLS state regardless of the response. The archive keeps only its URL, fingerprint, and departure status.',
+      description:
+        'Cords will attempt a signed departure, then remove the active connection and MLS state regardless of the response. The archive keeps only its URL, fingerprint, and departure status.',
       execute: async () => {
-        const result = await action<{ remote_confirmed: boolean; warning: string | null }>('archive_server', { server_id: serverId });
-        channels = []; route = ''; messages = [];
+        const result = await action<{ remote_confirmed: boolean; warning: string | null }>(
+          'archive_server',
+          { server_id: serverId },
+        );
+        channels = [];
+        route = '';
+        messages = [];
         servers = await action<ServerListing[]>('servers');
         if (result.warning) error = result.warning;
       },
@@ -275,7 +302,8 @@
       execute: async () => {
         const result = await action<{ confirmed: number; pending: string[] }>('burn_identity');
         status = (await invoke<View>('conversation_view', { route: null })).status;
-        if (result.pending.length) error = `Identity burned locally. Delivery still pending for: ${result.pending.join(', ')}`;
+        if (result.pending.length)
+          error = `Identity burned locally. Delivery still pending for: ${result.pending.join(', ')}`;
       },
     };
   }
@@ -409,6 +437,8 @@
         connect={() => (overlay = 'connect')}
         settings={() => (overlay = 'settings')}
         selectServer={(serverId) => void selectServer(serverId)}
+        leaveServer={removeServer}
+        {archiveServer}
       />
       <aside class="left-column">
         <ConversationSidebar
@@ -422,6 +452,8 @@
           createChannel={() => (overlay = 'create')}
           openAdmin={() => void openAdmin()}
           openConnection={() => (overlay = 'connect')}
+          leaveServer={() => status && removeServer(status.server_id)}
+          archiveServer={() => status && archiveServer(status.server_id)}
           synchronize={() =>
             void run(async () => {
               channels = await action<Channel[]>('channels');
@@ -450,6 +482,21 @@
         />
         {#if error || connectionError}<div role="alert" class="connection-error">
             <strong>Action or connection failed</strong><span>{error || connectionError}</span>
+          </div>{/if}
+        {#if status.admission_state === 'pending'}<div class="approval-notice" role="status">
+            <strong>Waiting for approval</strong><span
+              >Your join request is in the server’s waiting queue. An owner or moderator must
+              approve it before you can participate.</span
+            >
+            <button on:click={() => (overlay = 'connect')}>View request</button>
+          </div>{/if}
+        {#if status.admission_state === 'removed'}<div class="approval-notice" role="status">
+            <strong>Membership no longer active</strong>
+            <span
+              >Cords will not automatically rejoin. You can explicitly request membership again,
+              leave, or archive this server.</span
+            >
+            <button on:click={() => (overlay = 'connect')}>Review connection</button>
           </div>{/if}
         <ConversationView
           {section}
@@ -504,8 +551,10 @@
         {removeServer}
         {archiveServer}
         {burnIdentity}
-        designateSuccessor={(accountId) => action<string>('designate_successor', { account_id: accountId })}
-        acceptSuccessor={(designationHash) => action<void>('accept_successor', { designation_hash: designationHash })}
+        designateSuccessor={(accountId) =>
+          action<string>('designate_successor', { account_id: accountId })}
+        acceptSuccessor={(designationHash) =>
+          action<void>('accept_successor', { designation_hash: designationHash })}
       />{/if}
     {#if overlay === 'admin'}<Admin
         {status}
@@ -516,13 +565,36 @@
         close={() => (overlay = null)}
         create={createChannel}
         select={selectChannel}
-        decideMembership={decideMembership}
+        {decideMembership}
       />{/if}
     {#if overlay === 'connect'}<Modal title="Connection and trust" close={() => (overlay = null)}
         ><div class="modal-body connect-dialog">
           <p>
             Cords validates HTTPS, verifies signed discovery, and pins the server identity returned
             by this URL. A later identity change is refused.
+          </p>
+          {#if status?.admission_state === 'pending'}
+            <section class="approval-notice" role="status">
+              <strong>Join request sent — waiting for approval</strong>
+              <p>
+                You are in the waiting queue for {status.origin}. The server owner or a moderator
+                will review your self-declared user card and fingerprint. You do not have membership
+                access yet.
+              </p>
+              <p>
+                Use “Check approval” after your request has been reviewed. Cords will not repeatedly
+                resubmit your request in the background.
+              </p>
+            </section>
+          {:else if status?.admission_state === 'rejected'}
+            <section class="approval-notice" role="status">
+              <strong>Join request declined</strong>
+              <p>Contact the server owner before sending another request.</p>
+            </section>
+          {/if}
+          <p class="hint">
+            Joining sends your self-declared nickname, profile picture and account fingerprint to
+            the server for membership review.
           </p>
           <form on:submit|preventDefault={connect}>
             <label
@@ -532,7 +604,10 @@
                 bind:value={origin}
                 required
               /></label
-            ><button class="primary" disabled={busy || identity?.revoked}>Trust and continue</button
+            ><button class="primary" disabled={busy || identity?.revoked || status?.burned}
+              >{status?.admission_state === 'pending'
+                ? 'Check approval'
+                : 'Trust and continue'}</button
             >
           </form>
           {#if status?.ownership_state === 'UNCLAIMED'}
@@ -564,17 +639,41 @@
             </section>
           {/if}
           <div class="account-banner">
-            <LockKeyhole size={18} /><span>Each trusted server keeps its own pin, session, MLS state, and encrypted cache.</span>
+            <LockKeyhole size={18} /><span
+              >Each trusted server keeps its own pin, session, MLS state, and encrypted cache.</span
+            >
           </div>
           {#if error}<p role="alert" class="error">{error}</p>{/if}
         </div></Modal
       >{/if}
-    {#if overlay === 'recovery'}<Modal title="Owner recovery required" close={() => (overlay = null)}>
+    {#if overlay === 'recovery'}<Modal
+        title="Owner recovery required"
+        close={() => (overlay = null)}
+      >
         <form class="modal-body" on:submit|preventDefault={recoverOwner}>
-          <p>This server is in OWNER_LOCKDOWN. Messages and membership changes are paused. The one-time recovery code is available only to the actual server operator through the server’s local administrative command or logs—not to ordinary members.</p>
-          <p>An incorrect code will not trigger another prompt. Ask the operator to generate and share a fresh code only if you are the intended new owner.</p>
-          <label>Operator recovery code<input type="password" bind:value={recoveryCode} minlength="43" maxlength="43" autocomplete="off" spellcheck="false" required /></label>
-          <button class="primary" disabled={busy || recoveryCode.length !== 43}>Claim recovered ownership</button>
+          <p>
+            This server is in OWNER_LOCKDOWN. Messages and membership changes are paused. The
+            one-time recovery code is available only to the actual server operator through the
+            server’s local administrative command or logs—not to ordinary members.
+          </p>
+          <p>
+            An incorrect code will not trigger another prompt. Ask the operator to generate and
+            share a fresh code only if you are the intended new owner.
+          </p>
+          <label
+            >Operator recovery code<input
+              type="password"
+              bind:value={recoveryCode}
+              minlength="43"
+              maxlength="43"
+              autocomplete="off"
+              spellcheck="false"
+              required
+            /></label
+          >
+          <button class="primary" disabled={busy || recoveryCode.length !== 43}
+            >Claim recovered ownership</button
+          >
           {#if error}<p role="alert" class="error">{error}</p>{/if}
         </form>
       </Modal>{/if}

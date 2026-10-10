@@ -174,7 +174,7 @@ impl AccountRegistry {
         let directory = self.root.join("accounts").join(&local_id);
         std::fs::create_dir_all(&directory)?;
         let secret = Zeroizing::new(password.as_bytes().to_vec());
-        let client =
+        let mut client =
             match Client::create(&directory, &self.migrations, &secret, self.ca.as_deref()).await {
                 Ok(client) => client,
                 Err(error) => {
@@ -182,6 +182,15 @@ impl AccountRegistry {
                     return Err(error);
                 }
             };
+        if let Err(error) = client
+            .save_ui_preferences(serde_json::json!({"version":1,"displayName":nickname}))
+            .await
+        {
+            client.shutdown().await;
+            std::fs::remove_dir_all(&directory)
+                .context("remove unregistered account vault after profile initialization failed")?;
+            return Err(error);
+        }
         let account_id = client.status().account_id;
         let created_at = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())?;
         if let Err(error) = sqlx::query("INSERT INTO local_accounts(account_id,local_id,nickname,auto_lock_minutes,created_at) VALUES(?1,?2,?3,?4,?5)")
@@ -199,13 +208,26 @@ impl AccountRegistry {
     pub async fn unlock(&self, account_id: &str, password: &str) -> Result<Client> {
         let directory = self.location(account_id).await?;
         let secret = Zeroizing::new(password.as_bytes().to_vec());
-        let client =
+        let mut client =
             Client::open_existing(&directory, &self.migrations, &secret, self.ca.as_deref())
                 .await?;
         ensure!(
             client.status().account_id == account_id,
             "vault identity does not match account registry"
         );
+        let mut preferences = client.ui_preferences();
+        if preferences.get("displayName").is_none() {
+            let nickname: String =
+                sqlx::query_scalar("SELECT nickname FROM local_accounts WHERE account_id=?1")
+                    .bind(account_id)
+                    .fetch_one(&self.pool)
+                    .await?;
+            if !preferences.is_object() {
+                preferences = serde_json::json!({"version":1});
+            }
+            preferences["displayName"] = serde_json::Value::String(nickname);
+            client.save_ui_preferences(preferences).await?;
+        }
         Ok(client)
     }
 

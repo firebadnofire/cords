@@ -12,7 +12,15 @@
   } from '@lucide/svelte';
   import Modal from './Modal.svelte';
   import AdminUnavailable from './AdminUnavailable.svelte';
-  import type { Channel, Contact, Identity, MembershipRequest, Status } from '../model';
+  import Avatar from './Avatar.svelte';
+  import {
+    picture,
+    type Channel,
+    type Contact,
+    type Identity,
+    type MembershipRequest,
+    type Status,
+  } from '../model';
   export let status: Status;
   export let identity: Identity | null;
   export let channels: Channel[];
@@ -129,7 +137,8 @@
                 placeholder="Not exposed by the server API"
               ></textarea></label
             ><label
-              >Join policy<select disabled aria-disabled="true"><option>{status.join_policy.join(', ') || 'Unknown'}</option></select
+              >Join policy<select disabled aria-disabled="true"
+                ><option>{status.join_policy.join(', ') || 'Unknown'}</option></select
               ></label
             >
           </div>
@@ -163,24 +172,71 @@
             <section class="settings-card">
               <h2>Membership requests</h2>
               {#each membershipRequests as request (request.device_id)}
-                <div class="override-row">
-                  <span><strong>{request.account_id}</strong><br /><small>{request.device_id} · {request.status}</small>{#if request.identity_burned}<br /><strong class="error">Identity was burned. Its key was declared untrustworthy. Approve only after independent, exceptional verification.</strong>{/if}</span>
-                  <button disabled={busy} on:click={async () => {
-                    if (request.identity_burned && burnedApprovalDevice !== request.device_id) {
-                      burnedApprovalDevice = request.device_id;
-                      return;
-                    }
-                    busy = true; error = '';
-                    try { await decideMembership(request.device_id, true); burnedApprovalDevice = ''; }
-                    catch (caught) { error = String(caught); }
-                    finally { busy = false; }
-                  }}>{request.identity_burned && burnedApprovalDevice === request.device_id ? 'Confirm exceptional approval' : 'Approve'}</button>
-                  <button disabled={busy || request.status !== 'pending'} on:click={async () => {
-                    busy = true; error = '';
-                    try { await decideMembership(request.device_id, false); }
-                    catch (caught) { error = String(caught); }
-                    finally { busy = false; }
-                  }}>Reject</button>
+                <div class="membership-request-card">
+                  <Avatar
+                    value={picture(
+                      request.user_card?.value.avatar
+                        ? {
+                            ...request.user_card.value.avatar,
+                            zoom: request.user_card.value.avatar.zoom_milli / 1000,
+                          }
+                        : null,
+                    )}
+                    text={request.user_card?.value.nickname || '?'}
+                    size={56}
+                  />
+                  <div class="request-identity">
+                    <strong>{request.user_card?.value.nickname || 'No nickname supplied'}</strong>
+                    <small
+                      >Self-declared user card · {request.status === 'pending'
+                        ? 'Waiting for approval'
+                        : request.status}</small
+                    >
+                    <span>Account fingerprint</span><code>{request.account_id}</code>
+                    <small>Device {request.device_id}</small>
+                    {#if request.identity_burned}<strong class="error"
+                        >Identity was burned. Its key was declared untrustworthy. Approve only after
+                        independent, exceptional verification.</strong
+                      >{/if}
+                  </div>
+                  <div class="actions">
+                    <button
+                      disabled={busy}
+                      on:click={async () => {
+                        if (request.identity_burned && burnedApprovalDevice !== request.device_id) {
+                          burnedApprovalDevice = request.device_id;
+                          return;
+                        }
+                        busy = true;
+                        error = '';
+                        try {
+                          await decideMembership(request.device_id, true);
+                          burnedApprovalDevice = '';
+                        } catch (caught) {
+                          error = String(caught);
+                        } finally {
+                          busy = false;
+                        }
+                      }}
+                      >{request.identity_burned && burnedApprovalDevice === request.device_id
+                        ? 'Confirm exceptional approval'
+                        : 'Approve'}</button
+                    >
+                    <button
+                      disabled={busy || request.status !== 'pending'}
+                      on:click={async () => {
+                        busy = true;
+                        error = '';
+                        try {
+                          await decideMembership(request.device_id, false);
+                        } catch (caught) {
+                          error = String(caught);
+                        } finally {
+                          busy = false;
+                        }
+                      }}>Reject</button
+                    >
+                  </div>
                 </div>
               {:else}<p>No pending or rejected requests.</p>{/each}
             </section>
@@ -349,7 +405,9 @@
                 </div>
                 <h3 class="section-label"><Users size={15} />Device membership</h3>
                 {#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
-                  <p>You can see this channel, but have not been added to its encrypted conversation.</p>
+                  <p>
+                    You can see this channel, but have not been added to its encrypted conversation.
+                  </p>
                 {/if}
                 {#each channel.members as member (member.authorization.value.device_id)}<div
                     class="override-row"
@@ -358,7 +416,9 @@
                       >Generation {member.authorization.value.generation}</small
                     >
                   </div>{/each}<button
-                  disabled={!channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
+                  disabled={!channel.members.some(
+                    (member) => member.authorization.value.device_id === status.device_id,
+                  )}
                   on:click={async () => {
                     await select(channel.channel_id);
                     close();
@@ -373,11 +433,7 @@
           </div>
           <form class="admin-create-channel" on:submit|preventDefault={createChannel}>
             <label>New encrypted channel<input maxlength="100" required bind:value={name} /></label
-            ><button
-              class="primary"
-              disabled={busy || !manager}
-              >Create channel</button
-            >
+            ><button class="primary" disabled={busy || !manager}>Create channel</button>
           </form>
         {:else}
           <AdminUnavailable {page} {status} {identity} />

@@ -6,7 +6,8 @@ use super::{
 };
 use axum::{extract::Path, http::HeaderMap};
 use cords_protocol::messaging::{
-    ChannelBind, DeviceAuthorization, DeviceRevocation, RevocationRequest,
+    ChannelBind, DepartureProof, DeviceAuthorization, DeviceRevocation, PolicyRemoval,
+    RevocationRequest,
 };
 
 pub(super) async fn bind(
@@ -89,17 +90,30 @@ pub(super) async fn pending_removals(
     State(s): State<Service>,
     headers: HeaderMap,
     Path(route): Path<String>,
-) -> Result<Json<Vec<Signed<DeviceRevocation>>>> {
+) -> Result<Json<Vec<PolicyRemoval>>> {
     let member = s.authenticate(&headers, "channel.mls.commit").await?;
     s.route_access(&route, &member.value, true).await?;
     let records: Vec<String> = sqlx::query_scalar("SELECT r.record FROM pending_policy_removals p JOIN device_revocations r ON r.device_id=p.device_id WHERE p.channel_id=$1 ORDER BY p.device_id LIMIT 1000")
+        .bind(&route).fetch_all(s.0.store.pool()).await?;
+    let mut result: Vec<PolicyRemoval> = records
+        .iter()
+        .map(|record| parse(record).map(PolicyRemoval::Revocation))
+        .collect::<Result<_>>()?;
+    let departures = sqlx::query("SELECT p.device_id,n.kind,n.record FROM pending_policy_removals p JOIN device_contacts d ON d.device_id=p.device_id JOIN account_departure_notices n ON n.account_id=d.account_id WHERE p.channel_id=$1 AND NOT EXISTS(SELECT 1 FROM device_revocations r WHERE r.device_id=p.device_id) ORDER BY p.device_id,n.kind LIMIT 1000")
         .bind(route).fetch_all(s.0.store.pool()).await?;
-    Ok(Json(
-        records
-            .iter()
-            .map(|record| parse(record))
-            .collect::<Result<_>>()?,
-    ))
+    for row in departures {
+        use sqlx::Row as _;
+        let proof = match row.try_get::<String, _>("kind")?.as_str() {
+            "drop" => DepartureProof::Drop(parse(row.try_get("record")?)?),
+            "burn" => DepartureProof::Burn(parse(row.try_get("record")?)?),
+            _ => return Err(bad()),
+        };
+        result.push(PolicyRemoval::Account {
+            device_id: row.try_get("device_id")?,
+            proof,
+        });
+    }
+    Ok(Json(result))
 }
 
 pub(super) async fn snapshot_epoch(tx: &mut Tx<'_>, route: &str) -> Result<()> {
@@ -135,7 +149,7 @@ pub(super) async fn reserve_removal(
         action: RosterAction::Remove,
         operation_id,
         base_epoch: uint(epoch)?,
-        target: parse(&contact)?,
+        target: super::roster_contact(&contact)?,
         key_package: String::new(),
     })
 }
@@ -179,6 +193,9 @@ pub(super) async fn revoke(
     }
     let mut tx = s.0.store.pool().begin().await?;
     let scope = format!("revoke:{}", record.account_id);
+    sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended('server-ownership',0))")
+        .execute(&mut *tx)
+        .await?;
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
         return Ok(Json(result));
     }
@@ -192,7 +209,10 @@ pub(super) async fn revoke(
     .fetch_one(&mut *tx)
     .await?;
     if locked {
-        return Err(super::ApiError(super::StatusCode::CONFLICT, "OWNER_RECOVERY_REQUIRED"));
+        return Err(super::ApiError(
+            super::StatusCode::CONFLICT,
+            "OWNER_RECOVERY_REQUIRED",
+        ));
     }
     let head: String =
         sqlx::query_scalar("SELECT authorization_record FROM account_heads WHERE account_id=$1")

@@ -29,6 +29,7 @@ describe('representative conversation performance guard', () => {
       ownership_state: 'CLAIMED',
       ownership_generation: 2,
       burned: false,
+      admission_state: 'active',
       join_policy: ['moderator_approval'],
       cursors: {},
     } satisfies Status;

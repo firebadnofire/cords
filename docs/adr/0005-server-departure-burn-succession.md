@@ -1,0 +1,49 @@
+# ADR 0005: Server departure, identity burn, succession and admission cards
+
+- Status: Accepted by explicit product requirements
+- Date: 2026-10-10
+- Supersedes ADR 0003 only for post-claim ownership transfer/recovery and the set of signed ownership states. The first-owner bootstrap remains permanently one-time.
+
+## Plan and scope
+
+Preserve the Rust/Tauri/Svelte, PostgreSQL/SQLite, account-root/device and MLS architecture. Implement and validate independent units: multi-server storage; signed departure and burn; owner succession/recovery; explicit admission/profile-card UX; app-specific server menus. This is not federation, server-driven account recovery, history backup or arbitrary role management.
+
+## Implementation
+
+Each local account vault tracks separate pinned origins, session credentials, MLS snapshots, cursors, outboxes and encrypted caches. Cache keys and encryption contexts include server identity. Existing single-server caches are re-encrypted under that identity at unlock; failure is surfaced rather than discarding unreadable data.
+
+Leave/Remove and Archive are distinct confirmations. Both attempt an account-root-signed, server-bound departure and verify the server-signed receipt. The server transaction immediately deactivates every device membership/session of the account, denies ciphertext delivery and queues cryptographic removals. The client persists the drop request before sending it so a lost response can be retried idempotently. Remove erases the server's local caches, active MLS state and connection record. A separate, explicitly warned local-only deletion is available for an unavailable or changed server; this does not assert remote removal. Archive always detaches and erases active state/cache, preserving only origin, pinned fingerprint, archive time and remote-confirmation status. It is not an encrypted conversation backup and cannot automatically reconnect.
+
+Burn is a separate root-signed domain for compromise/account deletion. Before delivery the client durably disables ordinary use and queues notices for every tracked server, including archived servers whose drop was not confirmed. Failed delivery retains actionable error and retry timing, with exponential backoff and one destination per synchronization pass. Delivery requires the original pin; changed keys are not silently trusted. The account must remain installed/unlocked for retries. Unknown historical memberships cannot be discovered or notified. A server burn tombstone never disappears after recovery or reinvitation. Public admission cannot bypass it: reinvites require explicit moderator approval and the UI presents an exceptional-approval warning. Already delivered ciphertext/history cannot be remotely erased.
+
+Root-signed drop/burn evidence is distributed through pending MLS removals, alongside the existing root-signed device revocation format. Authorized committing clients independently verify the root, account, server and device roster binding before issuing removal commits. Delivery exclusion is immediate; cryptographic exclusion requires an online authorized committing member. Lockdown intentionally defers commits until recovery.
+
+### Owner succession and operator recovery
+
+An owner root designates one existing member's root identity. The server stores the signed designation and its own acceptance time; an independent successor root must countersign acceptance. Eligibility begins only at **server acceptance time + 30 full days**, with an accepted, active successor. Client timestamps cannot accelerate maturation. A designation cannot be replaced or deleted using the owner key, even before maturity. There is no owner-only cancellation API. Retired signed designations remain durably available to the operator.
+
+Owner burn always succeeds irreversibly. Under the same transaction, an eligible successor receives the durable ownership binding and fresh owner capabilities; former owner memberships and sessions are revoked. Without an eligible successor the server enters `OWNER_LOCKDOWN`. Ordinary owner departure chooses lockdown, not implicit handoff. Neither action creates an `UNCLAIMED` bootstrap state.
+
+A claimed server's actual operator can explicitly run `ownership-lockdown --confirm` to initiate recovery, including when a successor must be changed. The command is idempotent and preserves data/memberships. There is no remotely callable equivalent authorized by the owner key. `ownership-recovery-code` generates/rotates a fresh random 256-bit verifier; only the local operator log receives plaintext. Rotation invalidates the preceding code. Code generation, operator lockdown, succession, acceptance and recovery are audited. Protect these logs and database access: operator authority can necessarily override server-local ownership.
+
+Recovery requires the code, fresh device-signed recovery challenge and a distinct account-root recovery proof. Burned identities cannot recover ownership. An exclusive ownership transaction lock serializes transitions against mutations; the code is atomically checked/consumed with the new binding, former-owner capability downgrade/session invalidation and re-opening of normal operation. At most one concurrent claim succeeds. Replaying a consumed code cannot claim again. Bootstrap is never reopened. After recovery, the new owner can create a fresh successor designation, starting a new 30-day clock.
+
+`OWNER_LOCKDOWN` rejects messages and membership-mutating operations; existing data and necessary authorized reads remain. Root burn is an intentional exception, so compromise reporting remains possible during lockdown without invalidating an operator recovery code. Signed ownership state has a monotonic generation; clients reject rollback or differing state at the same observed generation. API failures expose `OWNER_RECOVERY_REQUIRED`. Background status/notification work never submits recovery codes or opens recovery dialogs. A red exclamation server icon provides a user-initiated recovery entry, explaining that only the server operator can obtain the code.
+
+### Admission and user cards
+
+Moderator approval is a persistent admission state, not a generic HTTP error. Pending clients see “Join request sent—waiting for approval” and an explicit Check approval action. Background synchronization does not continually re-submit requests. Pending identities have no member/channel-management permissions. Approval does not itself enroll a device into an MLS group.
+
+A device-signed, root-certified self-declared card accompanies its contact: nickname and optional normalized inline PNG with shape/crop/zoom data. Nicknames are not verified real names. Pictures are bounded (512x512 and encoded-size limit); the server never fetches a client-supplied remote avatar URL. The moderator sees nickname/picture plus the full account fingerprint and device ID. Existing clients without cards show a clear missing-card fallback. Member/request listings paginate in bounded 16-record pages to keep image-bearing responses within the client response limit.
+
+Signed discovery advertises `user-cards-v1`, `member-pages-v1`, `server-departure-v1`, `identity-burn-v1` and `ownership-recovery-v1`. The updated client refuses joining an older server lacking card/page support with an explicit upgrade-required error, rather than sending incompatible objects or silently truncating directories. Update both desktop and server; legacy clients are not validated for the new image-bearing listing wire format.
+
+Presentation cards are excluded from cryptographic roster operations and epoch snapshots; their certified identity/MLS bindings remain unchanged. Full cards are resolved through the bounded member/request directories, avoiding repeated avatar blobs in cryptographic state.
+
+## Persistence, migration and validation
+
+PostgreSQL schema 9 adds owner control, signed designation/acceptance, burn tombstones, departure receipts and audit. Schema 10 retains root departure evidence and retired succession history. SQLite schema 3 namespaces caches. Migrations are forward-only; take verified database/server-key/client-vault backups before deployment and restore matching pre-migration artifacts for rollback. Applying migration 10 does not manufacture root drop proofs for older drops; previously stored burns can be migrated from their genuine signed records.
+
+Validation includes real disposable PostgreSQL tests for admission permissions/cards, burn lockdown, maturation/immutable designation, replay and concurrent recovery; encrypted SQLite multi-server/restart/remove/archive/burn-queue tests; signature/domain-separation tests; Svelte checks and context-menu/card rendering tests. These do not substitute for a packaged two-client desktop smoke or deployment verification. Existing independent-client encrypted/lifecycle acceptance must be rerun against an isolated deployment before claiming that runtime boundary.
+
+The independent network regression uses two separately generated client identities/vaults, two independently pinned server identities and real TLS 1.3/HTTPS/WebSocket plus PostgreSQL. Its ephemeral test certificate is explicitly trusted only by those test clients; production certificate validation is unchanged. Test-only TLS hosting uses the existing Hyper/rustls stack and [rcgen](https://docs.rs/rcgen) for ephemeral certificates, not a new production hosting layer.

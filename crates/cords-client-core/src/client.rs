@@ -9,10 +9,10 @@ use cords_protocol::{
     ServerOrigin, SignedServerMetadataV1,
     messaging::{
         Challenge, ChallengeRequest, Channel, ChannelBind, ChannelCreate, CommitUpload, Contact,
-        DepartureReceipt, DepartureRequest, DeviceAuthorization,
-        DeviceRevocation, EventUpload, GroupBinding, IdentityBurn, KeyPackageUpload, MAX_TEXT,
-        MembershipRequest, Message, OwnershipClaim, OwnershipProof, OwnershipRecoveryClaim,
-        OwnershipRecoveryProof, OwnershipState, RevocationRequest, RosterAction, RosterOperation,
+        DepartureProof, DepartureReceipt, DepartureRequest, DeviceAuthorization, EventUpload,
+        GroupBinding, IdentityBurn, KeyPackageUpload, MAX_TEXT, MembershipRequest, Message,
+        OwnershipClaim, OwnershipProof, OwnershipRecoveryClaim, OwnershipRecoveryProof,
+        OwnershipState, PolicyRemoval, RevocationRequest, RosterAction, RosterOperation,
         RosterRequest, RouteEvent, ServerDeparture, Session, SessionRequest, Signed,
         SuccessorAcceptance, SuccessorDesignation, SuccessorRequest, WS_PROTOCOL, canonical,
         decode, encode, hash,
@@ -53,6 +53,8 @@ struct Durable {
     #[serde(default)]
     ownership_generation: u64,
     #[serde(default)]
+    admission_state: String,
+    #[serde(default)]
     join_policy: Vec<String>,
     session: Option<Session>,
     cursors: BTreeMap<String, u64>,
@@ -69,6 +71,8 @@ struct Durable {
     #[serde(default)]
     pending_burns: BTreeMap<String, PendingBurn>,
     #[serde(default)]
+    pending_departures: BTreeMap<String, DepartureRequest<ServerDeparture>>,
+    #[serde(default)]
     burned: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -79,6 +83,8 @@ struct ServerSnapshot {
     ownership_state: String,
     #[serde(default)]
     ownership_generation: u64,
+    #[serde(default)]
+    admission_state: String,
     join_policy: Vec<String>,
     session: Option<Session>,
     cursors: BTreeMap<String, u64>,
@@ -102,6 +108,12 @@ struct PendingBurn {
     server_key: String,
     record: Signed<cords_protocol::messaging::IdentityBurn>,
     idempotency_key: String,
+    #[serde(default)]
+    attempts: u32,
+    #[serde(default)]
+    next_retry_at: u64,
+    #[serde(default)]
+    last_error: Option<String>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct ServerListing {
@@ -172,6 +184,7 @@ pub struct Status {
     pub ownership_state: String,
     pub ownership_generation: u64,
     pub burned: bool,
+    pub admission_state: String,
     pub join_policy: Vec<String>,
     pub cursors: BTreeMap<String, u64>,
 }
@@ -184,6 +197,13 @@ pub struct SyncResult {
 pub enum Notification {
     Advanced,
     Disconnected,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{code}: HTTP {status}")]
+pub struct ApiFailure {
+    pub code: &'static str,
+    pub status: reqwest::StatusCode,
 }
 
 fn now() -> Result<u64> {
@@ -303,7 +323,67 @@ impl Client {
             "revoked": self.durable.revoked,
             "membership": self.durable.session.as_ref().map(|s| &s.membership.value),
             "session_expires_at": self.durable.session.as_ref().map(|s| s.expires_at),
+            "burn_deliveries": self.durable.pending_burns.values().map(|notice| serde_json::json!({
+                "origin": notice.origin, "last_error": notice.last_error, "next_retry_at": notice.next_retry_at
+            })).collect::<Vec<_>>(),
         })
+    }
+
+    fn self_contact(&self) -> Result<Contact> {
+        let preferences = &self.durable.ui_preferences;
+        let nickname = preferences
+            .get("displayName")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("You")
+            .to_owned();
+        let picture = preferences.get("avatar");
+        let data = picture
+            .and_then(|p| p.get("data"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let avatar = if data.is_empty() {
+            None
+        } else {
+            // Quantization is explicit and bounded; malformed preferences must not silently clamp.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            fn quantize(value: f64, min: f64, max: f64, scale: f64) -> Result<u16> {
+                ensure!(
+                    value.is_finite() && (min..=max).contains(&value),
+                    "invalid avatar crop or zoom"
+                );
+                Ok((value * scale).round() as u16)
+            }
+            let number = |field: &str, default: f64| {
+                picture
+                    .and_then(|p| p.get(field))
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(default)
+            };
+            Some(cords_protocol::messaging::UserCardPicture {
+                data: data.into(),
+                shape: picture
+                    .and_then(|p| p.get("shape"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("circle")
+                    .into(),
+                x: quantize(number("x", 50.0), 0.0, 100.0, 1.0)?,
+                y: quantize(number("y", 50.0), 0.0, 100.0, 1.0)?,
+                zoom_milli: quantize(number("zoom", 1.0), 1.0, 4.0, 1000.0)?,
+            })
+        };
+        let mut contact = self.identity.contact(&self.crypto.public_key())?;
+        contact.user_card = Some(self.identity.sign_device(
+            cords_protocol::messaging::UserCard {
+                version: 1,
+                account_id: self.identity.authorization.value.account_id.clone(),
+                device_id: self.identity.authorization.value.device_id.clone(),
+                nickname,
+                avatar,
+                issued_at: now()?,
+            },
+        )?);
+        validate_contact(&contact, now()?).context("self-declared user card is invalid")?;
+        Ok(contact)
     }
 
     /// # Errors
@@ -488,6 +568,7 @@ impl Client {
             ownership_state: self.durable.ownership_state.clone(),
             ownership_generation: self.durable.ownership_generation,
             burned: self.durable.burned,
+            admission_state: self.durable.admission_state.clone(),
             join_policy: self.durable.join_policy.clone(),
             cursors: self.durable.cursors.clone(),
         }
@@ -499,6 +580,7 @@ impl Client {
             server_key: self.durable.server_key.clone(),
             ownership_state: self.durable.ownership_state.clone(),
             ownership_generation: self.durable.ownership_generation,
+            admission_state: self.durable.admission_state.clone(),
             join_policy: self.durable.join_policy.clone(),
             session: self.durable.session.clone(),
             cursors: self.durable.cursors.clone(),
@@ -517,6 +599,7 @@ impl Client {
         self.durable.server_key = server.server_key;
         self.durable.ownership_state = server.ownership_state;
         self.durable.ownership_generation = server.ownership_generation;
+        self.durable.admission_state = server.admission_state;
         self.durable.join_policy = server.join_policy;
         self.durable.session = server.session;
         self.durable.cursors = server.cursors;
@@ -534,6 +617,7 @@ impl Client {
         self.durable.server_key.clear();
         self.durable.ownership_state.clear();
         self.durable.ownership_generation = 0;
+        self.durable.admission_state.clear();
         self.durable.join_policy.clear();
         self.durable.session = None;
         self.durable.cursors.clear();
@@ -545,57 +629,122 @@ impl Client {
         Ok(())
     }
     async fn migrate_legacy_cache(&self) -> Result<()> {
-        let has_legacy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM message_cache WHERE server_id='')")
-            .fetch_one(self.store.pool()).await?;
-        let has_ciphertext: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ciphertext_cache WHERE server_id='')")
-            .fetch_one(self.store.pool()).await?;
-        if !has_legacy && !has_ciphertext { return Ok(()); }
-        ensure!(!self.durable.server_id.is_empty(), "legacy cache has no pinned server identity");
+        let has_legacy: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM message_cache WHERE server_id='')")
+                .fetch_one(self.store.pool())
+                .await?;
+        let has_ciphertext: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ciphertext_cache WHERE server_id='')")
+                .fetch_one(self.store.pool())
+                .await?;
+        if !has_legacy && !has_ciphertext {
+            return Ok(());
+        }
+        ensure!(
+            !self.durable.server_id.is_empty(),
+            "legacy cache has no pinned server identity"
+        );
         let mut tx = self.store.pool().begin().await?;
-        while let Some(row) = sqlx::query("SELECT route_id,message_id,sealed FROM message_cache WHERE server_id='' LIMIT 1")
-            .fetch_optional(&mut *tx).await? {
+        while let Some(row) = sqlx::query(
+            "SELECT route_id,message_id,sealed FROM message_cache WHERE server_id='' LIMIT 1",
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        {
             let route: String = row.try_get("route_id")?;
             let message: String = row.try_get("message_id")?;
             let sealed: Vec<u8> = row.try_get("sealed")?;
             let old_context = format!("{}/cache/{route}/{message}/v1", self.installation);
-            let plain = Zeroizing::new(protection::open(&self.key, old_context.as_bytes(), &sealed)?);
-            let context = format!("{}/cache/{}/{route}/{message}/v2", self.installation, self.durable.server_id);
+            let plain = Zeroizing::new(protection::open(
+                &self.key,
+                old_context.as_bytes(),
+                &sealed,
+            )?);
+            let context = format!(
+                "{}/cache/{}/{route}/{message}/v2",
+                self.installation, self.durable.server_id
+            );
             let resealed = protection::seal(&self.key, context.as_bytes(), &plain)?;
             sqlx::query("UPDATE message_cache SET server_id=?1,sealed=?2 WHERE server_id='' AND route_id=?3 AND message_id=?4")
                 .bind(&self.durable.server_id).bind(resealed).bind(route).bind(message).execute(&mut *tx).await?;
         }
         sqlx::query("UPDATE ciphertext_cache SET server_id=?1 WHERE server_id=''")
-            .bind(&self.durable.server_id).execute(&mut *tx).await?;
+            .bind(&self.durable.server_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
     pub fn servers(&self) -> Vec<ServerListing> {
-        let mut result: Vec<_> = self.durable.servers.values().map(|s| ServerListing {
-            origin: s.origin.clone(), server_id: s.server_id.clone(),
-            ownership_state: s.ownership_state.clone(), active: s.server_id == self.durable.server_id,
-            archived: false, remote_drop_confirmed: false,
-        }).collect();
+        let mut result: Vec<_> = self
+            .durable
+            .servers
+            .values()
+            .map(|s| ServerListing {
+                origin: s.origin.clone(),
+                server_id: s.server_id.clone(),
+                ownership_state: s.ownership_state.clone(),
+                active: s.server_id == self.durable.server_id,
+                archived: false,
+                remote_drop_confirmed: false,
+            })
+            .collect();
         for s in self.durable.archived_servers.values() {
-            result.push(ServerListing { origin: s.origin.clone(), server_id: s.server_id.clone(),
-                ownership_state: String::new(), active: false, archived: true,
-                remote_drop_confirmed: s.remote_drop_confirmed });
+            result.push(ServerListing {
+                origin: s.origin.clone(),
+                server_id: s.server_id.clone(),
+                ownership_state: String::new(),
+                active: false,
+                archived: true,
+                remote_drop_confirmed: s.remote_drop_confirmed,
+            });
         }
         result
     }
-    pub fn is_burned(&self) -> bool { self.durable.burned }
+    pub fn is_burned(&self) -> bool {
+        self.durable.burned
+    }
     /// Poll signed owner state without initiating recovery or opening any UI.
+    /// # Errors
+    /// Refuses invalid signatures, state rollback, unavailable transport or failed storage.
     pub async fn refresh_ownership_state(&mut self) -> Result<String> {
-        if self.durable.server_id.is_empty() { return Ok(String::new()); }
-        let state: Signed<OwnershipState> = Self::response(self.http
-            .get(format!("{}/api/v1/ownership", self.durable.origin)).send().await?).await?;
+        if self.durable.server_id.is_empty() {
+            return Ok(String::new());
+        }
+        let state: Signed<OwnershipState> = Self::response(
+            self.http
+                .get(format!("{}/api/v1/ownership", self.durable.origin))
+                .send()
+                .await?,
+        )
+        .await?;
         state.verify(&self.durable.server_key)?;
-        ensure!(state.value.version == 1 && state.value.server_id == self.durable.server_id
-            && matches!(state.value.state.as_str(), "UNCLAIMED" | "CLAIMED" | "OWNER_LOCKDOWN"),
-            "invalid signed owner state");
-        ensure!(state.value.generation >= self.durable.ownership_generation,
-            "CORDS_OWNERSHIP_STATE_ROLLBACK");
+        ensure!(
+            state.value.version == 1
+                && state.value.server_id == self.durable.server_id
+                && matches!(
+                    state.value.state.as_str(),
+                    "UNCLAIMED" | "CLAIMED" | "OWNER_LOCKDOWN"
+                ),
+            "invalid signed owner state"
+        );
+        ensure!(
+            state.value.generation >= self.durable.ownership_generation,
+            "CORDS_OWNERSHIP_STATE_ROLLBACK"
+        );
+        ensure!(
+            state.value.generation != self.durable.ownership_generation
+                || state.value.state == self.durable.ownership_state,
+            "CORDS_OWNERSHIP_STATE_CONFLICT"
+        );
         if self.durable.ownership_state != state.value.state
-            || self.durable.ownership_generation != state.value.generation {
+            || self.durable.ownership_generation != state.value.generation
+        {
+            // Transfers/recovery reissue credentials and invalidate sessions. Renew by device
+            // proof, never by automatically submitting a new membership request.
+            if let Some(session) = &mut self.durable.session {
+                session.expires_at = 0;
+            }
             self.durable.ownership_state = state.value.state;
             self.durable.ownership_generation = state.value.generation;
             self.persist(&[], &[]).await?;
@@ -603,9 +752,16 @@ impl Client {
         Ok(self.durable.ownership_state.clone())
     }
     /// Select an already pinned server without changing its trusted identity.
+    /// # Errors
+    /// Refuses burned identities, unknown servers or unreadable persistent MLS state.
     pub async fn select_server(&mut self, server_id: &str) -> Result<Status> {
         ensure!(!self.durable.burned, "identity has been burned");
-        let server = self.durable.servers.get(server_id).cloned().context("server not tracked")?;
+        let server = self
+            .durable
+            .servers
+            .get(server_id)
+            .cloned()
+            .context("server not tracked")?;
         self.activate_snapshot(server)?;
         self.persist(&[], &[]).await?;
         Ok(self.status())
@@ -618,7 +774,9 @@ impl Client {
         self.durable.identity = encode(self.identity.export_secret()?.as_slice());
         self.durable.crypto = encode(self.crypto.snapshot()?.as_slice());
         if !self.durable.server_id.is_empty() {
-            self.durable.servers.insert(self.durable.server_id.clone(), self.active_snapshot()?);
+            self.durable
+                .servers
+                .insert(self.durable.server_id.clone(), self.active_snapshot()?);
         }
         let plain = Zeroizing::new(serde_json::to_vec(&self.durable)?);
         let sealed = protection::seal(
@@ -695,9 +853,10 @@ impl Client {
                 Some("CORDS_OWNERSHIP_UNAVAILABLE") => "CORDS_OWNERSHIP_UNAVAILABLE",
                 Some("CORDS_APPROVAL_PENDING") => "CORDS_APPROVAL_PENDING",
                 Some("CORDS_JOIN_REJECTED") => "CORDS_JOIN_REJECTED",
+                Some("OWNER_RECOVERY_REQUIRED") => "OWNER_RECOVERY_REQUIRED",
                 _ => "CORDS_HTTP_ERROR",
             };
-            bail!("{code}: HTTP {status}");
+            return Err(ApiFailure { code, status }.into());
         }
         Ok(serde_json::from_slice(&bytes)?)
     }
@@ -734,52 +893,103 @@ impl Client {
         }
         Self::response(request.send().await?)
             .await
-            .map_err(|error| anyhow::anyhow!("{path}: {error}"))
+            .with_context(|| format!("request {path} failed"))
     }
-    async fn verify_pinned_server(&self, origin: &str, server_id: &str, server_key: &str) -> Result<()> {
+    async fn verify_pinned_server(
+        &self,
+        origin: &str,
+        server_id: &str,
+        server_key: &str,
+    ) -> Result<()> {
         let origin = ServerOrigin::parse(origin)?;
-        let signed: SignedServerMetadataV1 = Self::response(self.http
-            .get(origin.join("/.well-known/cords/server")?).send().await?).await?;
+        let signed: SignedServerMetadataV1 = Self::response(
+            self.http
+                .get(origin.join("/.well-known/cords/server")?)
+                .send()
+                .await?,
+        )
+        .await?;
         signed.metadata.verify(&signed.signature)?;
-        ensure!(signed.metadata.server_id == server_id && signed.metadata.server_signing_key == server_key,
-            "CORDS_SERVER_KEY_CHANGED");
+        ensure!(
+            signed.metadata.server_id == server_id
+                && signed.metadata.server_signing_key == server_key,
+            "CORDS_SERVER_KEY_CHANGED"
+        );
         Ok(())
     }
-    async fn signed_departure(&self, origin: &str, server_id: &str, server_key: &str) -> Result<()> {
-        self.verify_pinned_server(origin, server_id, server_key).await?;
-        let record = self.identity.sign_root(ServerDeparture {
-            version: 1, server_id: server_id.into(),
-            account_id: self.identity.authorization.value.account_id.clone(),
-            issued_at: now()?, nonce: encode(protection::random_key().as_ref()),
-        })?;
-        let request = DepartureRequest { record: record.clone(), idempotency_key: id() };
-        let receipt: Signed<DepartureReceipt> = Self::response(self.http
-            .post(format!("{origin}/api/v1/membership/drop"))
-            .json(&request).send().await?).await?;
+    async fn signed_departure(
+        &mut self,
+        origin: &str,
+        server_id: &str,
+        server_key: &str,
+    ) -> Result<()> {
+        self.verify_pinned_server(origin, server_id, server_key)
+            .await?;
+        let request = if let Some(request) = self.durable.pending_departures.get(server_id) {
+            request.clone()
+        } else {
+            let record = self.identity.sign_root(ServerDeparture {
+                version: 1,
+                server_id: server_id.into(),
+                account_id: self.identity.authorization.value.account_id.clone(),
+                issued_at: now()?,
+                nonce: encode(protection::random_key().as_ref()),
+            })?;
+            let request = DepartureRequest {
+                record: record.clone(),
+                idempotency_key: id(),
+            };
+            self.durable
+                .pending_departures
+                .insert(server_id.into(), request.clone());
+            self.persist(&[], &[]).await?;
+            request
+        };
+        let receipt: Signed<DepartureReceipt> = Self::response(
+            self.http
+                .post(format!("{origin}/api/v1/membership/drop"))
+                .json(&request)
+                .send()
+                .await?,
+        )
+        .await?;
         receipt.verify(server_key)?;
-        ensure!(receipt.value.version == 1 && receipt.value.server_id == server_id
-            && receipt.value.account_id == self.identity.authorization.value.account_id
-            && receipt.value.kind == "drop" && receipt.value.request_hash == hash(canonical(&record)?),
-            "invalid server departure confirmation");
+        ensure!(
+            receipt.value.version == 1
+                && receipt.value.server_id == server_id
+                && receipt.value.account_id == self.identity.authorization.value.account_id
+                && receipt.value.kind == "drop"
+                && receipt.value.request_hash == hash(canonical(&request.record)?),
+            "invalid server departure confirmation"
+        );
         Ok(())
     }
     async fn persist_purging_server(&mut self, server_id: &str) -> Result<()> {
         self.durable.identity = encode(self.identity.export_secret()?.as_slice());
         self.durable.crypto = encode(self.crypto.snapshot()?.as_slice());
-        let sealed = protection::seal(&self.key,
+        let sealed = protection::seal(
+            &self.key,
             format!("{}/state/v1", self.installation).as_bytes(),
-            &Zeroizing::new(serde_json::to_vec(&self.durable)?))?;
+            &Zeroizing::new(serde_json::to_vec(&self.durable)?),
+        )?;
         let mut tx = self.store.pool().begin().await?;
         sqlx::query("UPDATE client_state SET sealed=?1 WHERE singleton=1")
-            .bind(sealed).execute(&mut *tx).await?;
+            .bind(sealed)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM message_cache WHERE server_id=?1")
-            .bind(server_id).execute(&mut *tx).await?;
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM ciphertext_cache WHERE server_id=?1")
-            .bind(server_id).execute(&mut *tx).await?;
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
     fn detach_server(&mut self, server_id: &str) -> Result<()> {
+        self.durable.pending_departures.remove(server_id);
         self.durable.servers.remove(server_id);
         if self.durable.server_id == server_id {
             self.clear_active_server()?;
@@ -791,96 +1001,221 @@ impl Client {
     }
     /// Remove the selected server and its cached data. Local-only removal must be a separate,
     /// explicitly confirmed UI action after a failed authenticated departure.
-    pub async fn remove_server(&mut self, server_id: &str, local_only: bool) -> Result<DepartureOutcome> {
-        let server = self.durable.servers.get(server_id).cloned().context("server not tracked")?;
+    /// # Errors
+    /// Refuses unknown servers, unverified remote departure or failed local storage.
+    pub async fn remove_server(
+        &mut self,
+        server_id: &str,
+        local_only: bool,
+    ) -> Result<DepartureOutcome> {
+        let server = self
+            .durable
+            .servers
+            .get(server_id)
+            .cloned()
+            .context("server not tracked")?;
         if !local_only {
-            self.signed_departure(&server.origin, &server.server_id, &server.server_key).await?;
+            self.signed_departure(&server.origin, &server.server_id, &server.server_key)
+                .await?;
         }
         self.detach_server(server_id)?;
         self.persist_purging_server(server_id).await?;
-        Ok(DepartureOutcome { remote_confirmed: !local_only,
-            warning: local_only.then(|| "Remote membership removal was not verified.".into()) })
+        Ok(DepartureOutcome {
+            remote_confirmed: !local_only,
+            warning: local_only.then(|| "Remote membership removal was not verified.".into()),
+        })
     }
     /// Archive only the origin, pinned identity, and departure outcome; active MLS state and
     /// cached conversations are erased even if the remote request cannot be delivered.
+    /// # Errors
+    /// Refuses unknown servers or failed local storage; delivery errors are returned as warnings.
     pub async fn archive_server(&mut self, server_id: &str) -> Result<DepartureOutcome> {
-        let server = self.durable.servers.get(server_id).cloned().context("server not tracked")?;
-        let remote = self.signed_departure(&server.origin, &server.server_id, &server.server_key).await;
+        let server = self
+            .durable
+            .servers
+            .get(server_id)
+            .cloned()
+            .context("server not tracked")?;
+        let remote = self
+            .signed_departure(&server.origin, &server.server_id, &server.server_key)
+            .await;
         let confirmed = remote.is_ok();
         self.detach_server(server_id)?;
-        self.durable.archived_servers.insert(server_id.into(), ArchivedServer {
-            origin: server.origin, server_id: server_id.into(), archived_at: now()?,
-            remote_drop_confirmed: confirmed,
-        });
+        self.durable.archived_servers.insert(
+            server_id.into(),
+            ArchivedServer {
+                origin: server.origin,
+                server_id: server_id.into(),
+                archived_at: now()?,
+                remote_drop_confirmed: confirmed,
+            },
+        );
         self.persist_purging_server(server_id).await?;
-        Ok(DepartureOutcome { remote_confirmed: confirmed,
-            warning: remote.err().map(|e| format!("Archived locally; remote membership removal was not verified: {e}")) })
+        Ok(DepartureOutcome {
+            remote_confirmed: confirmed,
+            warning: remote.err().map(|e| {
+                format!("Archived locally; remote membership removal was not verified: {e}")
+            }),
+        })
     }
     /// Persist every root-signed notice before network delivery. This account cannot resume
     /// ordinary messaging after the burn begins; failed destinations remain in the retry queue.
+    /// # Errors
+    /// Refuses a repeated burn or failed signing/storage; delivery errors remain in the queue.
     pub async fn burn_identity(&mut self) -> Result<BurnOutcome> {
         ensure!(!self.durable.burned, "identity burn has already started");
-        let mut targets: Vec<(String,String,String)> = self.durable.servers.values()
-            .map(|s| (s.server_id.clone(), s.origin.clone(), s.server_key.clone())).collect();
-        for archived in self.durable.archived_servers.values().filter(|s| !s.remote_drop_confirmed) {
+        let mut targets: Vec<(String, String, String)> = self
+            .durable
+            .servers
+            .values()
+            .map(|s| (s.server_id.clone(), s.origin.clone(), s.server_key.clone()))
+            .collect();
+        for archived in self
+            .durable
+            .archived_servers
+            .values()
+            .filter(|s| !s.remote_drop_confirmed)
+        {
             if !targets.iter().any(|t| t.0 == archived.server_id) {
                 // An archived server has only a fingerprint, not its raw public signing key.
                 // The notice remains unresolved unless the key is safely rediscovered.
-                targets.push((archived.server_id.clone(), archived.origin.clone(), String::new()));
+                targets.push((
+                    archived.server_id.clone(),
+                    archived.origin.clone(),
+                    String::new(),
+                ));
             }
         }
         for (server_id, origin, server_key) in targets {
-            let record = self.identity.sign_root(IdentityBurn { version: 1,
-                server_id: server_id.clone(), account_id: self.identity.authorization.value.account_id.clone(),
-                issued_at: now()?, nonce: encode(protection::random_key().as_ref()) })?;
-            self.durable.pending_burns.insert(server_id, PendingBurn { origin, server_key,
-                record, idempotency_key: id() });
+            let record = self.identity.sign_root(IdentityBurn {
+                version: 1,
+                server_id: server_id.clone(),
+                account_id: self.identity.authorization.value.account_id.clone(),
+                issued_at: now()?,
+                nonce: encode(protection::random_key().as_ref()),
+            })?;
+            self.durable.pending_burns.insert(
+                server_id,
+                PendingBurn {
+                    origin,
+                    server_key,
+                    record,
+                    idempotency_key: id(),
+                    attempts: 0,
+                    next_retry_at: 0,
+                    last_error: None,
+                },
+            );
         }
         self.durable.burned = true;
         self.persist(&[], &[]).await?;
         self.retry_pending_burns().await
     }
+    /// Retry one due destination and persist its result and backoff.
+    /// # Errors
+    /// Returns clock/storage errors; destination failures are preserved in the returned pending list.
     pub async fn retry_pending_burns(&mut self) -> Result<BurnOutcome> {
-        let pending: Vec<_> = self.durable.pending_burns.iter()
-            .map(|(id, notice)| (id.clone(), notice.clone())).collect();
+        let time = now()?;
+        let pending: Vec<_> = self
+            .durable
+            .pending_burns
+            .iter()
+            .filter(|(_, notice)| notice.next_retry_at <= time)
+            .take(1)
+            .map(|(id, notice)| (id.clone(), notice.clone()))
+            .collect();
         let mut confirmed = 0;
         for (server_id, notice) in pending {
-            // For archived records with no retained raw key, discovery can recover the key only
-            // if its hash matches the old pin. A changed identity is never trusted silently.
-            let key = if notice.server_key.is_empty() {
-                let origin = ServerOrigin::parse(&notice.origin)?;
-                let signed: SignedServerMetadataV1 = match self.http.get(origin.join("/.well-known/cords/server")?)
-                    .send().await.and_then(|response| response.error_for_status()) {
-                    Ok(response) => match response.json().await { Ok(value) => value, Err(_) => continue },
-                    Err(_) => continue,
-                };
-                if signed.metadata.verify(&signed.signature).is_err() || signed.metadata.server_id != server_id {
-                    continue;
+            let delivered = self.deliver_burn(&server_id, &notice).await;
+            match delivered {
+                Ok(()) => {
+                    self.durable.pending_burns.remove(&server_id);
+                    confirmed += 1;
                 }
-                signed.metadata.server_signing_key
-            } else { notice.server_key.clone() };
-            if self.verify_pinned_server(&notice.origin, &server_id, &key).await.is_err() { continue; }
-            let request = DepartureRequest { record: notice.record.clone(), idempotency_key: notice.idempotency_key.clone() };
-            let response: Result<Signed<DepartureReceipt>> = async {
-                Self::response(self.http.post(format!("{}/api/v1/identity/burn", notice.origin))
-                    .json(&request).send().await?).await
-            }.await;
-            let Ok(receipt) = response else { continue };
-            if receipt.verify(&key).is_err() || receipt.value.version != 1
-                || receipt.value.server_id != server_id
-                || receipt.value.account_id != self.identity.authorization.value.account_id
-                || receipt.value.kind != "burn"
-                || receipt.value.request_hash != hash(canonical(&notice.record)?) { continue; }
-            self.durable.pending_burns.remove(&server_id);
+                Err(error) => {
+                    let notice = self
+                        .durable
+                        .pending_burns
+                        .get_mut(&server_id)
+                        .context("missing burn notice")?;
+                    notice.attempts = notice.attempts.saturating_add(1);
+                    notice.next_retry_at =
+                        time.saturating_add(30 * (1_u64 << notice.attempts.min(7)));
+                    notice.last_error = Some(format!("{error:#}"));
+                }
+            }
             self.persist(&[], &[]).await?;
-            confirmed += 1;
         }
-        Ok(BurnOutcome { confirmed, pending: self.durable.pending_burns.values()
-            .map(|notice| notice.origin.clone()).collect() })
+        Ok(BurnOutcome {
+            confirmed,
+            pending: self
+                .durable
+                .pending_burns
+                .values()
+                .map(|notice| {
+                    format!(
+                        "{}: {}",
+                        notice.origin,
+                        notice.last_error.as_deref().unwrap_or("awaiting delivery")
+                    )
+                })
+                .collect(),
+        })
+    }
+    async fn deliver_burn(&self, server_id: &str, notice: &PendingBurn) -> Result<()> {
+        // For archived records with no retained raw key, discovery can recover the key only
+        // if its hash matches the old pin. A changed identity is never trusted silently.
+        let key = if notice.server_key.is_empty() {
+            let origin = ServerOrigin::parse(&notice.origin)?;
+            let signed: SignedServerMetadataV1 = Self::response(
+                self.http
+                    .get(origin.join("/.well-known/cords/server")?)
+                    .send()
+                    .await?,
+            )
+            .await?;
+            signed.metadata.verify(&signed.signature)?;
+            ensure!(
+                signed.metadata.server_id == server_id,
+                "CORDS_SERVER_KEY_CHANGED"
+            );
+            signed.metadata.server_signing_key
+        } else {
+            notice.server_key.clone()
+        };
+        self.verify_pinned_server(&notice.origin, server_id, &key)
+            .await?;
+        let request = DepartureRequest {
+            record: notice.record.clone(),
+            idempotency_key: notice.idempotency_key.clone(),
+        };
+        let response: Result<Signed<DepartureReceipt>> = async {
+            Self::response(
+                self.http
+                    .post(format!("{}/api/v1/identity/burn", notice.origin))
+                    .json(&request)
+                    .send()
+                    .await?,
+            )
+            .await
+        }
+        .await;
+        let receipt = response?;
+        receipt.verify(&key)?;
+        ensure!(
+            receipt.value.version == 1
+                && receipt.value.server_id == server_id
+                && receipt.value.account_id == self.identity.authorization.value.account_id
+                && receipt.value.kind == "burn"
+                && receipt.value.request_hash == hash(canonical(&notice.record)?),
+            "invalid identity burn confirmation"
+        );
+        Ok(())
     }
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn trust(&mut self, origin: &str) -> Result<Status> {
+        ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
         let origin = ServerOrigin::parse(origin)?;
         let signed: SignedServerMetadataV1 = Self::response(
             self.http
@@ -895,14 +1230,36 @@ impl Client {
             "no common protocol"
         );
         let discovered = signed.metadata.server_id.clone();
-        let known = self.durable.servers.values().find(|server| server.origin == origin.to_string()).cloned();
+        ensure!(
+            signed
+                .metadata
+                .features
+                .iter()
+                .any(|feature| feature == "user-cards-v1")
+                && signed
+                    .metadata
+                    .features
+                    .iter()
+                    .any(|feature| feature == "member-pages-v1"),
+            "CORDS_SERVER_UPGRADE_REQUIRED: signed user cards and paginated membership are unavailable; update the server before joining"
+        );
+        let known = self
+            .durable
+            .servers
+            .values()
+            .find(|server| server.origin == origin.to_string())
+            .cloned();
         if let Some(server) = &known {
             ensure!(
-                server.server_id == discovered && server.server_key == signed.metadata.server_signing_key,
+                server.server_id == discovered
+                    && server.server_key == signed.metadata.server_signing_key,
                 "CORDS_SERVER_KEY_CHANGED"
             );
         } else {
-            ensure!(!self.durable.servers.contains_key(&discovered), "CORDS_SERVER_ORIGIN_CHANGED");
+            ensure!(
+                !self.durable.servers.contains_key(&discovered),
+                "CORDS_SERVER_ORIGIN_CHANGED"
+            );
         }
         let ownership: Signed<OwnershipState> = Self::response(
             self.http
@@ -915,13 +1272,23 @@ impl Client {
         ensure!(
             ownership.value.version == 1
                 && ownership.value.server_id == discovered
-                && matches!(ownership.value.state.as_str(), "UNCLAIMED" | "CLAIMED" | "OWNER_LOCKDOWN")
+                && matches!(
+                    ownership.value.state.as_str(),
+                    "UNCLAIMED" | "CLAIMED" | "OWNER_LOCKDOWN"
+                )
                 && ownership.value.generation > 0,
             "invalid ownership state"
         );
         if let Some(server) = &known {
-            ensure!(ownership.value.generation >= server.ownership_generation,
-                "CORDS_OWNERSHIP_STATE_ROLLBACK");
+            ensure!(
+                ownership.value.generation >= server.ownership_generation,
+                "CORDS_OWNERSHIP_STATE_ROLLBACK"
+            );
+            ensure!(
+                ownership.value.generation != server.ownership_generation
+                    || ownership.value.state == server.ownership_state,
+                "CORDS_OWNERSHIP_STATE_CONFLICT"
+            );
         }
         if let Some(server) = known {
             self.activate_snapshot(server)?;
@@ -940,6 +1307,10 @@ impl Client {
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn authenticate(&mut self) -> Result<Status> {
+        self.authenticate_with_rejoin(true).await
+    }
+    #[allow(clippy::too_many_lines)] // Keep challenge binding, explicit rejoin and credential validation together.
+    async fn authenticate_with_rejoin(&mut self, allow_rejoin: bool) -> Result<Status> {
         ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
         ensure!(
             !self.durable.revoked,
@@ -955,20 +1326,24 @@ impl Client {
         ensure!(
             self.durable.ownership_state == "CLAIMED",
             "{}",
-            if self.durable.ownership_state == "OWNER_LOCKDOWN" { "OWNER_RECOVERY_REQUIRED" } else { "CORDS_SERVER_UNCLAIMED" }
+            if self.durable.ownership_state == "OWNER_LOCKDOWN" {
+                "OWNER_RECOVERY_REQUIRED"
+            } else {
+                "CORDS_SERVER_UNCLAIMED"
+            }
         );
-        let purpose = if self.durable.session.is_some() {
+        let mut purpose = if self.durable.session.is_some() || !allow_rejoin {
             "authenticate"
         } else {
             "join"
         };
-        let request = ChallengeRequest {
-            contact: self.identity.contact(&self.crypto.public_key())?,
+        let mut request = ChallengeRequest {
+            contact: self.self_contact()?,
             purpose: purpose.into(),
             idempotency_key: id(),
         };
         validate_contact(&request.contact, now()?).context("local identity validation failed")?;
-        let challenge: Challenge = self
+        let response: Result<Challenge> = self
             .post(
                 if purpose == "join" {
                     "/api/v1/join/request"
@@ -978,7 +1353,28 @@ impl Client {
                 &request,
                 false,
             )
-            .await?;
+            .await;
+        let challenge = match response {
+            Ok(challenge) => challenge,
+            Err(error)
+                if purpose == "authenticate"
+                    && error
+                        .downcast_ref::<ApiFailure>()
+                        .is_some_and(|failure| failure.code == "CORDS_PERMISSION_DENIED") =>
+            {
+                self.durable.session = None;
+                self.durable.admission_state = "removed".into();
+                self.persist(&[], &[]).await?;
+                if !allow_rejoin {
+                    return Err(error);
+                }
+                purpose = "join";
+                request.purpose = purpose.into();
+                request.idempotency_key = id();
+                self.post("/api/v1/join/request", &request, false).await?
+            }
+            Err(error) => return Err(error),
+        };
         ensure!(
             challenge.server_id == fingerprint
                 && challenge.device_id == request.contact.authorization.value.device_id
@@ -992,7 +1388,21 @@ impl Client {
             proof: self.identity.sign_device(challenge)?,
             idempotency_key: id(),
         };
-        let session: Session = self.post("/api/v1/auth/session", &request, false).await?;
+        let session: Session = match self.post("/api/v1/auth/session", &request, false).await {
+            Ok(session) => session,
+            Err(error) => {
+                if let Some(failure) = error.downcast_ref::<ApiFailure>() {
+                    match failure.code {
+                        "CORDS_APPROVAL_PENDING" => self.durable.admission_state = "pending".into(),
+                        "CORDS_JOIN_REJECTED" => self.durable.admission_state = "rejected".into(),
+                        _ => return Err(error),
+                    }
+                    self.durable.session = None;
+                    self.persist(&[], &[]).await?;
+                }
+                return Err(error);
+            }
+        };
         session.membership.verify(&self.durable.server_key)?;
         ensure!(
             session.membership.value.server_id == fingerprint
@@ -1004,6 +1414,7 @@ impl Client {
             "invalid membership"
         );
         self.durable.session = Some(session);
+        self.durable.admission_state = "active".into();
         self.persist(&[], &[]).await?;
         self.flush().await?;
         Ok(self.status())
@@ -1014,6 +1425,7 @@ impl Client {
     /// Returns an error when the claim is unavailable, invalid, already owned by another account,
     /// or the signed replacement membership is invalid.
     pub async fn claim_ownership(&mut self, claim_code: &str) -> Result<Status> {
+        ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
         ensure!(claim_code.len() == 43, "invalid ownership claim code");
         ensure!(!self.durable.server_id.is_empty(), "trust the server first");
         self.trust(&self.durable.origin.clone()).await?;
@@ -1021,7 +1433,7 @@ impl Client {
             self.durable.ownership_state == "UNCLAIMED",
             "server is not unclaimed"
         );
-        let contact = self.identity.contact(&self.crypto.public_key())?;
+        let contact = self.self_contact()?;
         let challenge_request = ChallengeRequest {
             contact: contact.clone(),
             purpose: "claim_ownership".into(),
@@ -1074,75 +1486,146 @@ impl Client {
         );
         self.durable.session = Some(session);
         self.durable.ownership_state = "CLAIMED".into();
+        self.durable.admission_state = "active".into();
         self.persist(&[], &[]).await?;
         self.flush().await?;
         Ok(self.status())
     }
     /// Designate an existing server member as successor. The server starts its 30-day clock
     /// only when it accepts the signed designation.
+    /// Designate a successor using the owner account root.
+    /// # Errors
+    /// Returns signing, authorization, server-policy or transport errors.
     pub async fn designate_successor(&mut self, successor_account_id: &str) -> Result<String> {
         ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
         ensure!(!self.durable.server_id.is_empty(), "select a server first");
         let record = self.identity.sign_root(SuccessorDesignation {
-            version: 1, server_id: self.durable.server_id.clone(),
+            version: 1,
+            server_id: self.durable.server_id.clone(),
             owner_account_id: self.identity.authorization.value.account_id.clone(),
             successor_account_id: successor_account_id.into(),
             nonce: encode(protection::random_key().as_ref()),
         })?;
-        self.post("/api/v1/ownership/successor", &SuccessorRequest {
-            record, idempotency_key: id(),
-        }, false).await
+        self.post(
+            "/api/v1/ownership/successor",
+            &SuccessorRequest {
+                record,
+                idempotency_key: id(),
+            },
+            false,
+        )
+        .await
     }
+    /// Countersign the exact designation as its designated successor.
+    /// # Errors
+    /// Returns signing, authorization, server-policy or transport errors.
     pub async fn accept_successor(&mut self, designation_hash: &str) -> Result<()> {
         ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
         ensure!(!self.durable.server_id.is_empty(), "select a server first");
         let record = self.identity.sign_root(SuccessorAcceptance {
-            version: 1, server_id: self.durable.server_id.clone(),
+            version: 1,
+            server_id: self.durable.server_id.clone(),
             successor_account_id: self.identity.authorization.value.account_id.clone(),
             designation_hash: designation_hash.into(),
             nonce: encode(protection::random_key().as_ref()),
         })?;
-        let accepted: bool = self.post("/api/v1/ownership/successor/accept",
-            &SuccessorRequest { record, idempotency_key: id() }, false).await?;
+        let accepted: bool = self
+            .post(
+                "/api/v1/ownership/successor/accept",
+                &SuccessorRequest {
+                    record,
+                    idempotency_key: id(),
+                },
+                false,
+            )
+            .await?;
         ensure!(accepted, "successor acceptance was not confirmed");
         Ok(())
     }
     /// Operator-code recovery is deliberately interactive and never called by background sync.
+    /// Submit an operator recovery code with fresh root/device possession proofs.
+    /// # Errors
+    /// Refuses burned identities, wrong state/code, invalid server responses or failed storage.
     pub async fn recover_owner(&mut self, code: &str) -> Result<Status> {
+        ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
         ensure!(code.len() == 43, "invalid operator recovery code");
         ensure!(!self.durable.server_id.is_empty(), "select a server first");
         self.trust(&self.durable.origin.clone()).await?;
-        ensure!(self.durable.ownership_state == "OWNER_LOCKDOWN", "server is not in owner lockdown");
-        let contact = self.identity.contact(&self.crypto.public_key())?;
-        let request = ChallengeRequest { contact: contact.clone(), purpose: "recover_ownership".into(),
-            idempotency_key: id() };
-        let challenge: Challenge = self.post("/api/v1/ownership/recovery/challenge", &request, false).await?;
-        ensure!(challenge.server_id == self.durable.server_id
-            && challenge.account_id == self.identity.authorization.value.account_id
-            && challenge.device_id == self.identity.authorization.value.device_id
-            && challenge.authorization_hash == hash(canonical(&contact.authorization)?)
-            && challenge.purpose == "recover_ownership" && challenge.expires_at > now()?,
-            "invalid owner recovery challenge");
-        let root_proof = self.identity.sign_root(OwnershipRecoveryProof { version: 1,
-            server_id: challenge.server_id.clone(),account_id: challenge.account_id.clone(),
-            device_id: challenge.device_id.clone(),challenge_hash: hash(canonical(&challenge)?) })?;
-        let claim = OwnershipRecoveryClaim { recovery_code: code.into(), contact,
-            device_proof: self.identity.sign_device(challenge)?,root_proof,idempotency_key: id() };
-        let session: Session = self.post("/api/v1/ownership/recovery/claim", &claim, false).await?;
+        ensure!(
+            self.durable.ownership_state == "OWNER_LOCKDOWN",
+            "server is not in owner lockdown"
+        );
+        let contact = self.self_contact()?;
+        let request = ChallengeRequest {
+            contact: contact.clone(),
+            purpose: "recover_ownership".into(),
+            idempotency_key: id(),
+        };
+        let challenge: Challenge = self
+            .post("/api/v1/ownership/recovery/challenge", &request, false)
+            .await?;
+        ensure!(
+            challenge.server_id == self.durable.server_id
+                && challenge.account_id == self.identity.authorization.value.account_id
+                && challenge.device_id == self.identity.authorization.value.device_id
+                && challenge.authorization_hash == hash(canonical(&contact.authorization)?)
+                && challenge.purpose == "recover_ownership"
+                && challenge.expires_at > now()?,
+            "invalid owner recovery challenge"
+        );
+        let root_proof = self.identity.sign_root(OwnershipRecoveryProof {
+            version: 1,
+            server_id: challenge.server_id.clone(),
+            account_id: challenge.account_id.clone(),
+            device_id: challenge.device_id.clone(),
+            challenge_hash: hash(canonical(&challenge)?),
+        })?;
+        let claim = OwnershipRecoveryClaim {
+            recovery_code: code.into(),
+            contact,
+            device_proof: self.identity.sign_device(challenge)?,
+            root_proof,
+            idempotency_key: id(),
+        };
+        let session: Session = self
+            .post("/api/v1/ownership/recovery/claim", &claim, false)
+            .await?;
         session.membership.verify(&self.durable.server_key)?;
-        ensure!(session.membership.value.server_id == self.durable.server_id
-            && session.membership.value.account_id == self.identity.authorization.value.account_id
-            && session.membership.value.device_id == self.identity.authorization.value.device_id
-            && session.membership.value.status == "active"
-            && session.membership.value.capabilities.iter().any(|c| c == "server.manage"),
-            "invalid recovered owner membership");
+        ensure!(
+            session.membership.value.server_id == self.durable.server_id
+                && session.membership.value.account_id
+                    == self.identity.authorization.value.account_id
+                && session.membership.value.device_id
+                    == self.identity.authorization.value.device_id
+                && session.membership.value.status == "active"
+                && session
+                    .membership
+                    .value
+                    .capabilities
+                    .iter()
+                    .any(|c| c == "server.manage"),
+            "invalid recovered owner membership"
+        );
         self.durable.session = Some(session);
         self.durable.ownership_state = "CLAIMED".into();
+        self.durable.admission_state = "active".into();
         self.persist(&[], &[]).await?;
         Ok(self.status())
     }
     async fn ensure_session(&mut self) -> Result<()> {
         ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
+        ensure!(
+            self.durable.admission_state != "pending",
+            "CORDS_APPROVAL_PENDING"
+        );
+        ensure!(
+            self.durable.admission_state != "rejected",
+            "CORDS_JOIN_REJECTED"
+        );
+        ensure!(
+            self.durable.admission_state != "removed",
+            "CORDS_MEMBERSHIP_REMOVED: explicitly request membership again or leave this server"
+        );
         ensure!(
             !self.durable.revoked,
             "this installation's device is revoked"
@@ -1154,7 +1637,7 @@ impl Client {
             .as_ref()
             .is_none_or(|s| s.expires_at <= renewal_time)
         {
-            self.authenticate().await?;
+            self.authenticate_with_rejoin(false).await?;
         }
         Ok(())
     }
@@ -1181,14 +1664,29 @@ impl Client {
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn flush(&mut self) -> Result<serde_json::Value> {
+        ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
         let mut first_result = None;
         loop {
             let Some(pending) = self.durable.pending.clone() else {
                 return Ok(first_result.unwrap_or(serde_json::Value::Null));
             };
-            let value: serde_json::Value = self
+            let response: Result<serde_json::Value> = self
                 .post(&pending.path, &pending.body, pending.kind != "revoke")
-                .await?;
+                .await;
+            let value = match response {
+                Ok(value) => value,
+                Err(error) => {
+                    if error
+                        .downcast_ref::<ApiFailure>()
+                        .is_some_and(|failure| failure.code == "CORDS_PERMISSION_DENIED")
+                    {
+                        // A verified refusal is terminal for this request, not an unknown delivery outcome.
+                        self.durable.pending = None;
+                        self.persist(&[], &[]).await?;
+                    }
+                    return Err(error);
+                }
+            };
             crash_boundary("response_received", &pending.kind);
             first_result.get_or_insert_with(|| value.clone());
             let mut followup = None;
@@ -1273,7 +1771,35 @@ impl Client {
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn members(&mut self) -> Result<Vec<Contact>> {
         self.ensure_session().await?;
-        self.get("/api/v1/members").await
+        let mut contacts = Vec::new();
+        let mut after = String::new();
+        loop {
+            let page: Vec<Contact> = self.get(&format!("/api/v1/members?after={after}")).await?;
+            ensure!(page.len() <= 16, "oversized member page");
+            for contact in &page {
+                validate_contact(contact, now()?)?;
+                let device = &contact.authorization.value.device_id;
+                ensure!(
+                    device > &after
+                        && device.len() <= 128
+                        && device
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+                    "invalid member page cursor"
+                );
+                after.clone_from(device);
+            }
+            let complete = page.len() < 16;
+            contacts.extend(page);
+            ensure!(
+                contacts.len() <= 1000,
+                "member directory exceeds supported client size"
+            );
+            if complete {
+                break;
+            }
+        }
+        Ok(contacts)
     }
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
@@ -1286,7 +1812,50 @@ impl Client {
     /// Returns an error when the session lacks server management permission or transport fails.
     pub async fn membership_requests(&mut self) -> Result<Vec<MembershipRequest>> {
         self.ensure_session().await?;
-        self.get("/api/v1/membership-requests").await
+        let mut requests: Vec<MembershipRequest> = Vec::new();
+        let mut after = String::new();
+        loop {
+            let page: Vec<MembershipRequest> = self
+                .get(&format!("/api/v1/membership-requests?after={after}"))
+                .await?;
+            ensure!(page.len() <= 16, "oversized membership request page");
+            for request in &page {
+                ensure!(
+                    request.device_id > after
+                        && request.device_id.len() <= 128
+                        && request
+                            .device_id
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+                    "invalid membership page cursor"
+                );
+                after.clone_from(&request.device_id);
+            }
+            let complete = page.len() < 16;
+            requests.extend(page);
+            ensure!(
+                requests.len() <= 1000,
+                "membership queue exceeds supported client size"
+            );
+            if complete {
+                break;
+            }
+        }
+        for request in &requests {
+            if let Some(card) = &request.user_card {
+                let authorization = request
+                    .authorization
+                    .as_ref()
+                    .context("user card lacks its certified device identity")?;
+                cords_identity::validate_user_card(authorization, card, now()?)?;
+                ensure!(
+                    request.account_id == card.value.account_id
+                        && request.device_id == card.value.device_id,
+                    "membership request user card identity mismatch"
+                );
+            }
+        }
+        Ok(requests)
     }
     /// Approve a verified pending device request.
     /// # Errors
@@ -1402,19 +1971,50 @@ impl Client {
     /// Return root-authenticated removal requests awaiting an MLS commit.
     /// # Errors
     /// Returns an error if permission, signature, or channel identity validation fails.
-    pub async fn pending_removals(&mut self, route: &str) -> Result<Vec<Signed<DeviceRevocation>>> {
+    pub async fn pending_removals(&mut self, route: &str) -> Result<Vec<PolicyRemoval>> {
         self.ensure_session().await?;
         let channel: Channel = self.get(&format!("/api/v1/channels/{route}")).await?;
-        let records: Vec<Signed<DeviceRevocation>> = self
+        let records: Vec<PolicyRemoval> = self
             .get(&format!("/api/v1/channels/{route}/pending-removals"))
             .await?;
         for record in &records {
+            let device = match record {
+                PolicyRemoval::Revocation(record) => &record.value.revoked_device_id,
+                PolicyRemoval::Account { device_id, .. } => device_id,
+            };
             let contact = channel
                 .members
                 .iter()
-                .find(|c| c.authorization.value.device_id == record.value.revoked_device_id)
+                .find(|c| &c.authorization.value.device_id == device)
                 .context("revoked device is absent from the MLS roster")?;
             self.observe_contact(contact)?;
+            if let PolicyRemoval::Account { proof, .. } = record {
+                let root = &contact.authorization.value.root_public_key;
+                let (version, server, account, issued_at) = match proof {
+                    DepartureProof::Drop(record) => {
+                        record.verify(root)?;
+                        let v = &record.value;
+                        (v.version, &v.server_id, &v.account_id, v.issued_at)
+                    }
+                    DepartureProof::Burn(record) => {
+                        record.verify(root)?;
+                        let v = &record.value;
+                        (v.version, &v.server_id, &v.account_id, v.issued_at)
+                    }
+                };
+                ensure!(
+                    version == 1
+                        && server == &self.durable.server_id
+                        && account == &contact.authorization.value.account_id
+                        && issued_at
+                            <= now()?.saturating_add(cords_identity::STATEMENT_CLOCK_SKEW_SECONDS),
+                    "invalid root departure evidence"
+                );
+                continue;
+            }
+            let PolicyRemoval::Revocation(record) = record else {
+                unreachable!()
+            };
             record.verify(&contact.authorization.value.root_public_key)?;
             ensure!(
                 record.value.version == 1
@@ -1725,6 +2325,29 @@ impl Client {
             let next = self.sync_route(&route).await?;
             result.fetched += next.fetched;
             result.messages.extend(next.messages);
+            let channel: Channel = self.get(&format!("/api/v1/channels/{route}")).await?;
+            let manage = self.durable.session.as_ref().is_some_and(|session| {
+                session
+                    .membership
+                    .value
+                    .capabilities
+                    .iter()
+                    .any(|cap| cap == "channel.manage")
+            });
+            if channel.creator_device_id == self.identity.authorization.value.device_id || manage {
+                let removals = self.pending_removals(&route).await?;
+                let mut targets = std::collections::BTreeSet::new();
+                for removal in removals {
+                    let device = match removal {
+                        PolicyRemoval::Revocation(record) => record.value.revoked_device_id,
+                        PolicyRemoval::Account { device_id, .. } => device_id,
+                    };
+                    targets.insert(device);
+                }
+                for target in targets {
+                    self.remove_member(&route, &target).await?;
+                }
+            }
         }
         Ok(result)
     }
@@ -1739,7 +2362,11 @@ impl Client {
         .await?;
         Ok(serde_json::from_slice(&protection::open(
             &self.key,
-            format!("{}/cache/{}/{route}/{message}/v2", self.installation, self.durable.server_id).as_bytes(),
+            format!(
+                "{}/cache/{}/{route}/{message}/v2",
+                self.installation, self.durable.server_id
+            )
+            .as_bytes(),
             &sealed,
         )?)?)
     }
@@ -1859,6 +2486,138 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite")
     }
     const PASS: &[u8] = b"independent test installation passphrase";
+    async fn seed_server(client: &mut Client, server: &str, body: &str) -> Result<()> {
+        client.clear_active_server()?;
+        client.durable.server_id = server.into();
+        client.durable.origin = "https://127.0.0.1:9".into();
+        client.durable.server_key = "unreachable-test-pin".into();
+        client.durable.ownership_state = "CLAIMED".into();
+        client.durable.ownership_generation = 2;
+        client.crypto.create("same-route")?;
+        client.durable.cursors.insert("same-route".into(), 1);
+        let message = Message {
+            schema_version: 1,
+            message_id: "same-message".into(),
+            sender_account_id: client.status().account_id,
+            sender_device_id: client.status().device_id,
+            client_timestamp: now()?,
+            event_kind: "message.create".into(),
+            body: body.into(),
+        };
+        client
+            .persist(&[("same-route".into(), 1, message)], &[])
+            .await
+    }
+    #[tokio::test]
+    async fn legacy_cache_is_rekeyed_under_the_original_pin_before_server_switching() -> Result<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        seed_server(&mut client, "original-pin", "original history").await?;
+        let message = Message {
+            schema_version: 1,
+            message_id: "legacy-message".into(),
+            sender_account_id: client.status().account_id,
+            sender_device_id: client.status().device_id,
+            client_timestamp: now()?,
+            event_kind: "message.create".into(),
+            body: "retained legacy encrypted history".into(),
+        };
+        let context = format!(
+            "{}/cache/legacy-route/legacy-message/v1",
+            client.installation
+        );
+        let sealed = protection::seal(
+            &client.key,
+            context.as_bytes(),
+            &serde_json::to_vec(&message)?,
+        )?;
+        sqlx::query("INSERT INTO message_cache(server_id,route_id,message_id,sequence,sealed) VALUES('','legacy-route','legacy-message',1,?1)")
+            .bind(sealed).execute(client.store.pool()).await?;
+        client.shutdown().await;
+        let client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        assert_eq!(client.history("legacy-route").await?[0].body, message.body);
+        let server: String = sqlx::query_scalar(
+            "SELECT server_id FROM message_cache WHERE message_id='legacy-message'",
+        )
+        .fetch_one(client.store.pool())
+        .await?;
+        assert_eq!(server, "original-pin");
+        Ok(())
+    }
+    #[tokio::test]
+    async fn multiserver_cache_restart_local_remove_and_archive_are_isolated() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        seed_server(&mut client, "server-a", "only server A").await?;
+        seed_server(&mut client, "server-b", "only server B").await?;
+        client.select_server("server-a").await?;
+        assert_eq!(client.history("same-route").await?[0].body, "only server A");
+        client.shutdown().await;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        assert_eq!(client.servers().len(), 2);
+        client.select_server("server-b").await?;
+        assert_eq!(client.history("same-route").await?[0].body, "only server B");
+        assert!(
+            !client
+                .remove_server("server-a", true)
+                .await?
+                .remote_confirmed
+        );
+        assert_eq!(client.history("same-route").await?[0].body, "only server B");
+        let outcome = client.archive_server("server-b").await?;
+        assert!(!outcome.remote_confirmed);
+        assert!(outcome.warning.is_some());
+        assert!(client.status().server_id.is_empty());
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM message_cache")
+            .fetch_one(client.store.pool())
+            .await?;
+        assert_eq!(count, 0);
+        client.shutdown().await;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        assert_eq!(client.servers().len(), 1);
+        assert!(client.servers()[0].archived);
+        assert_eq!(client.servers()[0].server_id, "server-b");
+        assert!(client.select_server("server-b").await.is_err());
+        assert!(client.status().server_id.is_empty());
+        Ok(())
+    }
+    #[tokio::test]
+    async fn burn_delivery_failures_persist_backoff_and_disable_ordinary_requests() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        seed_server(&mut client, "server-a", "A").await?;
+        seed_server(&mut client, "server-b", "B").await?;
+        let result = client.burn_identity().await?;
+        assert_eq!(result.confirmed, 0);
+        assert_eq!(result.pending.len(), 2);
+        let notice = &client.durable.pending_burns["server-a"];
+        assert_eq!(notice.attempts, 1);
+        assert!(notice.last_error.is_some());
+        assert!(notice.next_retry_at > now()?);
+        assert!(client.authenticate().await.is_err());
+        assert!(client.flush().await.is_err());
+        assert!(client.select_server("server-a").await.is_err());
+        client.shutdown().await;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        assert!(client.is_burned());
+        client.retry_pending_burns().await?;
+        assert!(
+            client
+                .durable
+                .pending_burns
+                .values()
+                .all(|notice| notice.attempts == 1)
+        );
+        assert_eq!(
+            client.identity_view()["burn_deliveries"]
+                .as_array()
+                .context("missing burn delivery state")?
+                .len(),
+            2
+        );
+        Ok(())
+    }
     #[tokio::test]
     async fn persisted_identity_lock_wrong_passphrase_and_missing_state() -> Result<()> {
         let temp = tempfile::tempdir()?;

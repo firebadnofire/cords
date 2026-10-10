@@ -1,5 +1,6 @@
 //! Native account and device authority. Secret exports are for encrypted native storage only.
 #![forbid(unsafe_code)]
+use base64::Engine as _;
 use cords_protocol::messaging::{
     Contact, DeviceAuthorization, DeviceRevocation, InvalidObject, MlsBinding, Signed, Statement,
     account_id, canonical, decode, encode, hash, signing_bytes,
@@ -118,6 +119,7 @@ impl Identity {
                 authorization_hash: hash(canonical(&self.authorization)?),
                 mls_public_key: encode(mls_public_key),
             })?,
+            user_card: None,
         })
     }
     /// # Errors
@@ -200,7 +202,61 @@ pub fn validate_contact(contact: &Contact, now: u64) -> Result<(), InvalidObject
     {
         return Err(InvalidObject);
     }
-    contact.mls_binding.verify(&a.device_public_key)
+    contact.mls_binding.verify(&a.device_public_key)?;
+    if let Some(card) = &contact.user_card {
+        validate_user_card(&contact.authorization, card, now)?;
+    }
+    Ok(())
+}
+
+/// Verify a self-declared card against a certified device and bound its image before rendering.
+/// # Errors
+/// Rejects key substitution, tampering, invalid presentation, or oversized image data.
+pub fn validate_user_card(
+    authorization: &Signed<DeviceAuthorization>,
+    card: &Signed<cords_protocol::messaging::UserCard>,
+    now: u64,
+) -> Result<(), InvalidObject> {
+    validate_authorization(authorization, now)?;
+    let a = &authorization.value;
+    let value = &card.value;
+    if value.version != 1
+        || value.account_id != a.account_id
+        || value.device_id != a.device_id
+        || value.nickname.trim().is_empty()
+        || value.nickname.chars().count() > 100
+        || value.nickname.chars().any(char::is_control)
+        || value.issued_at > now.saturating_add(STATEMENT_CLOCK_SKEW_SECONDS)
+    {
+        return Err(InvalidObject);
+    }
+    if let Some(picture) = &value.avatar {
+        if picture.data.len() >= 900_000
+            || !matches!(picture.shape.as_str(), "circle" | "square")
+            || picture.x > 100
+            || picture.y > 100
+            || !(1000..=4000).contains(&picture.zoom_milli)
+        {
+            return Err(InvalidObject);
+        }
+        let data = picture
+            .data
+            .strip_prefix("data:image/png;base64,")
+            .ok_or(InvalidObject)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|_| InvalidObject)?;
+        if bytes.len() < 33 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" || &bytes[12..16] != b"IHDR" {
+            return Err(InvalidObject);
+        }
+        let width = u32::from_be_bytes(bytes[16..20].try_into().map_err(|_| InvalidObject)?);
+        let height = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| InvalidObject)?);
+        if !(1..=512).contains(&width) || !(1..=512).contains(&height) {
+            return Err(InvalidObject);
+        }
+    }
+    card.verify(&a.device_public_key)?;
+    Ok(())
 }
 
 /// Validate continuity against the newest persisted account authorization.
@@ -234,6 +290,36 @@ pub fn validate_transition(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn user_cards_are_certified_self_declared_and_reject_substitution() -> Result<(), InvalidObject>
+    {
+        let owner = Identity::generate(10)?;
+        let other = Identity::generate(10)?;
+        let mut card = owner.sign_device(cords_protocol::messaging::UserCard {
+            version: 1,
+            account_id: owner.authorization.value.account_id.clone(),
+            device_id: owner.authorization.value.device_id.clone(),
+            nickname: "Alice".into(),
+            avatar: None,
+            issued_at: 10,
+        })?;
+        validate_user_card(&owner.authorization, &card, 10)?;
+        assert!(validate_user_card(&other.authorization, &card, 10).is_err());
+        card.value.nickname = "Mallory".into();
+        assert!(validate_user_card(&owner.authorization, &card, 10).is_err());
+        card = owner.sign_device(card.value)?;
+        validate_user_card(&owner.authorization, &card, 10)?;
+        card.value.avatar = Some(cords_protocol::messaging::UserCardPicture {
+            data: "data:image/svg+xml;base64,PHN2Zz4=".into(),
+            shape: "circle".into(),
+            x: 50,
+            y: 50,
+            zoom_milli: 1000,
+        });
+        card = owner.sign_device(card.value)?;
+        assert!(validate_user_card(&owner.authorization, &card, 10).is_err());
+        Ok(())
+    }
     #[test]
     fn independent_roles_persist_and_reject_substitution() -> Result<(), InvalidObject> {
         let a = Identity::generate(10)?;

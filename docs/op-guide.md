@@ -471,8 +471,30 @@ After taking and verifying a backup, the operator may explicitly create unclaime
 same local command using `initialize` instead of `rotate`. This does not grant authority to any
 existing membership; the eventual claimant must still supply the code and both signatures.
 
-The current owner receives real `server.manage` and `channel.manage` capabilities. Invite issuance,
-banning and ownership transfer remain unavailable until their authoritative APIs are implemented.
+The current owner receives real `server.manage` and `channel.manage` capabilities. Invite issuance
+and banning remain unavailable. Root-authenticated succession and operator recovery are specified
+in [ADR 0005](adr/0005-server-departure-burn-succession.md).
+
+### Owner lockdown and recovery
+
+Back up PostgreSQL and the matching server signing-key directory before administrative changes.
+An owner burn transfers to an accepted successor only after 30 full days from server acceptance;
+otherwise it immediately enters `OWNER_LOCKDOWN`. Ordinary owner departure also enters lockdown.
+The original first-owner bootstrap never reopens.
+
+For an intentional operator-led ownership change, run the local administrative command:
+
+```sh
+cords-server --config /etc/cords/server.toml ownership-lockdown --confirm
+cords-server --config /etc/cords/server.toml ownership-recovery-code
+```
+
+For a server already in lockdown, only the second command is needed. It emits a fresh one-time
+code to restricted operator logs; rotation invalidates any earlier code. Give it only to the
+intended new owner. In the client, click the red exclamation server icon and submit the code.
+Incorrect submissions do not consume it or automatically prompt again. Ordinary members cannot
+obtain the code. Normal messaging/membership mutation resumes only after an atomic successful
+claim. A burned root cannot be reused for recovery. Existing server data is retained.
 
 ## Routine operation
 
@@ -483,7 +505,7 @@ The endpoints have distinct meanings:
 - `/health/live` means the HTTP process is running.
 - `/health/ready` is exposed after database schema validation and server identity loading succeed.
 - `/.well-known/cords/server` returns signed public discovery metadata.
-- `/api/v1/ownership` returns signed `UNCLAIMED` or `CLAIMED` state, never the bootstrap code.
+- `/api/v1/ownership` returns signed `UNCLAIMED`, `CLAIMED` or `OWNER_LOCKDOWN` state, never a code.
 
 Container logs:
 

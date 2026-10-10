@@ -307,6 +307,50 @@
   line-height: 1;
   text-shadow: 0 1px 2px #4b0808;
 }
+.server-context-menu {
+  position: fixed;
+  z-index: 10000;
+  width: 220px;
+  max-width: calc(100vw - 16px);
+}
+.approval-notice {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #548fc0;
+  border-radius: 8px;
+  background: #223849;
+  color: #e4eff8;
+  overflow-wrap: anywhere;
+}
+.connect-dialog {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.membership-request-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.request-identity {
+  display: grid;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+.request-identity code,
+.request-identity small {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .membership-request-card {
+    flex-wrap: wrap;
+  }
+}
 .dm-rail-button {
   background: #4a4d56;
 }
@@ -1448,6 +1492,8 @@ dialog.wide {
 }
 .modal-body {
   padding: 24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .settings-layout {
   display: grid;

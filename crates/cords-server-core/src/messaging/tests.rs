@@ -70,6 +70,234 @@ fn identity() -> Result<(Identity, Contact)> {
     let contact = identity.contact(&crypto.public_key())?;
     Ok((identity, contact))
 }
+
+struct TestHttps {
+    origin: String,
+    task: tokio::task::JoinHandle<Result<()>>,
+}
+impl Drop for TestHttps {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+async fn https_fixture(
+    service: &Service,
+    certificate: &rcgen::CertifiedKey<rcgen::KeyPair>,
+) -> Result<TestHttps> {
+    use hyper_util::{
+        rt::{TokioExecutor, TokioIo},
+        server::conn::auto::Builder,
+        service::TowerToHyperService,
+    };
+    use tokio_rustls::{TlsAcceptor, rustls};
+    let config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])?
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![certificate.cert.der().clone()],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.signing_key.serialize_der()).into(),
+    )?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("https://localhost:{}", listener.local_addr()?.port());
+    let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
+    let app = crate::router(
+        crate::AppState::new(
+            service
+                .0
+                .identity
+                .signed_metadata_with_policy("TLS acceptance", "moderator_approval")?,
+        )
+        .with_store(service.0.store.clone()),
+    )
+    .merge(router(service.clone()));
+    let task = tokio::spawn(async move {
+        let mut connections = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted=listener.accept() => {
+                    let (stream,_)=accepted?;
+                    let acceptor=acceptor.clone();let app=app.clone();
+                    connections.spawn(async move {
+                        let stream=acceptor.accept(stream).await?;
+                        Builder::new(TokioExecutor::new()).serve_connection_with_upgrades(TokioIo::new(stream),TowerToHyperService::new(app)).await
+                            .map_err(|error| anyhow::anyhow!("TLS acceptance connection: {error}"))
+                    });
+                }
+                result=connections.join_next(), if !connections.is_empty() => {result.context("connection task missing")???;}
+            }
+        }
+    });
+    Ok(TestHttps { origin, task })
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; independent clients, real TLS and PostgreSQL"]
+#[allow(clippy::too_many_lines)] // One uninterrupted independent-client acceptance scenario.
+async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and_burn() -> Result<()>
+{
+    use cords_client_core::client::Client;
+    let (base1, _server1, code1) = fixture_with_state(false).await?;
+    let (base2, _server2, code2) = fixture_with_state(false).await?;
+    let service1 = Service::with_policy(
+        base1.0.store.clone(),
+        base1.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let service2 = Service::with_policy(
+        base2.0.store.clone(),
+        base2.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls1 = https_fixture(&service1, &certificate).await?;
+    let tls2 = https_fixture(&service2, &certificate).await?;
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("test-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let pass1 = b"independent acceptance vault A";
+    let pass2 = b"independent acceptance vault B";
+    let mut owner =
+        Client::open(&root.path().join("a"), &migrations, Some(pass1), Some(&ca)).await?;
+    let mut member =
+        Client::open(&root.path().join("b"), &migrations, Some(pass2), Some(&ca)).await?;
+    assert_ne!(owner.status().account_id, member.status().account_id);
+    owner.trust(&tls1.origin).await?;
+    owner.claim_ownership(&code1).await?;
+    member
+        .save_ui_preferences(serde_json::json!({"version":1,"displayName":"Second network user", "avatar": {
+            "data": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6X0AAAAASUVORK5CYII=",
+            "shape":"square", "x":25, "y":75, "zoom":1.5
+        }}))
+        .await?;
+    member.trust(&tls1.origin).await?;
+    assert!(member.authenticate().await.is_err());
+    assert_eq!(member.status().admission_state, "pending");
+    let requests = owner.membership_requests().await?;
+    assert_eq!(
+        requests[0]
+            .user_card
+            .as_ref()
+            .context("missing published card")?
+            .value
+            .nickname,
+        "Second network user"
+    );
+    let avatar = requests[0]
+        .user_card
+        .as_ref()
+        .context("missing card")?
+        .value
+        .avatar
+        .as_ref()
+        .context("missing avatar resolution data")?;
+    assert_eq!(
+        (&avatar.shape, avatar.x, avatar.y, avatar.zoom_milli),
+        (&"square".to_string(), 25, 75, 1500)
+    );
+    owner.approve_membership(&member.status().device_id).await?;
+    member.authenticate().await?;
+    assert!(member.create_channel("not permitted").await.is_err());
+    let route = owner.create_channel("real encrypted acceptance").await?;
+    member.publish_key_package().await?;
+    owner.add_member(&route, &member.status().device_id).await?;
+    member.join_channel(&route).await?;
+    let (socket, mut notices) = member.notifications().await?;
+    let message = owner
+        .send(&route, "network-only encrypted acceptance marker")
+        .await?;
+    let _ = tokio::time::timeout(Duration::from_secs(5), notices.recv())
+        .await?
+        .context("missing websocket notification")?;
+    member.synchronize().await?;
+    let envelopes: Vec<String> = sqlx::query_scalar("SELECT envelope FROM route_events")
+        .fetch_all(service1.0.store.pool())
+        .await?;
+    assert!(
+        envelopes
+            .iter()
+            .all(|envelope| !envelope.contains("network-only encrypted acceptance marker"))
+    );
+    assert!(
+        member
+            .history(&route)
+            .await?
+            .iter()
+            .any(|item| item.message_id == message)
+    );
+    socket.abort();
+    let pin1 = owner.status().server_id;
+    owner.trust(&tls2.origin).await?;
+    owner.claim_ownership(&code2).await?;
+    assert_eq!(owner.servers().len(), 2);
+    owner.select_server(&pin1).await?;
+    owner.authenticate().await?;
+    assert_eq!(
+        owner
+            .history(&route)
+            .await?
+            .last()
+            .context("missing original cache")?
+            .body,
+        "network-only encrypted acceptance marker"
+    );
+    assert!(member.remove_server(&pin1, false).await?.remote_confirmed);
+    assert!(member.servers().is_empty());
+    assert!(member.history(&route).await?.is_empty());
+    owner.synchronize().await?;
+    let active: bool = sqlx::query_scalar(
+        "SELECT active FROM channel_members WHERE channel_id=$1 AND device_id=$2",
+    )
+    .bind(&route)
+    .bind(member.status().device_id)
+    .fetch_one(service1.0.store.pool())
+    .await?;
+    assert!(!active);
+    assert!(owner.archive_server(&pin1).await?.remote_confirmed);
+    assert_eq!(
+        ownership_state(State(service1.clone()))
+            .await?
+            .0
+            .value
+            .state,
+        "OWNER_LOCKDOWN"
+    );
+    assert!(!owner.status().server_id.is_empty());
+    owner
+        .create_channel("second server remains independent")
+        .await?;
+    let outcome = owner.burn_identity().await?;
+    assert_eq!(outcome.confirmed, 1);
+    assert!(outcome.pending.is_empty());
+    assert_eq!(
+        ownership_state(State(service2.clone()))
+            .await?
+            .0
+            .value
+            .state,
+        "OWNER_LOCKDOWN"
+    );
+    assert!(!tls1.task.is_finished() && !tls2.task.is_finished());
+    owner.shutdown().await;
+    member.shutdown().await;
+    let restored =
+        Client::open(&root.path().join("a"), &migrations, Some(pass1), Some(&ca)).await?;
+    assert!(restored.is_burned());
+    assert!(
+        restored
+            .servers()
+            .iter()
+            .any(|server| server.server_id == pin1 && server.archived)
+    );
+    Ok(())
+}
 async fn join(s: &Service, identity: &Identity, contact: Contact) -> Result<Session> {
     let challenge = challenge(
         s,
@@ -116,6 +344,345 @@ async fn ownership_request(
         })?,
         idempotency_key: id(),
     })
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real PostgreSQL"]
+async fn pending_admission_retains_signed_self_declared_card_and_denies_permissions() -> Result<()>
+{
+    use cords_protocol::messaging::UserCard;
+    let (base, _directory, code) = fixture_with_state(false).await?;
+    let s = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let (owner, owner_contact) = identity()?;
+    let owner_session = claim_ownership(
+        State(s.clone()),
+        Json(ownership_request(&s, &owner, owner_contact, &code).await?),
+    )
+    .await?
+    .0;
+    let (other, mut contact) = identity()?;
+    contact.user_card = Some(other.sign_device(UserCard {
+        version: 1,
+        account_id: other.authorization.value.account_id.clone(),
+        device_id: other.authorization.value.device_id.clone(),
+        nickname: "Second user".into(),
+        avatar: None,
+        issued_at: now()?,
+    })?);
+    assert_eq!(
+        join(&s, &other, contact.clone())
+            .await
+            .err()
+            .context("pending admission succeeded")?
+            .downcast_ref::<ApiError>()
+            .context("unexpected admission error")?
+            .1,
+        "CORDS_APPROVAL_PENDING"
+    );
+    let requests = membership_requests(
+        State(s.clone()),
+        headers(&owner_session)?,
+        Query(MembershipPage::default()),
+    )
+    .await?
+    .0;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(json(&requests[0].user_card)?, json(&contact.user_card)?);
+    assert_eq!(requests[0].account_id, other.authorization.value.account_id);
+    let _ = approve_membership(
+        State(s.clone()),
+        headers(&owner_session)?,
+        Path(other.authorization.value.device_id.clone()),
+    )
+    .await?;
+    let member = join(&s, &other, contact).await?;
+    assert!(
+        !member
+            .membership
+            .value
+            .capabilities
+            .iter()
+            .any(|c| c == "server.manage" || c == "channel.create")
+    );
+    assert!(
+        membership_requests(
+            State(s.clone()),
+            headers(&member)?,
+            Query(MembershipPage::default())
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        create_channel(
+            State(s),
+            headers(&member)?,
+            Json(ChannelCreate {
+                name: "unauthorized".into(),
+                idempotency_key: id()
+            })
+        )
+        .await
+        .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real PostgreSQL"]
+#[allow(clippy::too_many_lines)] // Validate the complete irreversible burn and concurrent recovery scenario.
+async fn owner_burn_lockdown_recovery_is_atomic_one_time_and_revokes_old_authority() -> Result<()> {
+    use cords_protocol::messaging::{
+        DepartureRequest, IdentityBurn, OwnershipRecoveryClaim, OwnershipRecoveryProof,
+    };
+    let (s, _directory, code) = fixture_with_state(false).await?;
+    let (owner, contact) = identity()?;
+    let old_session = claim_ownership(
+        State(s.clone()),
+        Json(ownership_request(&s, &owner, contact, &code).await?),
+    )
+    .await?
+    .0;
+    let burn = DepartureRequest {
+        record: owner.sign_root(IdentityBurn {
+            version: 1,
+            server_id: s.0.identity.server_id(),
+            account_id: owner.authorization.value.account_id.clone(),
+            issued_at: now()?,
+            nonce: "A".repeat(43),
+        })?,
+        idempotency_key: id(),
+    };
+    let _ = departure::burn_identity(State(s.clone()), Json(burn.clone())).await?;
+    let _ = departure::burn_identity(State(s.clone()), Json(burn)).await?;
+    assert_eq!(
+        ownership_state(State(s.clone())).await?.0.value.state,
+        "OWNER_LOCKDOWN"
+    );
+    assert!(
+        crate::ownership::rotate(&s.0.store, &s.0.identity.server_id())
+            .await
+            .is_err()
+    );
+    assert!(
+        create_channel(
+            State(s.clone()),
+            headers(&old_session)?,
+            Json(ChannelCreate {
+                name: "blocked".into(),
+                idempotency_key: id()
+            })
+        )
+        .await
+        .is_err()
+    );
+    let (next, contact) = identity()?;
+    assert_eq!(
+        join(&s, &next, contact.clone())
+            .await
+            .err()
+            .context("lockdown admitted member")?
+            .downcast_ref::<ApiError>()
+            .context("unexpected admission error")?
+            .1,
+        "OWNER_RECOVERY_REQUIRED"
+    );
+    let recovery_code =
+        crate::ownership::rotate_recovery_code(&s.0.store, &s.0.identity.server_id()).await?;
+    let ch = departure::recovery_challenge(
+        State(s.clone()),
+        Json(ChallengeRequest {
+            contact: contact.clone(),
+            purpose: "recover_ownership".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    let request = OwnershipRecoveryClaim {
+        recovery_code: recovery_code.to_string(),
+        contact,
+        device_proof: next.sign_device(ch.clone())?,
+        root_proof: next.sign_root(OwnershipRecoveryProof {
+            version: 1,
+            server_id: ch.server_id.clone(),
+            account_id: ch.account_id.clone(),
+            device_id: ch.device_id.clone(),
+            challenge_hash: hash(canonical(&ch)?),
+        })?,
+        idempotency_key: id(),
+    };
+    let mut wrong = request.clone();
+    wrong.recovery_code = "B".repeat(43);
+    assert!(
+        departure::recover_owner(State(s.clone()), Json(wrong))
+            .await
+            .is_err()
+    );
+    let (a, b) = tokio::join!(
+        departure::recover_owner(State(s.clone()), Json(request.clone())),
+        departure::recover_owner(State(s.clone()), Json(request.clone()))
+    );
+    assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+    let recovered = match (a, b) {
+        (Ok(session), _) | (_, Ok(session)) => session.0,
+        _ => anyhow::bail!("no recovery winner"),
+    };
+    assert!(
+        departure::recover_owner(State(s.clone()), Json(request))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        ownership_state(State(s.clone())).await?.0.value.state,
+        "CLAIMED"
+    );
+    let old: String = sqlx::query_scalar("SELECT credential FROM memberships WHERE device_id=$1")
+        .bind(&owner.authorization.value.device_id)
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert!(
+        !parse::<Signed<Membership>>(&old)?
+            .value
+            .capabilities
+            .iter()
+            .any(|c| c == "server.manage")
+    );
+    let tombstones: i64 = sqlx::query_scalar("SELECT count(*) FROM identity_burns")
+        .fetch_one(s.0.store.pool())
+        .await?;
+    assert_eq!(tombstones, 1);
+    let crypto = ConversationCrypto::new(owner.authorization.value.device_id.clone())?;
+    assert!(
+        join(&s, &owner, owner.contact(&crypto.public_key())?)
+            .await
+            .is_err()
+    );
+    let requests = membership_requests(
+        State(s.clone()),
+        headers(&recovered)?,
+        Query(MembershipPage::default()),
+    )
+    .await?
+    .0;
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].identity_burned);
+    // Operator lockdown is repeatable and never reopens the first-owner bootstrap.
+    crate::ownership::begin_recovery(&s.0.store, &s.0.identity.server_id()).await?;
+    let generation = ownership_state(State(s.clone())).await?.0.value.generation;
+    crate::ownership::begin_recovery(&s.0.store, &s.0.identity.server_id()).await?;
+    assert_eq!(
+        ownership_state(State(s.clone())).await?.0.value.generation,
+        generation
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real PostgreSQL"]
+async fn succession_matures_on_server_time_and_owner_cannot_replace_it() -> Result<()> {
+    use cords_protocol::messaging::{
+        DepartureRequest, IdentityBurn, SuccessorAcceptance, SuccessorDesignation, SuccessorRequest,
+    };
+    for mature in [false, true] {
+        let (s, _directory, code) = fixture_with_state(false).await?;
+        let (owner, contact) = identity()?;
+        let _ = claim_ownership(
+            State(s.clone()),
+            Json(ownership_request(&s, &owner, contact, &code).await?),
+        )
+        .await?;
+        let (next, contact) = identity()?;
+        join(&s, &next, contact).await?;
+        let request = SuccessorRequest {
+            record: owner.sign_root(SuccessorDesignation {
+                version: 1,
+                server_id: s.0.identity.server_id(),
+                owner_account_id: owner.authorization.value.account_id.clone(),
+                successor_account_id: next.authorization.value.account_id.clone(),
+                nonce: "A".repeat(43),
+            })?,
+            idempotency_key: id(),
+        };
+        let designation = departure::designate_successor(State(s.clone()), Json(request.clone()))
+            .await?
+            .0;
+        assert_eq!(
+            departure::designate_successor(State(s.clone()), Json(request.clone()))
+                .await?
+                .0,
+            designation
+        );
+        let mut replacement = request;
+        replacement.idempotency_key = id();
+        replacement.record.value.nonce = "B".repeat(43);
+        replacement.record = owner.sign_root(replacement.record.value)?;
+        assert!(
+            departure::designate_successor(State(s.clone()), Json(replacement))
+                .await
+                .is_err()
+        );
+        let acceptance = SuccessorRequest {
+            record: next.sign_root(SuccessorAcceptance {
+                version: 1,
+                server_id: s.0.identity.server_id(),
+                successor_account_id: next.authorization.value.account_id.clone(),
+                designation_hash: designation.clone(),
+                nonce: "A".repeat(43),
+            })?,
+            idempotency_key: id(),
+        };
+        for _ in 0..2 {
+            assert!(
+                departure::accept_successor(State(s.clone()), Json(acceptance.clone()))
+                    .await?
+                    .0
+            );
+        }
+        sqlx::query("UPDATE server_successor_designations SET accepted_at=$1 WHERE id=$2")
+            .bind(int(now()?.saturating_sub(if mature {
+                30 * 86400
+            } else {
+                30 * 86400 - 60
+            }))?)
+            .bind(designation)
+            .execute(s.0.store.pool())
+            .await?;
+        let burn = DepartureRequest {
+            record: owner.sign_root(IdentityBurn {
+                version: 1,
+                server_id: s.0.identity.server_id(),
+                account_id: owner.authorization.value.account_id.clone(),
+                issued_at: now()?,
+                nonce: "A".repeat(43),
+            })?,
+            idempotency_key: id(),
+        };
+        let _ = departure::burn_identity(State(s.clone()), Json(burn)).await?;
+        assert_eq!(
+            ownership_state(State(s.clone())).await?.0.value.state,
+            if mature { "CLAIMED" } else { "OWNER_LOCKDOWN" }
+        );
+        let current: String =
+            sqlx::query_scalar("SELECT account_id FROM server_ownership WHERE singleton=TRUE")
+                .fetch_one(s.0.store.pool())
+                .await?;
+        assert_eq!(
+            current,
+            if mature {
+                next.authorization.value.account_id
+            } else {
+                owner.authorization.value.account_id
+            }
+        );
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -478,10 +1045,14 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         .await?;
     assert_eq!(membership_count, 1);
     assert_eq!(
-        membership_requests(State(s.clone()), headers(&owner_session)?)
-            .await?
-            .0
-            .len(),
+        membership_requests(
+            State(s.clone()),
+            headers(&owner_session)?,
+            Query(MembershipPage::default())
+        )
+        .await?
+        .0
+        .len(),
         1
     );
     let unauthenticated = create_channel(
@@ -655,9 +1226,13 @@ async fn rejected_request_stays_nonmember_and_public_policy_is_explicit() -> Res
         StatusCode::NO_CONTENT
     );
     assert_eq!(
-        membership_requests(State(approval.clone()), headers(&owner_session)?)
-            .await?
-            .0[0]
+        membership_requests(
+            State(approval.clone()),
+            headers(&owner_session)?,
+            Query(MembershipPage::default())
+        )
+        .await?
+        .0[0]
             .status,
         "rejected"
     );
@@ -686,10 +1261,14 @@ async fn rejected_request_stays_nonmember_and_public_policy_is_explicit() -> Res
         "CORDS_JOIN_REJECTED"
     );
     assert!(
-        membership_requests(State(approval.clone()), headers(&owner_session)?)
-            .await?
-            .0
-            .is_empty()
+        membership_requests(
+            State(approval.clone()),
+            headers(&owner_session)?,
+            Query(MembershipPage::default())
+        )
+        .await?
+        .0
+        .is_empty()
     );
     let retry_challenge = join_challenge(
         State(approval.clone()),

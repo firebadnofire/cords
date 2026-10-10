@@ -185,6 +185,23 @@ impl Statement for IdentityBurn {
     const DOMAIN: &'static str = "CORDS-IDENTITY-BURN-V1";
 }
 
+/// Preserve the existing revocation wire shape while adding account-level removals.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PolicyRemoval {
+    Revocation(Signed<DeviceRevocation>),
+    Account {
+        device_id: String,
+        proof: DepartureProof,
+    },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "record", rename_all = "snake_case")]
+pub enum DepartureProof {
+    Drop(Signed<ServerDeparture>),
+    Burn(Signed<IdentityBurn>),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DepartureRequest<T> {
@@ -258,6 +275,33 @@ impl Statement for MlsBinding {
 pub struct Contact {
     pub authorization: Signed<DeviceAuthorization>,
     pub mls_binding: Signed<MlsBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_card: Option<Signed<UserCard>>,
+}
+
+/// Device-signed, self-declared presentation. Certification proves key control, not a human name.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserCard {
+    pub version: u16,
+    pub account_id: String,
+    pub device_id: String,
+    pub nickname: String,
+    pub avatar: Option<UserCardPicture>,
+    pub issued_at: u64,
+}
+impl Statement for UserCard {
+    const DOMAIN: &'static str = "CORDS-USER-CARD-V1";
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserCardPicture {
+    /// Bounded, client-normalized PNG. Servers never fetch user-provided image URLs.
+    pub data: String,
+    pub shape: String,
+    pub x: u16,
+    pub y: u16,
+    pub zoom_milli: u16,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -299,6 +343,10 @@ pub struct MembershipRequest {
     pub status: String,
     #[serde(default)]
     pub identity_burned: bool,
+    #[serde(default)]
+    pub user_card: Option<Signed<UserCard>>,
+    #[serde(default)]
+    pub authorization: Option<Signed<DeviceAuthorization>>,
 }
 impl Statement for Membership {
     const DOMAIN: &'static str = "CORDS-MEMBERSHIP-V1";

@@ -6,7 +6,15 @@ export type Authorization = {
   expires_at: number | null;
   capabilities: string[];
 };
-export type Contact = { authorization: { value: Authorization } };
+export type UserCard = {
+  version: number;
+  account_id: string;
+  device_id: string;
+  nickname: string;
+  avatar: { data: string; shape: string; x: number; y: number; zoom_milli: number } | null;
+  issued_at: number;
+};
+export type Contact = { authorization: { value: Authorization }; user_card?: { value: UserCard } };
 export type Channel = {
   channel_id: string;
   name: string;
@@ -20,6 +28,7 @@ export type MembershipRequest = {
   requested_at: number;
   status: string;
   identity_burned: boolean;
+  user_card: { value: UserCard } | null;
 };
 export type ServerListing = {
   origin: string;
@@ -37,6 +46,7 @@ export type Status = {
   ownership_state: string;
   ownership_generation: number;
   burned: boolean;
+  admission_state: string;
   join_policy: string[];
   cursors: Record<string, number>;
 };
@@ -51,6 +61,7 @@ export type Identity = {
   revoked: boolean;
   membership: { capabilities: string[]; status: string; issued_at: number } | null;
   session_expires_at: number | null;
+  burn_deliveries?: { origin: string; last_error: string | null; next_retry_at: number }[];
 };
 export type View = {
   status: Status;

@@ -61,3 +61,10 @@ all = "warn"
 pedantic = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
+
+[patch.crates-io]
+# Reviewed upstream removal of the unmaintained proc-macro-error2 dependency.
+# The compatible 0.3.7 fix is not on crates.io; retain the full commit pin until
+# the MLS provider chain accepts a released hax version containing this fix.
+# https://github.com/cryspen/hax/pull/2039
+hax-lib-macros = { git = "https://github.com/cryspen/hax", rev = "d9c15b6e31cd62e781aa02c360c2007cc0f4f40e" }

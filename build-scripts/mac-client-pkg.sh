@@ -6,7 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/lib/common.sh"
 
 require_macos
-for command_name in cargo grep npm pkgbuild pkgutil xcrun; do
+for command_name in cargo codesign cmp grep npm pkgbuild pkgutil xcrun; do
   require_command "${command_name}"
 done
 
@@ -25,6 +25,7 @@ log "Building Cords macOS client ${version} for ${architecture}"
 )
 application="${REPO_ROOT}/target/release/bundle/macos/Cords.app"
 [[ -d "${application}" ]] || die "macOS application bundle was not produced: ${application}"
+codesign --verify --deep --strict "${application}"
 
 mkdir -p "${staging_root}/Applications"
 cp -R "${application}" "${staging_root}/Applications/Cords.app"
@@ -47,6 +48,12 @@ pkgbuild "${pkgbuild_arguments[@]}" "${artifact}"
 pkgutil --payload-files "${artifact}" | \
   grep -Eq '(^|/)Applications/Cords\.app/Contents/Info\.plist$' || \
   die "macOS package does not contain the expected Cords.app payload"
+verification_root="${staging_root}/verified-payload"
+pkgutil --expand-full "${artifact}" "${verification_root}"
+verified_application="${verification_root}/Payload/Applications/Cords.app"
+[[ -d "${verified_application}" ]] || die "macOS package extraction did not produce Cords.app"
+codesign --verify --deep --strict "${verified_application}"
+cmp "${application}/Contents/MacOS/cords-client" "${verified_application}/Contents/MacOS/cords-client"
 write_sha256 "${artifact}"
 log "Created ${artifact}"
 

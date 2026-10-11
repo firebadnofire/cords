@@ -4,4 +4,5 @@ ADRs record changes or selections that affect Cords trust boundaries, cryptograp
 
 - [0005: Departure, identity burn, succession and admission cards](0005-server-departure-burn-succession.md)
 - [0006: Public channels and immutable channel succession](0006-public-channels-and-channel-succession.md)
+- [0007: Rework security contracts and checkpoint activation](0007-rework-security-contracts.md)
 

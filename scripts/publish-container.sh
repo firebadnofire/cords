@@ -6,6 +6,7 @@ set -euo pipefail
   exit 2
 }
 publication_target="$1"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 : "${CANONICAL_IMAGE:?CANONICAL_IMAGE is required}"
 : "${TRACE_TAG:?TRACE_TAG is required}"
@@ -21,12 +22,17 @@ for value in "${TRACE_TAG}" "${RELEASE_TAG}"; do
   }
 done
 
-for command in base64 cmp cosign docker install jq; do
+for command in python3 openssl base64 cmp cosign docker install jq; do
   command -v "${command}" >/dev/null || {
     echo "error: required command is unavailable: ${command}" >&2
     exit 1
   }
 done
+
+# Validate checked-in public authority before private material or network effects.
+identity_fields="$(python3 "${script_dir}/release-identity.py" --fields)"
+mapfile -t public_pins <<< "${identity_fields}"
+pinned_cosign="${public_pins[2]}"
 
 case "${publication_target}" in
   canonical)
@@ -61,7 +67,9 @@ mkdir -p "${RELEASE_DIRECTORY}"
 RELEASE_DIRECTORY="$(cd "${RELEASE_DIRECTORY}" && pwd)"
 cosign_key="$(mktemp)"
 derived_public_key="$(mktemp)"
-trap 'rm -f -- "${cosign_key}" "${derived_public_key}"' EXIT
+derived_der="$(mktemp)"
+pinned_der="$(mktemp)"
+trap 'rm -f -- "${cosign_key}" "${derived_public_key}" "${derived_der}" "${pinned_der}"' EXIT
 chmod 0600 "${cosign_key}"
 if ! printf '%s' "${COSIGN_B64}" | base64 --decode > "${cosign_key}"; then
   echo "error: COSIGN_B64 is not valid base64" >&2
@@ -74,17 +82,20 @@ test -s "${cosign_key}" || {
 
 cosign public-key --key "${cosign_key}" > "${derived_public_key}"
 test -s "${derived_public_key}"
-if [[ "${publication_target}" == canonical ]]; then
-  install -m 0644 "${derived_public_key}" "${RELEASE_DIRECTORY}/cosign.pub"
+openssl pkey -pubin -in "${derived_public_key}" -outform DER > "${derived_der}"
+openssl pkey -pubin -in "${pinned_cosign}" -outform DER > "${pinned_der}"
+cmp --silent "${derived_der}" "${pinned_der}" || {
+  echo 'error: COSIGN_B64 does not correspond to the checked-in trusted public key' >&2; exit 1;
+}
+if [[ -e "${RELEASE_DIRECTORY}/cosign.pub" ]]; then
+  cmp --silent "${pinned_cosign}" "${RELEASE_DIRECTORY}/cosign.pub" || {
+    echo 'error: release cosign.pub differs from checked-in authority' >&2; exit 1;
+  }
 else
-  test -s "${RELEASE_DIRECTORY}/cosign.pub" || {
-    echo "error: canonical cosign.pub is unavailable for GitHub mirroring" >&2
-    exit 1
+  [[ "${publication_target}" == canonical ]] || {
+    echo 'error: canonical release public key is unavailable for mirroring' >&2; exit 1;
   }
-  cmp --silent "${derived_public_key}" "${RELEASE_DIRECTORY}/cosign.pub" || {
-    echo "error: COSIGN_B64 does not match the canonical release public key" >&2
-    exit 1
-  }
+  install -m 0644 "${pinned_cosign}" "${RELEASE_DIRECTORY}/cosign.pub"
 fi
 
 resolve_digest() {
@@ -107,7 +118,7 @@ require_digest() {
 sign_and_verify() {
   local image="$1"
   local digest="$2"
-  local public_key="${RELEASE_DIRECTORY}/cosign.pub"
+  local public_key="${pinned_cosign}"
   if cosign verify --key "${public_key}" "${image}@${digest}" >/dev/null 2>&1; then
     echo "${image}@${digest} already has a valid Cosign signature"
   else

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "gpg_primary_fingerprint": "7D6EF134D851C8DA0862D97494F31AF374E2EE3C",
+  "gpg_sha256": "f1d3b7895d0ddb6f5638c92ebf80434152bf9db797d56473e9d1a793c403e8e9",
+  "cosign_sha256": "fa232091c35997060654dfbcb58c911adc5432756f5234e8846a51dba3ee2d01",
+  "gpg_source_url": "https://archuser.org/gpg.key",
+  "gpg_resolved_url": "https://archuser.org/gpg/william.asc",
+  "cosign_source_url": "https://raw.githubusercontent.com/firebadnofire/bazzite-firebadnofire/refs/heads/main/cosign.pub"
+}

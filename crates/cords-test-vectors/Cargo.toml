@@ -6,3 +6,9 @@ license.workspace = true
 [lints]
 workspace = true
 
+[dev-dependencies]
+cords-protocol.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+

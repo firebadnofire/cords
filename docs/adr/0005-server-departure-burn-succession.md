@@ -3,6 +3,9 @@
 - Status: Accepted by explicit product requirements
 - Date: 2026-10-10
 - Supersedes ADR 0003 only for post-claim ownership transfer/recovery and the set of signed ownership states. The first-owner bootstrap remains permanently one-time.
+- [ADR 0007](0007-rework-security-contracts.md) supersedes exceptional burned-root
+  readmission when the terminal-burn checkpoint activates. Until its compatibility
+  and integration gate passes, the implementation described here remains current.
 
 ## Plan and scope
 

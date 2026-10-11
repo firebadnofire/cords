@@ -2,6 +2,13 @@
 
 ## Status and purpose
 
+[ADR 0007](docs/adr/0007-rework-security-contracts.md) establishes the approved rework's
+fork-preserving ordering, terminal burning, report-authority and archive contracts.
+Activation is checkpoint-gated; C0 changes no runtime wire/storage format. Root
+reconciliation is not recovery from a compromised root: signatures cannot identify
+the legitimate holder. Single-authorizer report commits do not prevent compromised
+or cloned-authority equivocation or establish global revocation awareness.
+
 ADR 0006 adds explicitly public channels whose device-signed message bodies are
 intentionally readable by the server. This scoped exception changes message
 confidentiality only; account, device, MLS, server, TLS and local-vault key roles

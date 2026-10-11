@@ -49,3 +49,6 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+required-git-spec = "rev"
+# Scoped maintained-upstream macro fix; Cargo.toml pins the reviewed full SHA.
+allow-git = ["https://github.com/cryspen/hax"]

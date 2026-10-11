@@ -1,0 +1,54 @@
+--- runner-config.yml.current
++++ runner-config.yml.proposed
+@@ -24,13 +24,10 @@
+   # Execute how many tasks concurrently at the same time.
+   capacity: 1
+   # Extra environment variables to run jobs.
+-  envs:
+-    DOCKER_HOST: tcp://127.0.0.1:2376
+-    DOCKER_TLS_VERIFY: "1"
+-    DOCKER_CERT_PATH: /certs/client
++  envs: {}
+   # Extra environment variables to run jobs from a file.
+   # It will be ignored if it's empty or the file doesn't exist.
+-  env_file: .env
++  env_file: ""
+   # The timeout for a job to be finished.
+   # Please note that the Forgejo instance also has a timeout (3h by default) for the job.
+   # So the job could be stopped by the Forgejo instance if its timeout is shorter than this.
+@@ -81,7 +78,7 @@
+   # - the cache proxy securely communicates with the cache server using
+   #   a shared secret
+   #
+-  enabled: true
++  enabled: false
+   #
+   #######################################################################
+   #
+@@ -180,14 +177,14 @@
+   # Specifies the network to which the container will connect.
+   # Could be `host`, `bridge` or the name of a custom network.
+   # If it's empty, create a network automatically.
+-  network: "host"
++  network: ""
+   # Whether to create networks with IPv6 enabled. Requires the Docker daemon to be set up accordingly.
+   # Only takes effect if "network" is set to "".
+   enable_ipv6: false
+   # Whether to use privileged mode or not when launching task containers (privileged mode is required for Docker-in-Docker).
+   privileged: false
+   # And other options to be used when the container is started (e.g., --volume /etc/ssl/certs:/etc/ssl/certs:ro).
+-  options: "--volume /certs/client:/certs/client:ro"
++  options: "--memory=8g --cpus=2 --pids-limit=1024"
+   # The parent directory of a job's working directory.
+   # If it's empty, /workspace will be used.
+   workdir_parent:
+@@ -201,8 +198,7 @@
+   # If you want to allow any volume, please use the following configuration:
+   # valid_volumes:
+   #   - '**'
+-  valid_volumes:
+-    - /certs/client
++  valid_volumes: []
+   # Overrides the docker host set by the DOCKER_HOST environment variable, and mounts on the job container.
+   # If "-" or "", no docker host will be mounted in the job container
+   # If "automount", an available docker host will automatically be found and mounted in the job container (e.g., /var/run/docker.sock).

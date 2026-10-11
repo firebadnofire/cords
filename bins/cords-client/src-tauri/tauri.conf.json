@@ -30,6 +30,7 @@
     }
   },
   "bundle": {
+    "macOS": { "signingIdentity": "-" },
     "resources": { "../../../migrations/sqlite/": "migrations/sqlite/" },
     "active": true,
     "targets": "all",

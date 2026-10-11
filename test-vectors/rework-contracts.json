@@ -1,0 +1,541 @@
+{
+  "schema_version": 1,
+  "description": "Semantic acceptance obligations, not signed wire vectors or executable proof of future implementations.",
+  "contract": "docs/adr/0007-rework-security-contracts.md",
+  "scenarios": [
+    {
+      "id": "root-duplicate",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "heads": [
+          "A"
+        ]
+      },
+      "steps": [
+        "accept identical authenticated A twice",
+        "restart"
+      ],
+      "expected": {
+        "heads": [
+          "A"
+        ],
+        "duplicate": "idempotent"
+      }
+    },
+    {
+      "id": "root-concurrent-grants",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "head": "P"
+      },
+      "steps": [
+        "accept authenticated A and B extending P, A.generation=2, B.generation=9",
+        "repeat in reverse arrival order",
+        "restart"
+      ],
+      "expected": {
+        "heads": [
+          "A",
+          "B"
+        ],
+        "status": "conflict",
+        "conflicting_grants": "denied",
+        "winner": "none"
+      }
+    },
+    {
+      "id": "root-withheld-ancestry",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "head": "P"
+      },
+      "steps": [
+        "receive authenticated child C with missing predecessor B",
+        "later receive B"
+      ],
+      "expected": {
+        "before_ancestry": "pending, trusted P unchanged",
+        "after_ancestry": "verify complete chain before grants"
+      }
+    },
+    {
+      "id": "root-concurrent-revocation",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "head": "P",
+        "device": "D"
+      },
+      "steps": [
+        "accept grant A and authenticated revocation B of D from P"
+      ],
+      "expected": {
+        "heads": [
+          "A",
+          "B"
+        ],
+        "status": "conflict",
+        "device_D": "denied",
+        "conflicting_grants": "denied"
+      }
+    },
+    {
+      "id": "root-reconciliation",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "heads": [
+          "A",
+          "B"
+        ]
+      },
+      "steps": [
+        "review and accept root-signed R referencing A and B with higher generation",
+        "try reenrolling a revoked device ID"
+      ],
+      "expected": {
+        "status": "reconciled",
+        "revoked_device_ID": "terminal, reenrollment needs fresh ID"
+      }
+    },
+    {
+      "id": "root-omitted-branch",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "head": "R",
+        "reconciled": [
+          "A",
+          "B"
+        ]
+      },
+      "steps": [
+        "discover authenticated C from the conflicting predecessor omitted by R",
+        "restart"
+      ],
+      "expected": {
+        "status": "conflict",
+        "evidence": [
+          "A",
+          "B",
+          "C",
+          "R"
+        ],
+        "winner": "none"
+      }
+    },
+    {
+      "id": "root-compromise",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "root_holders": [
+          "legitimate",
+          "attacker"
+        ]
+      },
+      "steps": [
+        "both holders sign plausible reconciliation records"
+      ],
+      "expected": {
+        "legitimate_holder": "not established by signatures",
+        "response": "terminal burn subject to delivery limitations"
+      }
+    },
+    {
+      "id": "root-burn-dominance",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "heads": [
+          "A",
+          "B"
+        ]
+      },
+      "steps": [
+        "persist portable burn before acknowledge/delivery",
+        "crash before delivery",
+        "restart and retry failed destinations",
+        "receive higher-generation grant/recovery/attestation from old root copy"
+      ],
+      "expected": {
+        "authority": "terminally burned",
+        "readmission": "rejected",
+        "history": "retained",
+        "destinations": "only acknowledged destinations claimed notified"
+      }
+    },
+    {
+      "id": "root-legacy-evidence",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "record": "genuine V1 server-bound burn"
+      },
+      "steps": [
+        "migrate evidence to new store",
+        "attempt reinterpretation as portable statement"
+      ],
+      "expected": {
+        "old_signature": "retained under original domain",
+        "portable_signature": "not fabricated",
+        "activation": "explicit version gate"
+      }
+    },
+    {
+      "id": "report-revocation-order",
+      "checkpoint": "C7a",
+      "evidence": "specification-only",
+      "initial": {
+        "epoch": "E",
+        "authorizer": "K",
+        "recipients": [
+          "M",
+          "N"
+        ]
+      },
+      "steps": [
+        "durably commit approval A including M",
+        "durably commit removal of M",
+        "acknowledge removal",
+        "request approval B"
+      ],
+      "expected": {
+        "approval_A": "prior authorization",
+        "approval_B_recipients": [
+          "N"
+        ],
+        "commit": "durable before acknowledgement"
+      }
+    },
+    {
+      "id": "report-pending-revalidation",
+      "checkpoint": "C7b",
+      "evidence": "specification-only",
+      "initial": {
+        "unused_approval": "A"
+      },
+      "steps": [
+        "observe revocation/burn/expiry/conflict before encrypting or submitting"
+      ],
+      "expected": {
+        "approval_A": "invalidated",
+        "submission": "pending locally, no encryption to removed recipient"
+      }
+    },
+    {
+      "id": "report-idempotency",
+      "checkpoint": "C7a",
+      "evidence": "specification-only",
+      "initial": {
+        "request": {
+          "nonce": "n",
+          "report_id": "r",
+          "digest": "d"
+        }
+      },
+      "steps": [
+        "commit approval and lose reply",
+        "retry identical request",
+        "reuse nonce/report ID with changed disclosure"
+      ],
+      "expected": {
+        "retry": "same original committed response",
+        "changed_digest": "rejected"
+      }
+    },
+    {
+      "id": "report-handoff",
+      "checkpoint": "C7a",
+      "evidence": "specification-only",
+      "initial": {
+        "epoch": "E",
+        "authorizer": "K"
+      },
+      "steps": [
+        "durably freeze E with successor S and final H",
+        "crash and replay",
+        "S acknowledges exact H",
+        "try K approval or second successor"
+      ],
+      "expected": {
+        "active_authorizer": "S only after acknowledgement",
+        "old_K": "frozen",
+        "second_successor": "rejected"
+      }
+    },
+    {
+      "id": "report-unclosed-authority",
+      "checkpoint": "C7a",
+      "evidence": "specification-only",
+      "initial": {
+        "authorizer": "unreachable or restored without continuity"
+      },
+      "steps": [
+        "attempt automatic promotion or resume signing from old backup"
+      ],
+      "expected": {
+        "signing": "suspended",
+        "reports": "encrypted locally and pending"
+      }
+    },
+    {
+      "id": "report-cloned-equivocation",
+      "checkpoint": "C7a",
+      "evidence": "specification-only",
+      "initial": {
+        "key_holders": [
+          "K",
+          "cloned K"
+        ]
+      },
+      "steps": [
+        "receive two independently valid conflicting entries from same predecessor",
+        "restart"
+      ],
+      "expected": {
+        "prevention": "single-key model cannot prevent clone signing",
+        "status": "conflict, reporting frozen",
+        "evidence": "both branches persisted"
+      }
+    },
+    {
+      "id": "report-partition-awareness",
+      "checkpoint": "C7a",
+      "evidence": "specification-only",
+      "initial": {
+        "connected": [
+          "authority",
+          "client A"
+        ],
+        "partitioned": [
+          "client B"
+        ]
+      },
+      "steps": [
+        "durably commit revocation",
+        "deliver acknowledgement to A only"
+      ],
+      "expected": {
+        "revocation": "committed",
+        "globally_observed": false,
+        "client_B_awareness": "not guaranteed",
+        "UI": "must not claim all clients notified"
+      }
+    },
+    {
+      "id": "report-owner-continuity",
+      "checkpoint": "C7a",
+      "evidence": "specification-only",
+      "initial": {
+        "owner": "O"
+      },
+      "steps": [
+        "present succession designation/acceptance/maturity evidence",
+        "separately present operator recovery without independently verified owner chain"
+      ],
+      "expected": {
+        "succession": "verify existing chain and 30-day server-time maturity",
+        "unverified_recovery": "reporting suspended pending explicit verification"
+      }
+    },
+    {
+      "id": "archive-departure-offline",
+      "checkpoint": "C4a",
+      "evidence": "specification-only",
+      "initial": {
+        "vault": "unlocked",
+        "received": [
+          "m1",
+          "m2"
+        ],
+        "missing": [
+          "m0"
+        ]
+      },
+      "steps": [
+        "retain received channel history",
+        "leave/remove server",
+        "disconnect network",
+        "restart and unlock vault"
+      ],
+      "expected": {
+        "readable": [
+          "m1",
+          "m2"
+        ],
+        "fetched": [],
+        "requires_membership": false,
+        "requires_server": false,
+        "default_expiry": "none",
+        "access": "read-only"
+      }
+    },
+    {
+      "id": "archive-courier-unavailable",
+      "checkpoint": "C5d",
+      "evidence": "specification-only",
+      "initial": {
+        "retained_DM": "D"
+      },
+      "steps": [
+        "change courier",
+        "make old and new courier unavailable"
+      ],
+      "expected": {
+        "DM_identity": "D",
+        "retained_history": "accessible while vault unlocked",
+        "history_or_file_transfer": "none implicit"
+      }
+    },
+    {
+      "id": "archive-offline-files",
+      "checkpoint": "C6a",
+      "evidence": "specification-only",
+      "initial": {
+        "retained_verified": [
+          "object A"
+        ],
+        "descriptors_only": [
+          "object B"
+        ]
+      },
+      "steps": [
+        "disconnect network and open archived files"
+      ],
+      "expected": {
+        "object_A": "accessible with sealed material",
+        "object_B": "unavailable, descriptor alone insufficient"
+      }
+    },
+    {
+      "id": "archive-delete",
+      "checkpoint": "C6a",
+      "evidence": "specification-only",
+      "initial": {
+        "archives": [
+          "A",
+          "B"
+        ],
+        "shared_object": "O",
+        "continuity": [
+          "burn",
+          "revocation",
+          "rollback"
+        ]
+      },
+      "steps": [
+        "delete archive A transactionally",
+        "crash/restart"
+      ],
+      "expected": {
+        "archive_A_content": "application-inaccessible",
+        "unshared_A_objects_and_keys": "removed",
+        "shared_O": "retained for B",
+        "continuity": "preserved",
+        "remote_copies": "unchanged",
+        "forensic_erasure": "not guaranteed across backups/snapshots/journals/physical storage"
+      }
+    },
+    {
+      "id": "archive-burn-and-account-removal",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "retained_history": "H"
+      },
+      "steps": [
+        "burn root",
+        "later explicitly remove entire local account"
+      ],
+      "expected": {
+        "after_burn": "H remains accessible under vault unlock",
+        "after_account_removal": "vault/archive application access removed",
+        "forensic_erasure": "not guaranteed",
+        "new_devices": "no automatic history or keys"
+      }
+    },
+    {
+      "id": "compat-legacy-route",
+      "checkpoint": "C5a",
+      "evidence": "specification-only",
+      "initial": {
+        "route_format": "legacy V1"
+      },
+      "steps": [
+        "attempt new edit/reaction/schema format without negotiation"
+      ],
+      "expected": {
+        "emission": "blocked with explicit upgrade state",
+        "history_decoder": "original V1 remains usable"
+      }
+    },
+    {
+      "id": "compat-security-rollback",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "accepted_head": "H"
+      },
+      "steps": [
+        "attempt code rollback with older live database/keys/counters/outboxes/cursors"
+      ],
+      "expected": {
+        "rewind": "forbidden",
+        "allowed": "current-state-compatible code or disable affected feature and repair forward"
+      }
+    },
+    {
+      "id": "compat-no-fabricated-signatures",
+      "checkpoint": "C2a",
+      "evidence": "specification-only",
+      "initial": {
+        "certificate": "genuine old signed object"
+      },
+      "steps": [
+        "migrate into new store"
+      ],
+      "expected": {
+        "original_bytes": "preserved",
+        "signature_over_new_object": "never manufactured",
+        "new_operations": "gated on compatible format"
+      }
+    },
+    {
+      "id": "hardware-native-support",
+      "checkpoint": "C3a",
+      "evidence": "specification-only",
+      "initial": {
+        "token": "Ed25519 capability not validated"
+      },
+      "steps": [
+        "test exact hardware/firmware/middleware/platform and lifecycle",
+        "try absent/locked token and restart"
+      ],
+      "expected": {
+        "support_claim": "only after real compatible-token acceptance",
+        "fallback": "no silent software substitution or key export"
+      }
+    },
+    {
+      "id": "hardware-attestation-separation",
+      "checkpoint": "C3b",
+      "evidence": "specification-only",
+      "initial": {
+        "attestation": "optional OpenPGP"
+      },
+      "steps": [
+        "substitute root/context",
+        "present attestation for known burned root"
+      ],
+      "expected": {
+        "substitution": "rejected",
+        "burned_root": "not revived",
+        "native_authority": "separate from OpenPGP"
+      }
+    }
+  ]
+}

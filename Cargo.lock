@@ -1138,6 +1138,12 @@ dependencies = [
 [[package]]
 name = "cords-test-vectors"
 version = "0.1.0"
+dependencies = [
+ "cords-protocol",
+ "hex",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "core-foundation"
@@ -2494,11 +2500,9 @@ dependencies = [
 [[package]]
 name = "hax-lib-macros"
 version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28da835a5f153e9f3d0cc1f42ee605a1cfa9093c93348193793d60a1b0908b51"
+source = "git+https://github.com/cryspen/hax?rev=d9c15b6e31cd62e781aa02c360c2007cc0f4f40e#d9c15b6e31cd62e781aa02c360c2007cc0f4f40e"
 dependencies = [
  "hax-lib-macros-types",
- "proc-macro-error2",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -2507,8 +2511,7 @@ dependencies = [
 [[package]]
 name = "hax-lib-macros-types"
 version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eed327e9a28d6ee018a4a9ba842d4ee27e378c8a591d2beb6f42f32b24a02fcb"
+source = "git+https://github.com/cryspen/hax?rev=d9c15b6e31cd62e781aa02c360c2007cc0f4f40e#d9c15b6e31cd62e781aa02c360c2007cc0f4f40e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4602,28 +4605,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-error-attr2"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
-dependencies = [
- "proc-macro2",
- "quote",
-]
-
-[[package]]
-name = "proc-macro-error2"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
-dependencies = [
- "proc-macro-error-attr2",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6324,7 +6305,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

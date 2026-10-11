@@ -1,5 +1,59 @@
 # Cords release workflow
 
+> **Rework in progress; do not activate this workflow as the revised release
+> system.** The inspected workflow below has unresolved test-ordering, trusted-tag,
+> runner-isolation, staging and mirroring gates. See
+> [the implementation/activation plan](../../docs/ci-rework-plan.md).
+> The revised signing scripts now use checked-in, user-authorized public pins,
+> sign every asset with `.asc`, and reject old `.sig`
+> staging directories. The existing workflow has not yet been wired to this contract.
+> The remainder of this document describes the previous workflow until the validated
+> replacement is activated; it is not evidence that the requested system is complete.
+
+## Revised file-signing contract (locally validated)
+
+On the Linux signing executor, set `CI_KEY_B64` and `CI_KEY_PASSPHRASE`. The public
+identity comes from [reviewed checked-in pins](../release-keys/README.md).
+The first private key imported is never treated as the trust anchor. Exactly one
+primary private key must match the configured fingerprint; signing subkeys remain
+bound to that primary. Expired/revoked signatures are rejected.
+
+```sh
+bash scripts/sign-release-artifacts.sh release
+bash scripts/verify-release-artifacts.sh release
+```
+
+Signing/verification require Bash 4+, Python 3.11+, GnuPG, OpenSSL and core utilities on
+Linux. No release keys are needed on Mac-mini. The signer uses a temporary private
+keyring, passes the passphrase by file descriptor, verifies every signature, and
+cleans up its keyring/agent. It creates `.asc` for each package, per-package checksum,
+`cosign.pub`, optional provenance and the exact `SHA256SUMS` manifest. Signatures
+are excluded from that manifest, preventing circular checksums. Valid existing
+signature bytes are preserved on retry; incompatible manifests/signatures fail.
+
+Consumer verification needs only the trusted public key and fingerprint, not any
+private signing credentials. Obtain the public identity independently of a release
+download; the user-authorized sources, fingerprint, exact key bytes and rotation
+policy are documented in the linked key README. No live URL change is trusted
+automatically. Override variables cannot replace the configured public authority.
+The verifier rejects extra/missing inputs, unsigned inputs, symlinks, checksum path
+escapes and altered bytes. These scripts do not establish package architecture,
+complete platform inventory, tag authorization or remote publication by themselves.
+
+Reproduce the offline supplementary fixtures (no production publication):
+
+```sh
+python3 scripts/test-release-contract.py
+python3 scripts/test-release-identity.py
+bash scripts/test-release-contract.sh
+shellcheck scripts/{sign-release-artifacts,verify-release-artifacts,test-release-contract}.sh
+```
+
+Fixtures use intentionally fake package bytes and an ephemeral test key. Their
+passing results are signing/byte-contract evidence, not platform package evidence.
+
+## Previous workflow (not the revised release contract)
+
 `.forgejo/workflows/release.yml` is the privileged Cords publication path. It
 runs for `v*` and `V*` tag pushes, including the planned `v0.1.0`, and explicit
 manual dispatches. Ordinary branch commits and pull requests never start this

@@ -102,15 +102,24 @@ bash build-scripts/mac-client-pkg.sh
 bash build-scripts/mac-server-tar.sh
 ```
 
-The universal client requires the normal Tauri macOS prerequisites and
-`hdiutil`; it verifies the completed DMG before checksumming it. The native PKG
+The universal client requires the normal Tauri macOS prerequisites,
+`codesign`, `lipo`, and `hdiutil`; it verifies both architectures and strict
+bundle signatures in the read-only mounted DMG before checksumming. Tauri removes
+the intermediate `.app` when only the DMG bundle is requested.
+The native PKG
 path additionally requires Apple's `pkgbuild`, `pkgutil`, and Xcode command-line
 tools. It stages the real
 `Cords.app` at `/Applications/Cords.app`, verifies that package payload, and
 creates an unsigned `.pkg` by default. Set `CORDS_PKG_SIGN_IDENTITY` to an
 already configured installer-signing identity to sign the package creation
-step. Code signing the app, signing the installer, and Apple notarization are
-separate concerns; the script does not silently perform the first or last.
+step. Tauri defaults to explicit ad hoc app-bundle signing (`signingIdentity: "-"`)
+to seal the executable, Info.plist and bundled migration resources. An explicit
+`APPLE_SIGNING_IDENTITY` selects an installed distribution identity instead. The
+PKG script verifies the built app and fully extracted payload before checksumming.
+Ad hoc sealing, Developer ID signing, installer signing and notarization are
+separate; ad hoc sealing does not establish Apple distribution trust. The scripts
+do not notarize or change Gatekeeper/quarantine policies. Package staging and
+verification do not install into the host's `/Applications` directory.
 
 ## Local server image
 

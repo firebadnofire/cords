@@ -587,3 +587,42 @@ the mismatch was diagnosed from public slot/certificate fields before signing.
 Primary signatures are valid under the same pinned certificate. Card serial and
 private key material are neither exported nor recorded. This is OpenPGP/Git
 inspection, not Cords native Ed25519 PIV/enrollment/revocation/burn acceptance.
+
+## Authorized live Git/YubiKey smoke
+
+The user authorized live Git/upstream smoke testing and indicated the inserted
+YubiKey's signing information was cached. No signing prompt workaround or software
+fallback was needed. Forced the already pinned primary for this Git smoke with
+one-command `user.signingkey=<primary>!`; existing commit signing stayed enabled.
+
+Signed implementation commit:
+`3fdf94b5e114389960550111f0833e0347eb4994`, on local
+`codex/ci-monorepo-build-gates`, subject
+`Gate monorepo release builds on complete validation`.
+`git verify-commit` passes. `%G? %GF %GP` is exactly:
+`G 7D6EF134D851C8DA0862D97494F31AF374E2EE3C 7D6EF134D851C8DA0862D97494F31AF374E2EE3C`.
+
+```powershell
+git -c user.signingkey='7D6EF134D851C8DA0862D97494F31AF374E2EE3C!' commit -S -m 'Gate monorepo release builds on complete validation'
+git verify-commit HEAD
+git log -1 --format='%G? %GF %GP'
+git ls-remote origin refs/heads/codex/smoke-monorepo-3fdf94b-20261011
+git -c push.followTags=false push origin HEAD:refs/heads/codex/smoke-monorepo-3fdf94b-20261011
+git fetch --no-tags origin refs/heads/codex/smoke-monorepo-3fdf94b-20261011
+git rev-parse FETCH_HEAD
+git verify-commit FETCH_HEAD
+git ls-remote origin refs/heads/codex/smoke-monorepo-3fdf94b-20261011
+git -c push.followTags=false push origin --delete codex/smoke-monorepo-3fdf94b-20261011
+git ls-remote origin refs/heads/codex/smoke-monorepo-3fdf94b-20261011
+```
+
+PASS: scratch ref absent before push; exact SHA returned by fetch; fetched signature
+valid under pinned primary. Checked remote ref still matched the expected SHA before
+authorized deletion, then confirmed no remote ref remained. Signed work remains
+on the local review branch. No release tag, main rewrite, force push, PR creation,
+publication dispatch, key export or credential movement. No failed Git ref was left
+behind. Temporary local shell diagnostics are retained as acceptance evidence.
+
+This validates local OpenPGP smart-card Git signing and canonical Forgejo SSH
+push/fetch/delete, not Forgejo runner isolation, production CI-secret correspondence,
+Cosign publishing, native Cords hardware providers or an authorized release.

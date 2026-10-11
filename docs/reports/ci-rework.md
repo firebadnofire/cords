@@ -516,3 +516,74 @@ stored-workflow gates, JSON parse and UTF-8/local-target validation for 12 chang
 documents. No Rust product source changed, so no additional product integration
 run is claimed for this CI-only unit. The complete prior C0 runtime evidence and
 remaining native Mac GUI blocker remain in `rework-c0.md`.
+
+## Continued preparation: protected refs and test-before-build graph
+
+Read-only inspection of canonical Cords `settings/tags` shows **There are no
+protected tags**; `settings/branches` shows **There are no protected branches**.
+Default branch is main, public instance still 14.0.5+gitea-1.22.0. No settings changed.
+Thus the protected-tag authorization prerequisite is explicitly unsatisfied, not
+assumed from the earlier scaffolding repositories' protection rules. The service
+must reject automated authorization until reviewed v*/V* rules and independently
+verified creator/immutability evidence exist. Forgejo tag rules control permitted
+creators/updaters; they are not an immutable-tag guarantee by themselves.
+See [versioned protection documentation](https://forgejo.org/docs/v14.0/user/protection/).
+
+Prepared `.forgejo/workflow-proposals/release-builds.yml` remains outside discovery.
+All ten packaging/OCI build jobs depend on `mandatory-tests`, which checks exact
+`success` results from identity, Rust/frontend/security/PostgreSQL, Compose and
+independent packaged runtime acceptance. Unavailable runtime acceptance deliberately
+blocks the aggregate; native Mac and ARM execution have additional inactive gates.
+The graph preserves Linux AMD64/ARM64 client/server, Windows AMD64/ARM64 cross,
+native universal DMG/ARM64 PKG/server and both OCI platforms. OCI output is unsigned
+layout/metadata, with no registry login, push, signing or publication credential.
+Job conditions are activation stops, not enforceable runner isolation. The eight
+policy acceptance checks still need authenticated individual evidence; this prepared
+aggregate alone does not provide that evidence or prove test timing on Forgejo.
+
+**Diagnosed correction:** Windows ARM's existing build script explicitly requires
+a matching ARM Linux host. The initial local reroute to the AMD64 Linux label would
+fail that guard. The discovered CI now retains AMD64 Windows checking only; required
+ARM targets remain inactive in the prepared graph/preserved definition until an
+isolated matching-architecture path on opensuse-server passes. The guard was not
+weakened. This corrects the earlier report's Linux ARM routing preparation; it is
+not a claim that cross-architecture execution works.
+
+```powershell
+python scripts/test-release-build-graph.py
+python scripts/test-ci-monorepo.py
+```
+
+PASS: three graph tests, including bypass-dependency mutation rejection; four CI
+stored-definition gates. Extracted known Bash bodies into isolated
+`/home/william/cords-ci-review-20261011/graph-review/graph-*.sh`. No apt/build/Docker
+payload was run. Exact Linux validation:
+
+```sh
+set -euo pipefail
+cd /home/william/cords-ci-review-20261011/graph-review
+for fixture in graph-*.sh; do bash -n "$fixture"; done
+shellcheck -s bash graph-*.sh
+bash graph-gate-tests.sh
+```
+
+Initial ShellCheck rejected seven inherited `export SOURCE_DATE_EPOCH="$(git ...)"`
+instances (SC2155: export masks command failure). Split assignment/export in the
+prepared graph, regenerated/transferred the fixtures, reran: syntax/ShellCheck PASS.
+Actual extracted aggregate Bash accepts all-success and rejects skipped, cancelled,
+failed and missing result fixtures. No real release builds/dispatches claimed.
+
+During upstream inspection, main had advanced to signed commit
+`95773a9965dc4d08bbb1c81187c9afdc1777f999` containing the first preparation unit.
+Its Git signature verifies under pinned primary
+`7D6EF134D851C8DA0862D97494F31AF374E2EE3C`. Preserve that upstream history; the
+earlier local/unpushed description records the state before this subsequent push.
+The discovered release definition upstream now has the publication-stop gate.
+This still does not restrict arbitrary workflows targeting Global runners.
+
+Inserted YubiKey inspection: its OpenPGP signature slot is the pinned **primary**
+key. An initial check incorrectly expected the separate published signing subkey;
+the mismatch was diagnosed from public slot/certificate fields before signing.
+Primary signatures are valid under the same pinned certificate. Card serial and
+private key material are neither exported nor recorded. This is OpenPGP/Git
+inspection, not Cords native Ed25519 PIV/enrollment/revocation/burn acceptance.

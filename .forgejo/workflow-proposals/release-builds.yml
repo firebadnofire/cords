@@ -1,0 +1,719 @@
+# INACTIVE: runtime acceptance blocks all builds; ARM/native executors additionally unmet.
+name: INACTIVE Cords test-before-build release proposal
+'on':
+  push:
+    tags:
+    - v*
+    - V*
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  rust-and-frontend:
+    runs-on: ubuntu-22.04
+    container:
+      image: node:24-bookworm
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: cords
+          POSTGRES_USER: cords
+          POSTGRES_PASSWORD: cords-ci
+    env:
+      DATABASE_URL: postgres://cords:cords-ci@postgres:5432/cords
+      CORDS_TEST_DATABASE_URL: postgres://cords:cords-ci@postgres:5432/cords
+    steps:
+    - name: Install toolchains and checkout
+      shell: bash
+      run: 'set -euo pipefail
+
+        apt-get update
+
+        apt-get install -y --no-install-recommends build-essential ca-certificates curl git jq libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev pkg-config wget
+
+        curl --proto ''=https'' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        rustup component add rustfmt clippy
+
+        cargo install cargo-deny --locked --version 0.20.2
+
+        test -n "${FORGEJO_SERVER_URL:-}"
+
+        test -n "${FORGEJO_REPOSITORY:-}"
+
+        git init --initial-branch=main .
+
+        git remote add origin "${FORGEJO_SERVER_URL}/${FORGEJO_REPOSITORY}.git"
+
+        : "${GITHUB_SHA:?Forgejo event commit unavailable}"
+
+        [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "error: invalid event commit" >&2; exit 1; }
+
+        git fetch --depth=1 origin "${GITHUB_SHA}"
+
+        git checkout --detach "${GITHUB_SHA}"
+
+        test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+        '
+    - name: Frontend checks
+      working-directory: bins/cords-client/ui
+      shell: bash
+      run: 'set -euo pipefail
+
+        npm ci
+
+        npm audit --audit-level=high
+
+        npm run format:check
+
+        npm run check
+
+        npm run lint
+
+        npm test
+
+        npm run build
+
+        '
+    - name: Rust checks
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        test -f bins/cords-client/ui/dist/index.html
+
+        cargo fmt --all -- --check
+
+        cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+        cargo test --workspace --all-features
+
+        cargo test -p cords-server-core -- --ignored --test-threads=1
+
+        cargo deny check
+
+        '
+  containers:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Verify event commit
+      shell: bash
+      run: 'set -euo pipefail
+
+        : "${GITHUB_SHA:?Forgejo event commit unavailable}"
+
+        [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+
+        test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+        '
+    - name: Scan source for secrets
+      shell: bash
+      run: "set -euo pipefail\ngitleaks_image='ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f'\nscan_container=\"$(docker create --network none \"${gitleaks_image}\" dir /source --config /source/.gitleaks.toml --redact --no-banner)\"\ncleanup_scan() {\n  docker rm --force \"${scan_container}\" >/dev/null 2>&1 || true\n}\ntrap cleanup_scan EXIT\ndocker cp \"$PWD/.\" \"${scan_container}:/source\"\ndocker start --attach \"${scan_container}\"\nscan_exit=\"$(docker inspect --format '{{.State.ExitCode}}' \"${scan_container}\")\"\n[[ \"${scan_exit}\" == 0 ]] || {\n  echo \"error: Gitleaks exited with status ${scan_exit}\" >&2\n  exit \"${scan_exit}\"\n}\n"
+    - name: Build and start supported topology
+      shell: bash
+      run: 'set -euo pipefail
+
+        docker version || { echo ''error: Docker daemon unavailable; see .forgejo/docs/release-workflow.md for isolated runner configuration'' >&2; exit 1; }
+
+        docker compose version
+
+        docker compose up --build --wait
+
+        curl --fail --silent http://127.0.0.1:4849/health/ready
+
+        curl --fail --silent http://127.0.0.1:4849/.well-known/cords/server | jq -e ''.protocol_min == 1 and .signature != ""''
+
+        '
+    - name: Stop topology
+      if: always()
+      run: docker compose down --volumes
+  identity:
+    runs-on: ubuntu-22.04
+    container:
+      image: node:24-bookworm
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Validate immutable tag and workspace version
+      shell: bash
+      run: 'set -euo pipefail
+
+        : "${GITHUB_SHA:?event commit unavailable}"
+
+        : "${GITHUB_REF:?event ref unavailable}"
+
+        [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+
+        [[ "${GITHUB_REF}" == refs/tags/* ]]
+
+        test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+        release_version="$(python3 scripts/release-contract.py tag "${GITHUB_REF#refs/tags/}")"
+
+        python3 -c ''import pathlib,sys,tomllib; expected=tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"]; actual=sys.argv[1]; assert actual == expected, "tag/workspace version mismatch"'' "${release_version}"
+
+        # Tag syntax/commit checks do not establish protected-tag authorization.
+
+        '
+  runtime-acceptance:
+    if: ${{ false }}
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Await independently authenticated packaged TLS/runtime acceptance
+      run: exit 1
+  mandatory-tests:
+    if: ${{ always() }}
+    needs:
+    - rust-and-frontend
+    - containers
+    - identity
+    - runtime-acceptance
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Reject missing, skipped, failed or cancelled mandatory checks
+      shell: bash
+      env:
+        GATE_RUST_AND_FRONTEND: ${{ needs.rust-and-frontend.result }}
+        GATE_CONTAINERS: ${{ needs.containers.result }}
+        GATE_IDENTITY: ${{ needs.identity.result }}
+        GATE_RUNTIME_ACCEPTANCE: ${{ needs.runtime-acceptance.result }}
+      run: 'set -euo pipefail
+
+        test "${GATE_RUST_AND_FRONTEND}" = success
+
+        test "${GATE_CONTAINERS}" = success
+
+        test "${GATE_IDENTITY}" = success
+
+        test "${GATE_RUNTIME_ACCEPTANCE}" = success
+
+        '
+  client-linux:
+    name: Linux client (${{ matrix.architecture }})
+    needs:
+    - mandatory-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-22.04
+          architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Install Linux client toolchain
+      shell: bash
+      run: 'set -euo pipefail
+
+        apt-get update
+
+        apt-get install -y --no-install-recommends build-essential ca-certificates curl file git libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev pkg-config wget
+
+        curl --proto ''=https'' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+
+        '
+    - name: Build and package Linux client
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/linux-client-tar.sh
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: client-linux-${{ matrix.architecture }}
+        path: 'release/*.tar.gz
+
+          release/*.sha256
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+  client-windows:
+    name: Windows client (${{ matrix.architecture }}, cross-compiled)
+    needs:
+    - mandatory-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-22.04
+          architecture: x86_64
+          target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Install Windows cross-compilation toolchain
+      shell: bash
+      run: 'set -euo pipefail
+
+        apt-get update
+
+        apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils zip
+
+        curl --proto ''=https'' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        rustup target add "${{ matrix.target }}"
+
+        cargo install cargo-xwin --locked --version 0.23.1
+
+        '
+    - name: Build and package Windows client
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/linux-windows-client-crosscomp.sh --target "${{ matrix.architecture }}"
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: client-windows-${{ matrix.architecture }}
+        path: 'release/*.zip
+
+          release/*.sha256
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+  client-macos:
+    name: macOS client (universal DMG)
+    needs:
+    - mandatory-tests
+    runs-on: macos-latest
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: https://pubcode.archuser.org/actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: bins/cords-client/ui/package-lock.json
+    - name: Install universal Rust targets
+      shell: bash
+      run: 'set -euo pipefail
+
+        rustup toolchain install 1.97.1 --profile minimal
+
+        rustup default 1.97.1
+
+        rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+        '
+    - name: Build and package universal macOS client
+      shell: bash
+      run: 'set -euo pipefail
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/mac-client-dmg.sh
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: client-macos-universal
+        path: 'release/*.dmg
+
+          release/*.sha256
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+    if: ${{ false }}
+  server-linux:
+    name: Linux server tarball (${{ matrix.architecture }})
+    needs:
+    - mandatory-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-22.04
+          architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Install server build toolchain
+      shell: bash
+      run: 'set -euo pipefail
+
+        apt-get update
+
+        apt-get install -y --no-install-recommends build-essential ca-certificates curl git pkg-config
+
+        curl --proto ''=https'' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+
+        '
+    - name: Build and package Linux server
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/linux-server-tar.sh
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: server-linux-${{ matrix.architecture }}
+        path: 'release/*.tar.gz
+
+          release/*.sha256
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+  client-macos-pkg:
+    name: Native macOS ARM64 PKG (executor gate unmet)
+    needs:
+    - mandatory-tests
+    runs-on: macos-latest
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: https://pubcode.archuser.org/actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: bins/cords-client/ui/package-lock.json
+    - name: Install universal Rust targets
+      shell: bash
+      run: 'set -euo pipefail
+
+        rustup toolchain install 1.97.1 --profile minimal
+
+        rustup default 1.97.1
+
+        rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+        '
+    - name: Build and package client-macos-aarch64
+      shell: bash
+      run: 'set -euo pipefail
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/mac-client-pkg.sh
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: client-macos-aarch64
+        path: 'release/*.pkg
+
+          release/*.sha256'
+        if-no-files-found: error
+        retention-days: 7
+    if: ${{ false }}
+  server-macos:
+    name: Native macOS ARM64 server (executor gate unmet)
+    needs:
+    - mandatory-tests
+    runs-on: macos-latest
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: https://pubcode.archuser.org/actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: bins/cords-client/ui/package-lock.json
+    - name: Install universal Rust targets
+      shell: bash
+      run: 'set -euo pipefail
+
+        rustup toolchain install 1.97.1 --profile minimal
+
+        rustup default 1.97.1
+
+        rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+        '
+    - name: Build and package server-macos-aarch64
+      shell: bash
+      run: 'set -euo pipefail
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/mac-server-tar.sh
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: server-macos-aarch64
+        path: 'release/*.tar.gz
+
+          release/*.sha256'
+        if-no-files-found: error
+        retention-days: 7
+    if: ${{ false }}
+  oci-build:
+    name: Export unsigned OCI layouts; no registry credentials
+    needs:
+    - mandatory-tests
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - platform: linux/amd64
+          suffix: amd64
+        - platform: linux/arm64
+          suffix: arm64
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Export OCI layout in isolated reviewed builder
+      shell: bash
+      env:
+        PLATFORM: ${{ matrix.platform }}
+        SUFFIX: ${{ matrix.suffix }}
+      run: "set -euo pipefail\nmkdir -p release\ndocker version\ndocker buildx version\ndocker buildx build --platform \"${PLATFORM}\" --file Dockerfile \\\n  --metadata-file \"release/oci-${SUFFIX}.json\" \\\n  --output \"type=oci,dest=release/cords-server-${SUFFIX}.oci.tar\" .\n# Layout/metadata is untrusted output; independent provenance verification required.\n"
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: oci-${{ matrix.suffix }}
+        path: release/*
+        if-no-files-found: error
+        retention-days: 7
+  client-linux-arm64:
+    name: Linux client (${{ matrix.architecture }})
+    needs:
+    - mandatory-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-22.04
+          architecture: aarch64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Install Linux client toolchain
+      shell: bash
+      run: 'set -euo pipefail
+
+        apt-get update
+
+        apt-get install -y --no-install-recommends build-essential ca-certificates curl file git libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev pkg-config wget
+
+        curl --proto ''=https'' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+
+        '
+    - name: Build and package Linux client
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/linux-client-tar.sh
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: client-linux-${{ matrix.architecture }}
+        path: 'release/*.tar.gz
+
+          release/*.sha256
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+    if: ${{ false }}
+  client-windows-arm64:
+    name: Windows client (${{ matrix.architecture }}, cross-compiled)
+    needs:
+    - mandatory-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-22.04
+          architecture: aarch64
+          target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Install Windows cross-compilation toolchain
+      shell: bash
+      run: 'set -euo pipefail
+
+        apt-get update
+
+        apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils zip
+
+        curl --proto ''=https'' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        rustup target add "${{ matrix.target }}"
+
+        cargo install cargo-xwin --locked --version 0.23.1
+
+        '
+    - name: Build and package Windows client
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/linux-windows-client-crosscomp.sh --target "${{ matrix.architecture }}"
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: client-windows-${{ matrix.architecture }}
+        path: 'release/*.zip
+
+          release/*.sha256
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+    if: ${{ false }}
+  server-linux-arm64:
+    name: Linux server tarball (${{ matrix.architecture }})
+    needs:
+    - mandatory-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-22.04
+          architecture: aarch64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+    - uses: https://pubcode.archuser.org/actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Install server build toolchain
+      shell: bash
+      run: 'set -euo pipefail
+
+        apt-get update
+
+        apt-get install -y --no-install-recommends build-essential ca-certificates curl git pkg-config
+
+        curl --proto ''=https'' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+
+        '
+    - name: Build and package Linux server
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PATH="${HOME}/.cargo/bin:${PATH}"
+
+        SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+
+        export SOURCE_DATE_EPOCH
+
+        CORDS_DIST_DIR=release bash build-scripts/linux-server-tar.sh
+
+        '
+    - uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+      with:
+        name: server-linux-${{ matrix.architecture }}
+        path: 'release/*.tar.gz
+
+          release/*.sha256
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+    if: ${{ false }}

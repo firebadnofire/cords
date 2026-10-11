@@ -51,6 +51,9 @@ Proceed through these units, validating each before proceeding:
    native macOS executor on the same Mac-mini before enabling native jobs.
    Repository-scoping it to Cords alone does not separate PRs from releases.
    No registration transition is performed now.
+   Existing Windows ARM packaging requires an ARM Linux host. Do not route it to
+   AMD64 without a separately validated compatible builder or change that guard by
+   assumption. Direct Mac-hosted ARM execution remains inactive.
 6. **Activation and hosted acceptance, separately approved.** All branch pushes and
    PRs run mandatory isolated tests. Tag builds depend on successful tests for the
    exact commit. Build Linux AMD64/ARM64 client/server, Windows AMD64/ARM64 cross
@@ -62,6 +65,13 @@ Proceed through these units, validating each before proceeding:
    evidence, substitutions, retries, unauthorized PRs, cache poisoning and partial
    publication recovery. Never auto-delete/overwrite conflicting assets.
    Cross-registry finalization is non-atomic: retain evidence and repair forward.
+
+7. **Authorized Git/YubiKey smoke.** Verify cached hardware-backed Git signing
+   using the pinned GPG identity, sign the prepared Cords change, and use an isolated
+   temporary branch for push/fetch upstream proof. No release tags, PR dispatch on
+   unsafe runners, signing-key export or publication. Verify exact commit/signature;
+   remove temporary smoke refs after success/failure with expected-ref checks.
+   This is Git/OpenPGP evidence, not native Cords hardware-provider acceptance.
 
 ## Implementation boundaries
 

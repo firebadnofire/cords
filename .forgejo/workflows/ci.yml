@@ -145,9 +145,6 @@ jobs:
           - runner: ubuntu-22.04
             architecture: x86_64
             target: x86_64-pc-windows-msvc
-          - runner: ubuntu-22.04
-            architecture: aarch64
-            target: aarch64-pc-windows-msvc
     name: Windows cross-check (${{ matrix.architecture }})
     runs-on: ${{ matrix.runner }}
     container:

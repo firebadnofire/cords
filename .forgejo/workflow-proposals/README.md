@@ -1,5 +1,19 @@
 # Inactive workflow definitions
 
+`release-builds.yml` prepares the explicit tests-before-build graph. Its mandatory
+aggregate accepts only `success` for identity, Rust/frontend/security/PostgreSQL,
+Compose and independent packaged runtime acceptance. Runtime acceptance is deliberately
+unavailable, so it blocks every build. ARM and native Mac definitions are additionally
+inactive pending enforced execution paths. OCI builds export unsigned layouts;
+there is no registry login/push or publication job. The external executor independently
+checks authorization, test order and provenance; the graph grants no signing authority.
+Action/image pinning and hosted Forgejo scheduling acceptance remain unmet.
+
+Windows ARM packaging requires a matching ARM Linux host. Discovered CI retains its
+usable AMD64 cross check; ARM definitions remain in this graph and preserved legacy
+definition. Do not route ARM to AMD64 by assumption or weaken the packaging guard.
+Validate an isolated ARM execution path on opensuse-server before activation.
+
 These files are outside `.forgejo/workflows` and are not discovered as Actions.
 Do not copy them into discovery until the [monorepo activation gates](../../docs/ci-monorepo-plan.md)
 pass. `legacy-ci.yml` and `legacy-release.yml` preserve the prior definitions for

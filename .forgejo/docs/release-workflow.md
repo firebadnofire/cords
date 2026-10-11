@@ -1,12 +1,14 @@
 # Cords release workflow
 
-> **Rework in progress; do not activate this workflow as the revised release
-> system.** The inspected workflow below has unresolved test-ordering, trusted-tag,
-> runner-isolation, staging and mirroring gates. See
-> [the implementation/activation plan](../../docs/ci-rework-plan.md).
+> **Publication disabled in this checkout.** The discovered `release.yml` now has
+> only a deliberately skipped gate. Prior definitions are retained outside Actions
+> discovery in `workflow-proposals/legacy-release.yml`. The canonical architecture
+> is one Cords monorepo plus an independently protected external executor; see
+> [the current plan](../../docs/ci-monorepo-plan.md) and
+> [executor contract](../../docs/external-release-executor.md).
 > The revised signing scripts now use checked-in, user-authorized public pins,
 > sign every asset with `.asc`, and reject old `.sig`
-> staging directories. The existing workflow has not yet been wired to this contract.
+> staging directories. No privileged executor has been installed or activated.
 > The remainder of this document describes the previous workflow until the validated
 > replacement is activated; it is not evidence that the requested system is complete.
 
@@ -54,10 +56,13 @@ passing results are signing/byte-contract evidence, not platform package evidenc
 
 ## Previous workflow (not the revised release contract)
 
-`.forgejo/workflows/release.yml` is the privileged Cords publication path. It
+The archived `.forgejo/workflow-proposals/legacy-release.yml` was the previous
+privileged Cords publication path. It
 runs for `v*` and `V*` tag pushes, including the planned `v0.1.0`, and explicit
-manual dispatches. Ordinary branch commits and pull requests never start this
-publication workflow or receive release or registry credentials.
+manual dispatches. Its intended separation by triggers did not prevent applicable
+owner/repository secrets reaching ordinary jobs under Forgejo v14. The earlier
+claim that branch/PR jobs never receive publication credentials was incorrect.
+Do not use the archived definition as a secure or activated release system.
 
 Forgejo remains canonical. The GitHub mirror job depends on successful Pubcode
 container publication and successful Forgejo release publication, so it cannot

@@ -11,6 +11,16 @@ Source baseline: `2c4febab7594b252214c1179c81a5f6775b70d3d`, plus the C0 working
 changes below. Initial contracts/tests: 2026-10-10. Remediation and fresh packaged
 execution: 2026-10-11. No C1 changes were made.
 
+This remediation tree is now committed as
+`c9cfa658c428f449ce60b20f61f1567260affb9a`; this does not turn missing macOS GUI
+evidence into a pass. The separately protected CI controller's validated public
+helpers were signed and pushed at `01235ee48174a051879b96ca4461309b942a62b9`.
+Controller Actions/publication remains disabled. Its secret-scope audit identified
+owner-wide release secrets sent by Forgejo v14 to every ordinary job, blocking
+workflow activation and the conditional Mac registration transition. No secret or
+runner setting changed; see [CI evidence](ci-rework.md) and
+[migration review](../controller-secrets-review.md).
+
 ## Plan
 
 The [implementation plan](../rework-plan.md) retains all eight work areas and every
@@ -901,3 +911,11 @@ artifact collection into a protected signing job. No private keys were involved.
 C0 remains **incomplete**. The Mac GUI and hosted CI security/dispatch gates are
 not passing merely because native builds, startup and automated frontend tests pass.
 C1 and later product checkpoints remain inactive.
+
+The subsequent CI architecture correction selects one canonical
+`firebadnofire/cords` monorepo and a proposed external signing execution boundary;
+see [the current plan](../ci-monorepo-plan.md) and [CI evidence](ci-rework.md).
+Repository-side metadata/workflow/fixture changes introduce no messenger behavior
+or protocol/storage change and do not supply the missing macOS graphical evidence.
+No extra repository, runner, credential migration or privileged publication is
+activated by that preparation. C0 is not marked complete.

@@ -106,12 +106,6 @@ jobs:
           - runner: ubuntu-22.04
             platform: linux-x86_64
             image: ghcr.io/catthehacker/ubuntu:act-22.04
-          - runner: arm-ubuntu-22.04
-            platform: linux-aarch64
-            image: ghcr.io/catthehacker/ubuntu:act-22.04
-          - runner: macos-latest
-            platform: macos-aarch64
-            image: ""
     name: Client check (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     container:
@@ -151,7 +145,7 @@ jobs:
           - runner: ubuntu-22.04
             architecture: x86_64
             target: x86_64-pc-windows-msvc
-          - runner: arm-ubuntu-22.04
+          - runner: ubuntu-22.04
             architecture: aarch64
             target: aarch64-pc-windows-msvc
     name: Windows cross-check (${{ matrix.architecture }})

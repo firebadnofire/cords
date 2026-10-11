@@ -1,5 +1,14 @@
 # Existing runner isolation: review proposal
 
+> **Current direction: one Cords monorepo.** The protected-project alternative
+> below is superseded and must not be implemented. Keep both physical runners;
+> validate an enforced host-controlled macOS guest executor or independently
+> approved native execution before enabling native jobs. Cords repository scope
+> alone cannot separate PRs from tags. The external signer requires a separate
+> protected OS boundary on the Linux host, not merely another UID/directory whose
+> state the current job-controlled Docker daemon can reach. No host changes in this
+> unit. See [the monorepo plan](ci-monorepo-plan.md).
+
 **Prepared only. No live changes applied.** The user authorized preparation for
 review on 2026-10-11. Existing registrations, deployed services, credentials and
 unrelated projects remain untouched. This proposal does not claim the complete

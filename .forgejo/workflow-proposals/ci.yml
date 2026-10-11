@@ -1,0 +1,206 @@
+# INACTIVE: requires owner-secret review and enforced runner/OCI isolation.
+name: Cords checks
+
+"on":
+  push:
+    branches: ["**"]
+    tags: ["v*", "V*"]
+  pull_request:
+
+jobs:
+  rust-and-frontend:
+    runs-on: ubuntu-22.04
+    container:
+      image: node:24-bookworm
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: cords
+          POSTGRES_USER: cords
+          POSTGRES_PASSWORD: cords-ci
+    env:
+      DATABASE_URL: postgres://cords:cords-ci@postgres:5432/cords
+      CORDS_TEST_DATABASE_URL: postgres://cords:cords-ci@postgres:5432/cords
+    steps:
+      - name: Install toolchains and checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates curl git jq libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev pkg-config wget
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          rustup component add rustfmt clippy
+          cargo install cargo-deny --locked --version 0.20.2
+          test -n "${FORGEJO_SERVER_URL:-}"
+          test -n "${FORGEJO_REPOSITORY:-}"
+          git init --initial-branch=main .
+          git remote add origin "${FORGEJO_SERVER_URL}/${FORGEJO_REPOSITORY}.git"
+          : "${GITHUB_SHA:?Forgejo event commit unavailable}"
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "error: invalid event commit" >&2; exit 1; }
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Frontend checks
+        working-directory: bins/cords-client/ui
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm audit --audit-level=high
+          npm run format:check
+          npm run check
+          npm run lint
+          npm test
+          npm run build
+      - name: Rust checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          test -f bins/cords-client/ui/dist/index.html
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+          cargo test -p cords-server-core -- --ignored --test-threads=1
+          cargo deny check
+
+  containers:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
+    steps:
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify event commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${GITHUB_SHA:?Forgejo event commit unavailable}"
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Scan source for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gitleaks_image='ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f'
+          scan_container="$(docker create --network none "${gitleaks_image}" dir /source --config /source/.gitleaks.toml --redact --no-banner)"
+          cleanup_scan() {
+            docker rm --force "${scan_container}" >/dev/null 2>&1 || true
+          }
+          trap cleanup_scan EXIT
+          docker cp "$PWD/." "${scan_container}:/source"
+          docker start --attach "${scan_container}"
+          scan_exit="$(docker inspect --format '{{.State.ExitCode}}' "${scan_container}")"
+          [[ "${scan_exit}" == 0 ]] || {
+            echo "error: Gitleaks exited with status ${scan_exit}" >&2
+            exit "${scan_exit}"
+          }
+      - name: Build and start supported topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version || { echo 'error: Docker daemon unavailable; see .forgejo/docs/release-workflow.md for isolated runner configuration' >&2; exit 1; }
+          docker compose version
+          docker compose up --build --wait
+          curl --fail --silent http://127.0.0.1:4849/health/ready
+          curl --fail --silent http://127.0.0.1:4849/.well-known/cords/server | jq -e '.protocol_min == 1 and .signature != ""'
+      - name: Stop topology
+        if: always()
+        run: docker compose down --volumes
+
+  client-platform-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+            image: ghcr.io/catthehacker/ubuntu:act-22.04
+    name: Client check (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify event commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${GITHUB_SHA:?Forgejo event commit unavailable}"
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: https://pubcode.archuser.org/actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: bins/cords-client/ui/package-lock.json
+      - name: Install Linux Tauri prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+            export PATH="${HOME}/.cargo/bin:${PATH}"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal
+          toolchain_bin="$(dirname "$(rustup which --toolchain 1.97.1 rustc)")"
+          echo "${toolchain_bin}" >> "${GITHUB_PATH}"
+          "${toolchain_bin}/rustc" --version
+          "${toolchain_bin}/cargo" --version
+      - working-directory: bins/cords-client/ui
+        run: npm ci
+      - run: cargo check -p cords-client
+
+  windows-cross-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            architecture: x86_64
+            target: x86_64-pc-windows-msvc
+          - runner: ubuntu-22.04
+            architecture: aarch64
+            target: aarch64-pc-windows-msvc
+    name: Windows cross-check (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: node:24-bookworm
+    steps:
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify event commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${GITHUB_SHA:?Forgejo event commit unavailable}"
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Install cross-compilation toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils zip
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          rustup target add "${{ matrix.target }}"
+          cargo install cargo-xwin --locked --version 0.23.1
+      - name: Build frontend and check Windows client
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+          bash build-scripts/linux-windows-client-crosscomp.sh --target "${{ matrix.architecture }}"

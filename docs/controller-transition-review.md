@@ -1,5 +1,11 @@
 # Protected controller: registration transition for review
 
+> **Superseded; do not execute.** The latest direction requires one canonical
+> Cords monorepo and no registration changes in this unit. Prior conditional approval
+> for a controller-scoped Mac transition is retired. Repository-scoping Mac-mini to
+> Cords alone cannot separate PR jobs from approved releases. Follow
+> [the monorepo plan](ci-monorepo-plan.md). No transition was applied.
+
 Status: **blocked before activation**. The user selected a protected release-control
 project and approved the repository-scoped Mac registration transition, conditional
 on validated controller workflows/dependencies, backups and drained jobs. The private
@@ -51,6 +57,8 @@ service. Locate and verify the actual service before any registration operation.
 1. **Repository preparation completed:** private
    [firebadnofire/cords-release-control](https://pubcode.archuser.org/firebadnofire/cords-release-control),
    initial README-only commit `a426842bb8160ee35ac8d29a0fbac91ecd68945a`.
+   Validated public helpers were subsequently pushed at GPG-verified commit
+   `01235ee48174a051879b96ca4461309b942a62b9`; Actions remains disabled.
    Collaborator list is empty. Actions is disabled (saved setting verified).
    Branch pattern `**` restricts push and merge to `firebadnofire`, disables
    deploy-key push bypass, disallows force push, enforces rules for admins, dismisses
@@ -59,6 +67,11 @@ service. Locate and verify the actual service before any registration operation.
    These are inspected ACL/settings, not adversarial hosted proof. No required
    status contexts or independent-review quorum exists yet. Additional maintainers
    and inherited user/organization secret/token exposure require explicit review.
+   That inspection now identifies a **blocking inherited-secret boundary**: v14
+   sends all owner/repository secrets to every ordinary job. The owner's shared
+   release secrets are present, so this controller's Mac jobs would receive them.
+   Repository-scoping the runner does not fix secret distribution. See the
+   [required migration review](controller-secrets-review.md); no credentials moved.
 2. **Authorized, not executed:** during a controlled maintenance window, drain Mac-mini, privately back up its
    existing launch/registration state, disable the Global ID 6, and register the
    **same Mac-mini daemon and physical host** at controller repository scope.

@@ -1,5 +1,10 @@
 # CI/CD rework: implementation and activation gates
 
+> **Superseded architecture, retained for historical evidence.** The user's
+> 2026-10-11 correction requires the single `firebadnofire/cords` monorepo.
+> Follow [the current monorepo plan](ci-monorepo-plan.md). The controller/publication
+> repository and registration proposals below must not be activated.
+
 Status: in progress, not activated. C1 and later product checkpoints remain inactive.
 This is the CI/CD scope explicitly requested on 2026-10-11, alongside C0 acceptance.
 Unit 1 passes local contract, real GnuPG fixture, shell syntax and ShellCheck gates;
@@ -119,6 +124,17 @@ Validate the exact controller copy with real disposable GnuPG fixtures before
 committing/pushing it. Controller signing jobs must eventually execute these
 trusted helpers, never substitute scripts or public pins from the Cords build
 commit. This unit does not activate a release workflow or satisfy runner isolation.
+
+That staging unit is now published at GPG-verified controller commit
+`01235ee48174a051879b96ca4461309b942a62b9`, with Actions still disabled.
+The subsequent secret-scope audit blocks the proposed combined build/signing
+repository: Forgejo v14 sends all owner/repository secrets in every ordinary job's
+task payload, and this owner has shared GPG/Cosign/GitHub credentials. Do not
+activate or migrate Mac-mini while those inputs would reach it. Prepare a
+secret-free build controller, separately protected publication scope and complete
+consumer-preserving owner-secret migration for explicit review. No new publication
+repository, credential movement or server policy is assumed authorized by this
+finding. See [concrete prerequisites](controller-secrets-review.md).
 
 Sources: [Forgejo v14 runner security](https://forgejo.org/docs/v14.0/admin/actions/security/),
 [Forgejo v14 workflow security](https://forgejo.org/docs/v14.0/user/actions/security/),

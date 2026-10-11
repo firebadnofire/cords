@@ -2,7 +2,9 @@
 
 Status: **incomplete, not activated**. No hosted workflow, production release, tag,
 registry object or shared gh-sync repository was modified by these local tests.
-The Cords working-tree changes have not been committed or pushed.
+The Cords remediation tree is now committed as
+`c9cfa658c428f449ce60b20f61f1567260affb9a` during the signing wait. No source
+Cords push or workflow activation was performed by this agent.
 The new private controller repository and its restrictive ACL/settings were created;
 Actions remains disabled. No runner settings, credentials, deployments or unrelated
 files were changed.
@@ -270,3 +272,247 @@ An attempted push was issued before the pending commit completed; it reported
 `a426842bb8160ee35ac8d29a0fbac91ecd68945a`. This is **not** publication of the
 staged helpers. Await local signing authorization, verify commit completion and
 exact remote HEAD before recording a successful controller source update.
+
+## Signed controller commit and secret-boundary blocker
+
+After the user confirmed signing was cached, the previous signing attempt was
+observed to have timed out (exit 1). The retry succeeded without bypassing GPG:
+
+```powershell
+git -C C:/Users/william/AppData/Local/Temp/cords-release-control-20261011 diff --cached --check
+git -C C:/Users/william/AppData/Local/Temp/cords-release-control-20261011 commit -m 'Pin release identities and stage validated signing contracts'
+git -C C:/Users/william/AppData/Local/Temp/cords-release-control-20261011 verify-commit HEAD
+git -C C:/Users/william/AppData/Local/Temp/cords-release-control-20261011 log -1 --format='%H %GF %G? %s'
+git -C C:/Users/william/AppData/Local/Temp/cords-release-control-20261011 push origin main
+git -C C:/Users/william/AppData/Local/Temp/cords-release-control-20261011 ls-remote origin refs/heads/main
+```
+
+PASS: exact signed commit and remote main are
+`01235ee48174a051879b96ca4461309b942a62b9`; signature status `G`, primary
+`7D6EF134D851C8DA0862D97494F31AF374E2EE3C`. Controller checkout is clean.
+Push followed successful signature verification. Forgejo's code page shows the
+same commit, signed badge and public helpers. Actions remains disabled; no runnable
+workflow or private credential was added. Browser proof:
+`C:/Users/william/AppData/Local/Temp/cords-ci-keys-20261011/evidence/controller-pushed.jpg`.
+
+The next read-only security gate **fails for the proposed single-repository
+build/signing model**. Forgejo v14.0.5 `services/actions/task.go:42,66` calls
+`GetSecretsOfTask` and sends the complete result in each runner task's `Secrets`
+field. `models/secret/secret.go:123-166` loads and decrypts all owner secrets plus
+all repository secrets for ordinary non-fork jobs. It does not filter by runner,
+job, referenced expression, environment or workflow `env`. The fork-PR exception
+does not protect a trusted controller's push/dispatch jobs. Omitting a secret from
+a Mac step does not keep that secret off the Mac runner.
+
+Live owner settings at `/user/settings/actions/secrets` list `CI_KEY`,
+`CI_KEY_B64`, `CI_KEY_PASSPHRASE`, `COSIGN_B64`, `COSIGN_PASSWORD`, `GH_KEY`,
+`KEY_ALIAS`, `KEY_PASSWORD`, `KEYSTORE_BASE64`, and `KEYSTORE_PASSWORD`.
+Only names and masked values were viewed. No secret was retrieved, revealed,
+copied, changed or removed. These owner secrets would be inherited by this
+controller even with no repository secrets. Owner-wide consumers are not yet
+inventoried. There is no claim that any key was compromised or exfiltrated.
+
+Source retrieval used verified TLS 1.3 and existing strict SSH trust, storing public
+files in `/home/william/cords-ci-review-20261011/forgejo-v14-secret-audit`:
+
+```sh
+curl --proto '=https' --tlsv1.3 --fail --silent --show-error --location \
+  https://codeberg.org/forgejo/forgejo/raw/tag/v14.0.5/services/actions/task.go \
+  -o forgejo-v14-secret-audit/service-task.go
+curl --proto '=https' --tlsv1.3 --fail --silent --show-error --location \
+  https://codeberg.org/forgejo/forgejo/raw/tag/v14.0.5/models/secret/secret.go \
+  -o forgejo-v14-secret-audit/secret.go
+sed -n '1,100p' forgejo-v14-secret-audit/service-task.go
+sed -n '123,205p' forgejo-v14-secret-audit/secret.go
+sha256sum forgejo-v14-secret-audit/*.go
+```
+
+| Public source file | SHA-256 |
+|---|---|
+| `routers/api/actions/runner/runner.go` | `b32af658854ef715879d14033f7c7586539f44da3973880fb0b685a5b22daa28` |
+| `services/actions/task.go` | `79160206751b62fa5e9ae5433f8abffea6f8ebb1d0c4b3535c3d17984efcec2f` |
+| `models/secret/secret.go` | `f1e504119615f8a88e4a57cb1dd14814f5573da0eaaf123354993567d295477f` |
+
+Diagnostics: `.54` has no `rg`; the first search failed explicitly and was repeated
+with `grep`. Two guessed source-file paths returned HTTP 404; neither supplied
+evidence. The actual `PickTask` call and versioned secret implementation above
+establish the boundary. The public source-tree API was subsequently consulted
+rather than continuing guessed authentication paths.
+
+Forgejo's [v14 compatibility documentation](https://forgejo.org/docs/v14.0/user/actions/github-actions/)
+also identifies job `permissions` as ignored. No YAML `permissions` restriction
+is accepted as proof that a native job token is read-only. Actual endpoint and
+protected-ref tests are still required; no hosted job was started to inspect or
+exfiltrate credentials.
+
+Activation, credential relocation and the Mac registration transition stop at
+this gate. The [secret-boundary migration review](../controller-secrets-review.md)
+describes the required repository separation and consumer-preserving migration.
+This is prepared for review, not executed. C0 remains incomplete pending macOS
+graphical acceptance; C1 stays inactive.
+
+The controller README now carries this same activation blocker in signed commit
+`381b2205d856be015ef3b6be8dfb2a06398fc237`. Its documentation-only change passed
+`git diff --check`, `git verify-commit HEAD`, sequential push and exact remote-HEAD
+verification. The signature again matches the pinned primary. No helper changed,
+so the previously recorded exact-copy fixture results remain applicable; no
+runtime regression rerun is claimed for this documentation-only unit. The missing
+secret-boundary gate is not treated as a passing test.
+
+Final documentation checks: `git diff --check` passed; a Python Markdown-target
+check resolved every local link in the five changed documents. The exact earlier
+controller validation archive SHA-256 is
+`9d4ace92e2d3088d4dc7fbce577f287d47e00d2bf5a797f07ab0be060675babe`.
+Final Forgejo code-page proof of signed HEAD and retained inactive state is
+`C:/Users/william/AppData/Local/Temp/cords-ci-keys-20261011/evidence/controller-warning-pushed.jpg`.
+Preparing a separate publication repository and consumer migration inventory was
+subsequently authorized. The README-only repository was created with Actions
+disabled, then superseded by the user's single-monorepo correction below. No
+credential migration or runner transition was applied.
+
+## Single-monorepo correction — plan
+
+The sole canonical Forgejo repository is `firebadnofire/cords`. The current
+[plan](../ci-monorepo-plan.md) supersedes the split control/publication architecture,
+including the conditional controller registration transition. Preserve the two
+physical runners and all release targets; no other permanent Cords repository.
+Privileged execution requires independent OS/credential and authorization boundaries,
+not repository separation, labels, conditions or ignored job `permissions`.
+
+## Single-monorepo correction — implementation
+
+- [Scaffolding inventory](ci-monorepo-consolidation.md): controller HEAD
+  `381b2205d856be015ef3b6be8dfb2a06398fc237`, publication HEAD
+  `b90cb74451513d68bfe575e764dee85f1aa4f966`. All 11 useful controller helper/pin files
+  match canonical Git objects; publication contains only README. Both Actions units
+  rechecked disabled. No deletion, repository mutation or credential installation.
+- Canonical Cargo repository metadata now points to Forgejo Cords. No package version,
+  dependency, product behavior, wire format or vault/storage migration changes.
+- Old CI/release YAML retained exactly in `.forgejo/workflow-proposals/legacy-*.yml`,
+  outside Actions discovery. Local discovered release workflow contains one explicitly
+  skipped activation gate, no signing/registry/GitHub job or secret expression.
+  Existing Linux CI remains; direct native Mac and Mac-hosted ARM execution are
+  removed from its matrix. Windows ARM cross check routes to the Linux runner.
+  Native/ARM release requirements remain in package scripts, preserved definitions
+  and policy; their integration gates remain unpassed.
+- Inactive `workflow-proposals/ci.yml` prepares all branches, PRs and v/V tags,
+  immutable event SHA checkout/verification, credential persistence off for checkout,
+  cargo-deny 0.20.2, existing Rust/frontend/PostgreSQL/Compose/Windows checks.
+  It is not activated on the unsafe current runners. Action/image digest pinning,
+  Linux ARM execution and enforced native Mac backend remain required work.
+- `.forgejo/release-policy.json` activation is disabled, credentials external-only.
+  Nine package targets, checksums, both OCI destinations/platforms, pinned public
+  identities and eight mandatory acceptance checks are explicit. The read-only
+  `validate-release-request.py` rejects unknown/duplicate fields, source/pin/version
+  mismatches, incomplete/stale references, unsafe entries and altered bytes. It
+  explicitly certifies candidate shape/bytes only, never authorization/provenance.
+- [External executor contract](../external-release-executor.md): independently
+  installed reviewed service/policy revision, protected keys/tokens, independent tag,
+  test order and provenance verification, immutable staging, approvals, durable retries,
+  every-file `.asc`, both OCI signatures, strict drafts/mirror/finalization. No service
+  is installed. Authenticated provenance authority remains an explicit unresolved
+  gate. Independently approved native/manual isolated signing is the fallback.
+- [Owner inventory](owner-secret-consumers.md): 71 repositories, 386 unique advertised
+  commit trees; 11 projects with direct Forgejo/Gitea owner-secret references.
+  No values read. All ten owner secrets unchanged. Complete ref accounting is not
+  complete runtime-consumer proof: external/dynamic/override consumers still block
+  an approved destination mapping and owner-secret migration.
+
+## Single-monorepo correction — validation
+
+Windows: Python **3.13.14**, PyYAML **6.0.3**, Git **2.53.0.windows.2**.
+Linux `.54`: Python **3.13.15**, OpenSSL **3.5.3**, GnuPG **2.5.22**,
+libgcrypt **1.12.4**, ShellCheck **0.11.0**. Strict SSH host checking retained;
+no forwarding/private-key transfer, TLS bypass or host service change.
+
+```powershell
+python scripts/test-ci-monorepo.py
+python scripts/test-release-request.py
+python scripts/test-inventory-owner-secrets.py
+python scripts/test-release-contract.py
+python -m py_compile scripts/validate-release-request.py scripts/test-release-request.py scripts/test-ci-monorepo.py scripts/inventory-owner-secrets.py scripts/test-inventory-owner-secrets.py
+cargo metadata --no-deps --offline --locked --format-version 1
+git diff --check
+```
+
+PASS: four stored-workflow/policy gates; Windows 10 candidate tests with one explicit
+Linux-only symlink skip; five inventory fixtures; seven release-contract regressions;
+compilation, offline locked metadata and whitespace checks. All five YAML definitions
+parse with PyYAML. `git show HEAD:<workflow>` comparison proves both legacy definitions
+preserved exactly. Expanded trigger and exact checkout assertions pass. These are
+static stored-definition checks, not hostile-job denial or actual dispatch evidence.
+
+The release job's false condition stops its publication path; it is not proof that
+Forgejo never assigns a task payload or transmits inherited owner secrets. That
+behavior needs actual protected-environment dispatch evidence. No condition is
+accepted as a credential/execution isolation boundary.
+
+A Windows `python scripts/test-release-identity.py` attempt failed three of five
+cases because `openssl` was absent from PATH (`WinError 2`); it is not reported as
+passing. No product/library weakening was made. The documented Linux signing
+environment prerequisites were checked and the full identity suite rerun there.
+An initial one-off YAML checker had a Python Path/string precedence error; corrected
+the checker and reran successfully before continuing implementation.
+
+The LF-normalized, non-secret Linux validation archive is retained at
+`C:/Users/william/AppData/Local/Temp/cords-ci-keys-20261011/monorepo-validation.tar`.
+It contains Cargo.toml, policy, public pins, release Python/shell helpers and inventory
+fixtures. SHA-256: `5e9af9eb925c95317b50d295a0e08a38f6480c5638cd38380c321463b1ac3a5d`.
+Only repository metadata's URL changed after that archive; version/dependencies did
+not. This archive is fixture evidence, not release provenance.
+
+```powershell
+scp.exe -o BatchMode=yes -o StrictHostKeyChecking=yes C:/Users/william/AppData/Local/Temp/cords-ci-keys-20261011/monorepo-validation.tar william@192.168.86.54:/home/william/cords-ci-review-20261011/monorepo-validation.tar
+```
+
+Exact Linux payload, piped through existing strict SSH (PowerShell CR stripped at
+the boundary: `tr -d "\015" | bash`):
+
+```sh
+set -euo pipefail
+cd /home/william/cords-ci-review-20261011
+printf '%s\n' '5e9af9eb925c95317b50d295a0e08a38f6480c5638cd38380c321463b1ac3a5d  monorepo-validation.tar' | sha256sum --check
+mkdir -p monorepo-validation
+cd monorepo-validation
+tar -xf ../monorepo-validation.tar
+python3 scripts/test-release-request.py
+python3 scripts/test-inventory-owner-secrets.py
+python3 scripts/test-release-contract.py
+python3 scripts/test-release-identity.py
+bash scripts/test-release-contract.sh
+bash -n scripts/sign-release-artifacts.sh scripts/verify-release-artifacts.sh scripts/test-release-contract.sh
+shellcheck scripts/sign-release-artifacts.sh scripts/verify-release-artifacts.sh scripts/test-release-contract.sh
+```
+
+PASS: transferred archive hash; 11 candidate tests including real symlink rejection;
+5 inventory tests; 7 contract tests; 5 real public-identity tests. Shell signing suite
+passes its additional seven contract tests and ten actual GnuPG rejection scenarios:
+wrong public/private pins, private key not authoritative, missing config, invalid
+base64, missing signature, altered asset/retry/signature and unpublished signing
+subkey. Every fake fixture asset is signed; repeat signature bytes preserved. Shell
+syntax and ShellCheck pass. No production private key or publication token used.
+
+### Activation and rollback boundaries
+
+Changes are local/unpushed. Therefore the revised YAML stop is not a claim that the
+remote canonical legacy workflow or Global runner is administratively disabled.
+Do not create a release tag/dispatch or enable either scaffolding repository.
+No hosted pipeline, hostile dispatch, real external signer, protected-tag API proof,
+credential migration or complete secure artifact transfer is claimed. The current
+Global Mac runner can still be targeted by an arbitrary eligible repository's
+workflow; local workflow editing cannot enforce that denial. An OS/executor boundary
+must be validated before native CI activation. The current owner inheritance and
+shared Linux daemon prevent credential-free ordinary/release execution claims.
+
+No external release side effects occurred. Local code/docs rollback is possible,
+but must not restore privileged workflow activation or direct untrusted native host
+execution before security gates pass. Existing services, runners, deployments,
+credentials and release history are preserved. Repositories are prepared as redundant
+scaffolding; removal requires a separately approved backup/metadata check and deletion.
+C0 remains incomplete pending native macOS GUI evidence; C1 remains inactive.
+
+Final preparation checks also pass: `cargo fmt --all -- --check`, repeated four
+stored-workflow gates, JSON parse and UTF-8/local-target validation for 12 changed
+documents. No Rust product source changed, so no additional product integration
+run is claimed for this CI-only unit. The complete prior C0 runtime evidence and
+remaining native Mac GUI blocker remain in `rework-c0.md`.

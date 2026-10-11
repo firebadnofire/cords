@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "activation": "disabled",
+  "canonical_origin": "https://pubcode.archuser.org",
+  "repository": "firebadnofire/cords",
+  "credential_scope": "external-executor-only",
+  "test_checks": [
+    "rust-frontend", "postgres", "dependency-security", "compose",
+    "messaging-tls", "runtime-linux", "runtime-windows", "runtime-macos"
+  ],
+  "packages": {
+    "linux-client-amd64": "cords-client-linux-x86_64-{version}.tar.gz",
+    "linux-client-arm64": "cords-client-linux-aarch64-{version}.tar.gz",
+    "linux-server-amd64": "cords-server-linux-x86_64-{version}.tar.gz",
+    "linux-server-arm64": "cords-server-linux-aarch64-{version}.tar.gz",
+    "windows-client-amd64": "cords-client-windows-x86_64-{version}.zip",
+    "windows-client-arm64": "cords-client-windows-aarch64-{version}.zip",
+    "macos-client-universal": "cords-client-macos-universal-{version}.dmg",
+    "macos-client-arm64": "cords-client-macos-aarch64-{version}.pkg",
+    "macos-server-arm64": "cords-server-macos-aarch64-{version}.tar.gz"
+  },
+  "oci_platforms": ["linux/amd64", "linux/arm64"],
+  "oci_destinations": [
+    "pubcode.archuser.org/firebadnofire/cords",
+    "ghcr.io/firebadnofire/cords"
+  ],
+  "signing_identity_file": ".forgejo/release-keys/identity.json"
+}

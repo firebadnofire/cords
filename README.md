@@ -95,13 +95,20 @@ npm test
 
 ## Releases and containers
 
-Forgejo Actions builds signed client packages for Linux, Windows, and macOS,
-Linux server tarballs for x86_64 and ARM64, and a Cosign-signed
-multi-architecture server image. Forgejo is canonical; only after its release
-succeeds does the workflow mirror source, release files, and the container to
-`firebadnofire/cords` on GitHub. See
-`.forgejo/docs/release-workflow.md` for runner assignments, required secrets,
-artifact names, signature verification, and the hosted-validation boundary.
+The sole canonical repository is `firebadnofire/cords` on Forgejo. CI/release
+definitions, package scripts, public signing pins and policies live in this monorepo.
+Privileged publication is disabled while execution isolation, protected-tag
+authorization and authenticated artifact provenance are validated. The current
+release workflow is an activation stop, not a passing release gate.
+
+The selected release targets remain Linux client/server, native macOS DMG/PKG/server,
+Windows cross-builds and multi-architecture OCI images. The proposed external
+executor verifies mandatory tests and exact authorized source identity before
+GPG `.asc` file signing, Cosign signing in Forgejo/GHCR, and verified GitHub mirroring.
+Publication credentials belong outside ordinary Actions secret scope. See the
+[implementation plan](docs/ci-monorepo-plan.md),
+[executor contract](docs/external-release-executor.md) and
+[validation evidence](docs/reports/ci-rework.md). Existing release history is preserved.
 
 The public GitHub container is pulled with:
 

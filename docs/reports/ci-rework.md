@@ -626,3 +626,20 @@ behind. Temporary local shell diagnostics are retained as acceptance evidence.
 This validates local OpenPGP smart-card Git signing and canonical Forgejo SSH
 push/fetch/delete, not Forgejo runner isolation, production CI-secret correspondence,
 Cosign publishing, native Cords hardware providers or an authorized release.
+
+The signed review branch was subsequently published in canonical Cords, retaining
+the implementation and smoke report (initial review HEAD
+`302a80e66dea20b36e8779751ec14e0dbe917442`). Commands:
+
+```powershell
+git ls-remote origin refs/heads/codex/ci-monorepo-build-gates
+git -c push.followTags=false push origin HEAD:refs/heads/codex/ci-monorepo-build-gates
+git ls-remote origin refs/heads/codex/ci-monorepo-build-gates
+```
+
+PASS: absent review ref before creation; exact verified HEAD after push. No force
+push, main merge or release tag. Browser code-page verification shows the named
+review branch and the signed commit identity. The temporary smoke ref stays deleted;
+the review branch is the useful deliverable. README's old active-release claim is
+updated to the current disabled-publication/monorepo contract. Source/runtime and
+existing releases remain unchanged.

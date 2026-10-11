@@ -1,7 +1,22 @@
 <script lang="ts">
   import { LockKeyhole, Send } from '@lucide/svelte';
-  import Avatar from './Avatar.svelte';
-  import type { Channel, Message, Preferences, Status } from '../model';
+  import RemoteAvatar from './RemoteAvatar.svelte';
+  import {
+    memberName,
+    memberPicture,
+    type Contact,
+    type Channel,
+    type Message,
+    type Preferences,
+    type Status,
+  } from '../model';
+  export let contacts: Contact[] = [];
+  function sender(id: string) {
+    return contacts.find((contact) => contact.authorization.value.device_id === id);
+  }
+  function name(id: string) {
+    return id === status.device_id ? preferences.displayName : memberName(sender(id), id);
+  }
   export let section: 'server' | 'dms';
   export let channel: Channel | undefined;
   export let messages: Message[];
@@ -16,7 +31,9 @@
   const messageWindow = 500;
   let visibleLimit = messageWindow;
   $: filtered = messages.filter((message) =>
-    `${message.sender_device_id} ${message.body}`.toLowerCase().includes(query.toLowerCase()),
+    `${name(message.sender_device_id)} ${message.sender_device_id} ${message.body}`
+      .toLowerCase()
+      .includes(query.toLowerCase()),
   );
   $: visible = filtered.slice(-visibleLimit);
 </script>
@@ -66,19 +83,23 @@
       {/if}
       {#each visible as message (message.message_id)}
         <article class="cords-message">
-          <Avatar
-            value={message.sender_device_id === status.device_id ? preferences.avatar : undefined}
+          <RemoteAvatar
+            value={message.sender_device_id === status.device_id
+              ? preferences.avatar
+              : memberPicture(sender(message.sender_device_id))}
             text={message.sender_device_id === status.device_id
               ? preferences.displayName.slice(0, 2)
-              : message.sender_device_id.slice(-2)}
+              : name(message.sender_device_id).slice(0, 2)}
             size={42}
           />
           <div class="message-content">
             <div class="message-meta">
-              <strong class:message-own={message.sender_device_id === status.device_id}
+              <strong
+                title={message.sender_device_id}
+                class:message-own={message.sender_device_id === status.device_id}
                 >{message.sender_device_id === status.device_id
                   ? preferences.displayName
-                  : message.sender_device_id}</strong
+                  : name(message.sender_device_id)}</strong
               ><time datetime={new Date(message.client_timestamp * 1000).toISOString()}
                 >{new Date(message.client_timestamp * 1000).toLocaleString()}</time
               >

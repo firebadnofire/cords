@@ -1,39 +1,37 @@
-# `cords-ui` to Svelte integration record
+# Production desktop UI integration record
 
-Updated October 4, 2026. The React `cords-ui` sibling is the visual and interaction reference. The production client remains Svelte inside the existing Tauri application; no React runtime, iframe, second client, fixture backend, or parallel application-state architecture was added.
+Updated October 10, 2026. The production interface is maintained directly in Svelte
+inside the existing Tauri application. Its current layout remains intact; future
+polish follows production behavior and user needs rather than an external reference.
+The native client-core remains the authority for identity, messaging and persistence.
 
-## Surface mapping
+## Production surfaces
 
-| Donor surface | Production Svelte surface | State source | Initial availability |
-| --- | --- | --- | --- |
-| App frame and `CordsRail` | `App.svelte`, `CordsRail.svelte` | Native status plus encrypted local preferences | Real pinned server, Jewel, settings and DM navigation; multi-server switching remains unavailable |
-| `ConversationSidebar` and `CordsHeader` | Matching Svelte components | Real channels, route, origin and local search | Channel selection, create, refresh and administration work; DM creation and notification actions are development-marked |
-| `ConversationView` | `ConversationView.svelte` | Real decrypted local history and native send command | Sending, search and copy actions work; replies, edits, deletion, reports and attachments are development-marked |
-| `ConversationDetails` | `ConversationDetails.svelte` | Real server pin, MLS epoch/roster and KeyPackage commands | Add/remove devices and publish work where authorized; retention remains development-marked |
-| `IdentityPanel` | `IdentityPanel.svelte` | Real account/device/session/connection state | Functional and never receives private key material |
-| `AddServerDialog` | Donor-derived connection/trust dialog | Existing trust and authenticate commands | URL-only signed discovery, initial pin and authentication work; the core still permits one pinned server per local account vault |
-| Settings overlay and preference pages | `Settings.svelte` | Encrypted local preferences plus public identity/session views | Profile/Jewel image, theme, compact mode and reduced motion work; all other future controls remain visible and lime-marked |
-| Identity and recovery pages | Settings identity/recovery sections | Real current authorization, generation and revocation state | Current-device revocation works; root unlock, enrollment and recovery are development-marked and do not simulate crypto |
-| Server administration | `Admin.svelte`, `AdminUnavailable.svelte` | Real contacts, capabilities, channels, origin and pin | Overview, contact search, channel creation/selection and real read-only state work; first-owner claim occurs before membership in the connection dialog; unavailable mutations remain visible and marked |
-| Dialogs, menus and donor primitives | Native `<dialog>`, semantic menus and shared CSS primitives | Local UI state | Navigation and safe copy actions work; inactive actions use one semantic development state |
-| Donor fixtures | Not imported | None | Empty/unavailable states replace fake membership, owner, presence, audit, moderation and integration claims |
+| Surface | Source of truth | Current behavior |
+| --- | --- | --- |
+| App frame, server rail and sidebar | Native status, pinned server records, verified channels and encrypted local preferences | Multiple server selection, leave/archive menus, channel selection/creation and administration |
+| Conversation | Verified signed public messages or locally decrypted MLS history | Sending, local search and copy actions; other unsupported message actions remain explicitly disabled |
+| Conversation details | Verified member directory, MLS roster, server pin and KeyPackage commands | Named device additions/removals where authorized; public-channel access explanation |
+| Identity and account picker | Public device identity and filtered local registry presentation | Independent local account vaults, password unlock, lock/switch/sign-out and authenticated account removal |
+| Settings | Encrypted local preferences and public identity/session views | Profile/Jewel image and crop, nickname, theme, compact mode, motion, locked presentation and inactivity policies |
+| Server administration | Verified contacts, signed admission requests, capabilities and durable owner state | Admission decisions, channel creation/replacement/retirement and existing ownership lifecycle workflows |
+| Archives | Sealed local channel metadata and received history | Partial read-only channel archives; no complete backup or automatic attachment recovery claim |
 
-The complete donor navigation remains present: account, identity/devices, profile image, recovery, Jewel, server trust, local history, appearance, accessibility, notifications, privacy, blocked users, connections, devices, sessions, security and advanced settings; plus server overview, members, roles, channels, invites, moderation, audit log, notifications, integrations, advanced and ownership.
-
-The locked shell is now identity-centric. It lists only device-registry presentation metadata,
-reveals a password field for the selected account, and opens one independent native vault. Add
-Account requires a confirmed 12-character password and presents an overridable local weak-password
-warning. Lock, Switch Account, Sign Out, and authenticated Remove Account From Device have separate
-native paths. Inactivity and suspend-gap policies drop native client state and connections; reliable
-OS-session-lock events still require per-platform integration and packaged validation.
+Unsupported actions use explicit unavailable states rather than fixture data.
+Key material, bearer tokens and MLS state remain in the native core. Reliable
+OS-session-lock integration still requires per-platform implementation and packaged
+validation; inactivity and suspend-gap policies use the existing native watchdog.
 
 ## Development-only controls
 
 `--dev-unimplemented: #b7ff4a` and `.dev-unimplemented` are the single semantic treatment for visible controls whose intended operation is unavailable. The state changes text and icon foreground only, retains normal dark-surface backgrounds, sets the control inactive, exposes `aria-disabled`, and uses `Not implemented yet` as its tooltip. It must not be used for a temporarily busy real action or an authorization-denied action.
 
-Currently marked groups include DM creation, multi-server behavior beyond the pinned server, replies/edits/deletes/reactions/attachments, notification policy, role and capability mutation, server metadata editing, categories/topics/channel deletion, invite issuance, moderation, audit filtering, integrations, ownership transfer/deletion, device enrollment, account-root interaction, recovery, blocking and exports. These controls must connect to authoritative native/server APIs before the marker is removed.
-
-No donor sample identity, conversation, presence, role, owner, invite, moderation count, audit event or integration appears as connected state. The invite URL is retained only as a visibly labeled format example.
+Currently marked groups include DM creation, replies/edits/deletes/reactions/attachments,
+notification policy, role/capability mutation, server metadata editing, categories/topics,
+invite issuance, moderation, audit filtering, integrations, device enrollment, recovery,
+blocking and exports. Each action must connect to authoritative native/server APIs
+before its unavailable marker is removed. No fixture identity, presence, role or
+moderation result is presented as connected state.
 
 ## Security and platform boundary
 
@@ -56,7 +54,7 @@ Measurements are regression guards, not cross-platform benchmarks.
 
 The dedicated locked shell rendered immediately in the local browser; both native debug and release processes remained responsive. The Windows release build also produced a 7.30 MiB MSI and 5.07 MiB NSIS installer. A 1,200-message component workload initially renders only the newest 500 messages: approximately 431 ms, 8,018 DOM nodes and 44.2 MiB test-process heap growth under jsdom on this host. Expanding by another 500 messages took approximately 283 ms. These figures include jsdom/test overhead and are not native WebView frame timings.
 
-History rendering is deliberately bounded to 500 messages with an explicit “show earlier” action. This prevents unbounded message count from immediately becoming the dominant DOM cost while preserving the donor timeline. Virtualization is not required for the current milestone; revisit it when route pagination exists or target-native profiling shows visible scroll/frame degradation. A real synchronized long-conversation WebView scroll trace was not available in the automated local environment, so target-native scrolling remains a validation gap rather than a claimed pass.
+History rendering is deliberately bounded to 500 messages with an explicit “show earlier” action. This prevents unbounded message count from immediately becoming the dominant DOM cost while preserving the timeline. Virtualization is not required for the current milestone; revisit it when route pagination exists or target-native profiling shows visible scroll/frame degradation. A real synchronized long-conversation WebView scroll trace was not available in the automated local environment, so target-native scrolling remains a validation gap rather than a claimed pass.
 
 Known hotspots and follow-up work:
 
@@ -67,4 +65,28 @@ Known hotspots and follow-up work:
 
 ## Validation contract
 
-Frontend formatting, Svelte diagnostics, lint, unit/security/performance tests and production build must pass. Rust formatting, Clippy and relevant client tests must pass without changing the Tauri command contract. Browser rendering, native debug launch and packaged build are separate evidence; neither frontend compilation nor archive inspection alone proves target-native interaction or real-server messaging.
+Frontend formatting, Svelte diagnostics, lint, unit/security/performance tests and production build must pass. Rust formatting, Clippy and relevant client tests must pass while preserving the narrow Tauri security boundary. Browser rendering, native debug launch and packaged build are separate evidence; neither frontend compilation nor archive inspection alone proves target-native interaction or real-server messaging.
+
+
+## Profile and membership polish — October 10, 2026
+
+Messages and member lists resolve nicknames and pictures from native-verified signed
+member contacts. Device IDs remain available for disambiguation; nicknames remain
+self-declared presentation labels, not proofs of global identity. Profile edits
+invalidate cached sessions so subsequent device-proof renewal publishes the updated
+signed card. Offline local preference saves remain possible. Other clients refresh
+the directory during synchronization and retain verified presentation cards sealed
+in their vault. HTTPS image failures fall back to initials with an unavailable hint.
+
+Locked-picker nickname hiding uses numbered labels and a neutral icon rather than
+initials from the hidden name. Genericize hides pictures only on locked surfaces.
+Neither option changes the unlocked nickname or the shared profile.
+
+Encrypted channel details offer named server-device selection, with device suffixes
+and explicit instructions to join the server and publish a KeyPackage. Actual MLS
+addition still requires authorization and a usable key package. Public channels
+explain admitted-member access and do not suggest an MLS invitation is required.
+
+Leave server includes a separate confirmed local-only removal option, available
+even while the server returns an HTTP failure. It does not claim remote membership
+removal. Previously retained channel archives survive active cache removal.

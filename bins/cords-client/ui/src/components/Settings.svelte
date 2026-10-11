@@ -475,14 +475,15 @@
         <label class="toggle-row"
           ><span
             >Genericize Mode<small
-              >Use local initials instead of remotely sourced avatars on locked surfaces.</small
+              >Hide profile pictures on the locked account picker. Your shared profile is unchanged.</small
             ></span
           ><input type="checkbox" bind:checked={draft.genericize} /></label
         >
         <label class="toggle-row"
           ><span
             >Hide nickname while locked<small
-              >Show a numbered local account label on the account picker.</small
+              >Show a numbered local account label while locked. Your nickname after unlock and your
+              shared profile are unchanged.</small
             ></span
           ><input type="checkbox" bind:checked={draft.hideNicknameOnLock} /></label
         >

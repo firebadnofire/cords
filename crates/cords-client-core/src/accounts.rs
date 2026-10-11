@@ -299,12 +299,12 @@ impl AccountRegistry {
             "weak password requires explicit confirmation"
         );
         let current = current_password.map(|value| Zeroizing::new(value.as_bytes().to_vec()));
-        let legacy = Client::open(
+        let legacy = Box::pin(Client::open(
             &self.root,
             &self.migrations,
             current.as_deref().map(Vec::as_slice),
             self.ca.as_deref(),
-        )
+        ))
         .await?;
         let expected = legacy.status();
         legacy.shutdown().await;
@@ -313,12 +313,12 @@ impl AccountRegistry {
         std::fs::create_dir_all(&directory)?;
         std::fs::copy(self.root.join("client.db"), directory.join("client.db"))
             .context("copy legacy vault")?;
-        let mut copied = match Client::open(
+        let mut copied = match Box::pin(Client::open(
             &directory,
             &self.migrations,
             current.as_deref().map(Vec::as_slice),
             self.ca.as_deref(),
-        )
+        ))
         .await
         {
             Ok(client) => client,
@@ -329,12 +329,12 @@ impl AccountRegistry {
         };
         copied.rewrap_password(new_password.as_bytes()).await?;
         copied.shutdown().await;
-        let verified = Client::open_existing(
+        let verified = Box::pin(Client::open_existing(
             &directory,
             &self.migrations,
             new_password.as_bytes(),
             self.ca.as_deref(),
-        )
+        ))
         .await?;
         ensure!(
             verified.status().account_id == expected.account_id

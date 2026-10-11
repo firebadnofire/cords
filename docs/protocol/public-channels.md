@@ -14,8 +14,11 @@ duplicate names never merge routes.
 Channel views include the permanent mode, signed `identity` and signed `transition`.
 Identity binds version, server ID, channel ID, name, creator device, mode and
 creation time. Transition binds version, server ID, channel ID, retired flag,
-monotonic generation and optional signed succession. Generation is 0 for a new
-ordinary active route, 1 for an active successor and 2 for retirement. Established
+monotonic generation and signed outgoing `succession` and immutable incoming `predecessor_succession`.
+Generation is 0 for a new ordinary active route, 2 for an active successor and
+3 for retirement. This advances the previous schema 11 lifecycle representation
+without discarding either independently signed relationship. A successor may
+itself have a successor. Established
 retirement/succession is terminal. Local acknowledgement/archive UI fields are
 computed by client-core and are never trusted from HTTP responses.
 
@@ -68,8 +71,8 @@ to open a public successor does not bypass the durable send acknowledgement gate
 
 ## Local archive semantics
 
-Authenticated retirement snapshots eligible received history into the existing
-sealed vault. Archives include the original identity/mode and succession record,
+Authenticated retirement retains eligible received history in the existing
+sealed cache and archive metadata in the vault. Archives include the original identity/mode and succession record,
 are partial and read-only, and remain available after server removal. No complete
 history, physical secure erasure, independent cryptographic transcript backup,
 server/DM history backup or automatic attachment recovery is claimed. See

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { clearRemoteImages } from './remoteImages';
   import ConfidentialitySelect from './components/ConfidentialitySelect.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { LockKeyhole } from '@lucide/svelte';
@@ -49,7 +50,12 @@
   let route = '';
   let section: 'server' | 'dms' = 'server';
   let overlay: 'connect' | 'settings' | 'admin' | 'create' | 'recovery' | 'archives' | null = null;
-  let confirm: { title: string; description: string; execute: () => Promise<void> } | null = null;
+  let confirm: {
+    title: string;
+    description: string;
+    execute: () => Promise<void>;
+    localRemove?: () => void;
+  } | null = null;
   let origin = '';
   let removalPassword = '';
   let removingAccount = false;
@@ -94,6 +100,7 @@
       try {
         await action('authenticate');
         channels = await action<Channel[]>('channels');
+        contacts = await action<Contact[]>('members');
       } catch (caught) {
         if (!/CORDS_APPROVAL_PENDING|CORDS_JOIN_REJECTED/.test(String(caught))) throw caught;
         error = '';
@@ -103,6 +110,7 @@
     } else overlay = 'connect';
   }
   function clearSensitiveUi() {
+    clearRemoteImages();
     status = null;
     identity = null;
     prefs = defaults();
@@ -111,6 +119,10 @@
     contacts = [];
     membershipRequests = [];
     messages = [];
+    archives = [];
+    archiveMessages = [];
+    archiveChannel = undefined;
+    confidentialityMode = 'encrypted';
     route = '';
     body = '';
     drafts = {};
@@ -174,6 +186,8 @@
       }
       identity = view.identity;
       messages = view.messages;
+      if (view.channels) channels = view.channels;
+      if (view.contacts) contacts = view.contacts;
       connected = view.connected;
       connectionError = view.error ?? '';
     } catch (caught) {
@@ -241,6 +255,7 @@
       } else if (!status.burned && status.ownership_state === 'CLAIMED') {
         status = await action<Status>('authenticate');
         channels = await action<Channel[]>('channels');
+        contacts = await action<Contact[]>('members');
       }
       servers = await action<ServerListing[]>('servers');
     });
@@ -263,7 +278,8 @@
     confirm = {
       title: 'Remove server and erase its data?',
       description:
-        'Cords will send a root-signed departure, wait for a verified server confirmation, then erase this server’s cached messages, MLS state, and local server data.',
+        'Cords will send a root-signed departure, wait for a verified server confirmation, then erase this server’s cached messages, MLS state, and local server data. Retained channel archives remain.',
+      localRemove: () => removeServerLocally(serverId),
       execute: async () => {
         try {
           await action('remove_server', { server_id: serverId, local_only: false });
@@ -274,13 +290,13 @@
         } catch (caught) {
           const message = String(caught);
           if (
-            /CORDS_SERVER_KEY_CHANGED|connect|timeout|timed out|dns|network|HTTP 404|HTTP 410/i.test(
+            /CORDS_SERVER_KEY_CHANGED|connect|timeout|timed out|dns|network|HTTP 4\d\d|HTTP 5\d\d/i.test(
               message,
             )
           ) {
             confirm = {
               title: 'Delete only the local server data?',
-              description: `The signed departure could not be verified: ${message}. Local deletion will erase cached messages and MLS state, but remote membership removal was NOT verified.`,
+              description: `The signed departure could not be verified: ${message}. Local deletion will erase active cached messages and MLS state. Retained channel archives remain. Remote membership removal was NOT verified.`,
               execute: async () => {
                 await action('remove_server', { server_id: serverId, local_only: true });
                 channels = [];
@@ -292,6 +308,22 @@
             };
           } else throw caught;
         }
+      },
+    };
+  }
+  function removeServerLocally(serverId: string) {
+    confirm = {
+      title: 'Remove this server from this device only?',
+      description:
+        'Erase active cached messages and MLS state without contacting the server. Retained channel archives remain. Remote membership removal will NOT be verified.',
+      execute: async () => {
+        await action('remove_server', { server_id: serverId, local_only: true });
+        channels = [];
+        contacts = [];
+        route = '';
+        messages = [];
+        servers = await action<ServerListing[]>('servers');
+        error = 'Server removed locally. Remote membership removal was not verified.';
       },
     };
   }
@@ -351,6 +383,7 @@
     const id = await action<string>('create', { name: channelName, confidentiality_mode: mode });
     channels = await action<Channel[]>('channels');
     route = id;
+    details = true;
     section = 'server';
     body = '';
   }
@@ -373,6 +406,7 @@
     const normalized = preferences(value);
     await action('preferences', { value: normalized });
     prefs = normalized;
+    await listAccounts();
   }
   async function claimOwnership(code: string) {
     status = await action<Status>('claim_ownership', { code });
@@ -469,7 +503,10 @@
           {section}
           {busy}
           selectChannel={(id) => void selectChannel(id)}
-          createChannel={() => (overlay = 'create')}
+          createChannel={() => {
+            confidentialityMode = 'encrypted';
+            overlay = 'create';
+          }}
           openAdmin={() => void openAdmin()}
           openConnection={() => (overlay = 'connect')}
           leaveServer={() => status && removeServer(status.server_id)}
@@ -531,8 +568,9 @@
               overlay = 'archives';
             })}>Archives · locally retained history</button
         >
-        {#if selected?.transition?.value.succession}
-          {@const succession = selected.transition.value.succession.value}
+        {#if selected?.transition?.value.succession || selected?.transition?.value.predecessor_succession}
+          {@const succession = (selected.transition?.value.succession ??
+            selected.transition?.value.predecessor_succession)!.value}
           <div class="approval-notice" role="status">
             <strong
               >Channel replaced: #{succession.predecessor.value.name} → #{succession.name}</strong
@@ -571,6 +609,7 @@
           {section}
           channel={selected}
           {messages}
+          {contacts}
           {status}
           preferences={prefs}
           {query}
@@ -593,6 +632,7 @@
           channel={selected}
           {status}
           {manager}
+          {contacts}
           {busy}
           close={() => (details = false)}
           {removeDevice}
@@ -851,7 +891,10 @@
           <p>{confirm.description}</p>
           {#if error}<p class="error" role="alert">{error}</p>{/if}
           <div class="actions">
-            <button disabled={busy} on:click={() => (confirm = null)}>Cancel</button><button
+            <button disabled={busy} on:click={() => (confirm = null)}>Cancel</button>
+            {#if confirm.localRemove}<button disabled={busy} on:click={confirm.localRemove}
+                >Remove locally…</button
+              >{/if}<button
               class="danger"
               disabled={busy}
               on:click={() =>

@@ -1242,10 +1242,12 @@ async fn create_channel(
 async fn channel_view(s: &Service, route: &str) -> Result<Channel> {
     let mut tx = s.0.store.pool().begin().await?;
     let mut view = channel_view_in(&mut tx, route).await?;
-    let row = sqlx::query("SELECT created_at,retired,succession FROM channels WHERE id=$1")
-        .bind(route)
-        .fetch_one(&mut *tx)
-        .await?;
+    let row = sqlx::query(
+        "SELECT created_at,retired,succession,predecessor_succession FROM channels WHERE id=$1",
+    )
+    .bind(route)
+    .fetch_one(&mut *tx)
+    .await?;
     view.identity = Some(s.sign(ChannelIdentity {
         version: 1,
         server_id: s.0.identity.server_id(),
@@ -1259,19 +1261,26 @@ async fn channel_view(s: &Service, route: &str) -> Result<Channel> {
         .try_get::<Option<String>, _>("succession")?
         .map(|v| parse(&v))
         .transpose()?;
+    let predecessor_succession = row
+        .try_get::<Option<String>, _>("predecessor_succession")?
+        .map(|v| parse(&v))
+        .transpose()?;
     let retired = row.try_get("retired")?;
-    view.transition = Some(s.sign(ChannelTransition {
+    view.transition = Some(Box::new(s.sign(ChannelTransition {
         version: 1,
         server_id: s.0.identity.server_id(),
         channel_id: route.into(),
         retired,
         generation: if retired {
+            3
+        } else if predecessor_succession.is_some() {
             2
         } else {
-            u64::from(succession.is_some())
+            0
         },
         succession,
-    })?);
+        predecessor_succession,
+    })?));
     tx.commit().await?;
     Ok(view)
 }
@@ -1343,7 +1352,7 @@ async fn replace_channel(
         return Err(conflict());
     }
     let evidence = json(&request.record)?;
-    sqlx::query("INSERT INTO channels(id,name,creator,confidentiality_mode,created_at,succession,replaces_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7)")
+    sqlx::query("INSERT INTO channels(id,name,creator,confidentiality_mode,created_at,predecessor_succession,replaces_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(&v.successor_channel_id).bind(&v.name).bind(&member.value.device_id)
         .bind(v.confidentiality_mode.as_str()).bind(int(now()?)?).bind(&evidence).bind(&route)
         .execute(&mut *tx).await?;
@@ -1386,6 +1395,15 @@ async fn retire_channel(
     }
     s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
         .await?;
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM roster_operations WHERE channel_id=$1 AND NOT complete)",
+    )
+    .bind(&route)
+    .fetch_one(&mut *tx)
+    .await?;
+    if pending {
+        return Err(conflict());
+    }
     sqlx::query("UPDATE channels SET retired=TRUE WHERE id=$1")
         .bind(&route)
         .execute(&mut *tx)

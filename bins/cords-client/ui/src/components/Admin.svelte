@@ -16,6 +16,8 @@
   import RemoteAvatar from './RemoteAvatar.svelte';
   import {
     picture,
+    memberName,
+    memberPicture,
     type Channel,
     type Contact,
     type Identity,
@@ -86,6 +88,7 @@
     error = '';
     try {
       await create(name, mode);
+      mode = 'encrypted';
       name = '';
     } catch (caught) {
       error = String(caught);
@@ -283,18 +286,20 @@
               <span>Device</span><span>Account</span><span>Generation</span><span>Status</span><span
               ></span>
             </div>
-            {#each contacts.filter((contact) => JSON.stringify(contact.authorization.value)
-                .toLowerCase()
-                .includes(query.toLowerCase())) as contact (contact.authorization.value.device_id)}<button
+            {#each contacts.filter( (contact) => JSON.stringify( [contact.authorization.value, contact.user_card?.value.nickname], )
+                  .toLowerCase()
+                  .includes(query.toLowerCase()), ) as contact (contact.authorization.value.device_id)}<button
                 class="member-table-row"
                 on:click={() => (selectedContact = contact)}
                 ><div class="member-identity">
-                  <span class="member-avatar"
-                    >{contact.authorization.value.device_id.slice(-2)}</span
+                  <RemoteAvatar
+                    value={memberPicture(contact)}
+                    text={memberName(contact, '?').slice(0, 2)}
+                    size={32}
+                  />
                   ><span
-                    ><strong>{contact.authorization.value.device_id}</strong><small
-                      >Authorized device</small
-                    ></span
+                    ><strong>{memberName(contact, contact.authorization.value.device_id)}</strong
+                    ><small>{contact.authorization.value.device_id}</small></span
                   >
                 </div>
                 <code>{contact.authorization.value.account_id}</code><span
@@ -401,7 +406,11 @@
                 </h3>
                 {#each channels as item (item.channel_id)}<button
                     class:active={channel?.channel_id === item.channel_id}
-                    on:click={() => (selectedChannel = item.channel_id)}
+                    on:click={() => {
+                      selectedChannel = item.channel_id;
+                      confirmRetirement = false;
+                      replacementName = '';
+                    }}
                     ><Hash size={16} /><span>{item.name}</span><MoreHorizontal size={15} /></button
                   >{/each}
               </section>
@@ -435,6 +444,10 @@
                   Old history and encryption keys are never transferred.
                 </p>
                 <h3 class="section-label"><Users size={15} />Device membership</h3>
+                {#if channel.confidentiality_mode === 'public'}<p>
+                    Public access follows the server's channel.read and channel.write capabilities.
+                    No MLS membership or rekeying is required.
+                  </p>{/if}
                 {#if channel.confidentiality_mode !== 'public' && !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}
                   <p>
                     You can see this channel, but have not been added to its encrypted conversation.

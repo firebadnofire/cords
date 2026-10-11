@@ -63,10 +63,10 @@ describe('channel confidentiality', () => {
           send: vi.fn(),
         },
       });
-      expect(target.querySelector<HTMLTextAreaElement>('textarea')!.disabled).toBe(true);
+      expect(target.querySelector<HTMLInputElement>('#message-draft')!.disabled).toBe(true);
       expect(target.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
       expect(target.textContent).toContain('no end-to-end encryption');
-      expect(target.textContent).toContain('read, copy, and retain');
+      expect(target.textContent?.replace(/\s+/g, ' ')).toContain('read, copy, and retain');
       await unmount(component);
     },
   );

@@ -1,11 +1,13 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { KeyRound, Plus, ShieldAlert } from '@lucide/svelte';
+  import { KeyRound, Plus, ShieldAlert, UserRound } from '@lucide/svelte';
 
   type LocalAccount = {
     account_id: string;
     nickname: string;
     avatar_data: string;
+    hide_nickname_on_lock?: boolean;
+    genericize?: boolean;
   };
   type Assessment = { weak: boolean; reasons: string[] };
 
@@ -122,7 +124,7 @@
     <p class="eyebrow">Portable identity</p>
     <h1 id="account-picker-title">Who’s using Cords?</h1>
     <p class="picker-intro">
-      Choose a local identity. Private account details remain encrypted until unlock.
+      Choose a local account to unlock. Names and pictures shown here are local picker labels.
     </p>
 
     {#if mode === 'pick'}
@@ -137,9 +139,12 @@
               on:click={() => choose(account.account_id)}
             >
               <span class="picker-avatar">
-                {#if account.avatar_data}<img src={account.avatar_data} alt="" />{:else}<b
-                    >{initials(account.nickname)}</b
-                  >{/if}
+                {#if account.avatar_data}<img
+                    src={account.avatar_data}
+                    alt=""
+                  />{:else if account.hide_nickname_on_lock || account.genericize}<UserRound
+                    size={38}
+                  />{:else}<b>{initials(account.nickname)}</b>{/if}
               </span>
               <strong>{account.nickname}</strong>
             </button>

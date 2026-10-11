@@ -30,7 +30,7 @@ identity substitution, reactivation or lifecycle rollback raise **Channel Identi
 Conflict** and cannot overwrite trusted state. Missing signed identity metadata
 requires upgrading the server; it never implies a public route.
 
-PostgreSQL schema 11 retains all channel rows as durable tombstones, rejects
+PostgreSQL schemas 11–12 retain all channel rows as durable tombstones, rejects
 changes to IDs/modes and established identity fields, and prevents MLS state on
 public channels. Existing rows migrate as encrypted without changing IDs, epochs,
 keys or ciphertext. The legacy creation timestamp is explicitly zero (unknown).
@@ -64,8 +64,9 @@ the UI exposes separate replacement, retirement, warning and Archives controls.
 
 ## Archives and limitations
 
-On observing authenticated retirement, each device snapshots only previously
-received cached messages into its existing sealed durable vault state. Identity,
+On observing authenticated retirement, each device retains only previously
+received messages in the existing sealed cache and records archive status in
+its sealed durable vault state. Bodies are not copied into the main state blob. Identity,
 server, name, mode, original public roster/group binding where retained, signed
 succession and retirement state accompany the partial archive. Retention does
 not fetch missing history or decrypt/re-publish old messages. Archive copies and
@@ -80,8 +81,8 @@ retained per-message MLS cryptographic transcripts are deferred. Archive UI says
 partial local history rather than claiming complete or independently re-verifiable
 history. Current decrypted cache bodies retain the original validated device and
 account IDs; signed channel/transition metadata preserves the confidentiality
-record. Public relay signatures remain in the sealed active relay cache until
-server removal purges it. Archives do not acquire old group secrets or attachment keys.
+record. Available public relay signatures remain in the sealed relay cache;
+server removal preserves cache rows belonging to retained channel archives. Archives do not acquire old group secrets or attachment keys.
 
 Signatures prove authorship, not confidentiality or honest server availability.
 Public servers may read, index, copy, search or retain bodies; search/index APIs

@@ -4,7 +4,7 @@ use cords_client_core::{
     accounts::{AccountRegistry, AccountSummary, PasswordAssessment, assess_password},
     client::{Client, Notification, Status},
 };
-use cords_protocol::messaging::Message;
+use cords_protocol::messaging::{Channel, Contact, Message};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -389,6 +389,8 @@ pub(crate) struct View {
     connected: bool,
     error: Option<String>,
     messages: Vec<Message>,
+    channels: Vec<Channel>,
+    contacts: Vec<Contact>,
     identity: Value,
     preferences: Value,
 }
@@ -455,7 +457,7 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
         }
         Action::ChannelArchives => serde_json::to_value(client.channel_archives())?,
         Action::ArchiveHistory { server_id, route } => {
-            serde_json::to_value(client.archived_channel_history(&server_id, &route)?)?
+            serde_json::to_value(client.archived_channel_history(&server_id, &route).await?)?
         }
         Action::Add { route, device } => {
             client.add_member(&route, &device).await?;
@@ -596,6 +598,8 @@ pub(crate) async fn conversation_view(
         None => Vec::new(),
     };
     Ok(View {
+        channels: client.cached_channels(),
+        contacts: client.cached_members(),
         status: client.status(),
         connected: runtime.connected,
         error: runtime.error.clone(),

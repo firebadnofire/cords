@@ -1,6 +1,14 @@
 <script lang="ts">
   import { Fingerprint, HardDrive, KeyRound, LockKeyhole, Server, Users, X } from '@lucide/svelte';
-  import type { Channel, Status } from '../model';
+  import { memberName, memberPicture, type Contact, type Channel, type Status } from '../model';
+  import RemoteAvatar from './RemoteAvatar.svelte';
+  export let contacts: Contact[] = [];
+  $: candidates = contacts.filter(
+    (contact) =>
+      !channel?.members.some(
+        (member) => member.authorization.value.device_id === contact.authorization.value.device_id,
+      ),
+  );
   export let channel: Channel | undefined;
   export let status: Status;
   export let manager: boolean;
@@ -25,7 +33,13 @@
         encrypted with MLS. The server cannot read message contents.{/if} A different confidentiality
       mode requires a new replacement channel.
     </p>
-    {#if channel}<span class="detail-chip">Epoch {channel.epoch}</span>{/if}
+    {#if channel && channel.confidentiality_mode !== 'public'}<span class="detail-chip"
+        >Epoch {channel.epoch}</span
+      >{/if}
+    {#if channel?.confidentiality_mode === 'public'}<p>
+        All admitted server members with read/write permission can participate. No MLS invitation is
+        needed.
+      </p>{/if}
   </section>
   <section class="detail-section">
     <h3><Server size={16} /> Relay server</h3>
@@ -39,12 +53,22 @@
   {#if channel && channel.confidentiality_mode !== 'public' && !channel.locally_archived}<section
       class="detail-section"
     >
-      <h3><Users size={16} /> MLS devices</h3>
+      <h3><Users size={16} /> Channel members</h3>
+      <p>
+        Each installation joins separately. A new member must join this server and publish a
+        KeyPackage first.
+      </p>
       {#each channel.members as member (member.authorization.value.device_id)}<div
           class="detail-person"
         >
           <span title={member.authorization.value.device_id}
-            >{member.authorization.value.device_id.slice(-12)}</span
+            >{memberName(
+              contacts.find(
+                (contact) =>
+                  contact.authorization.value.device_id === member.authorization.value.device_id,
+              ),
+              member.authorization.value.device_id.slice(-12),
+            )}</span
           >{#if manager && member.authorization.value.device_id !== status.device_id}<button
               class="danger"
               disabled={busy}
@@ -57,15 +81,34 @@
             device = '';
           }}
         >
-          <label>Device ID<input bind:value={device} required /></label><button disabled={busy}
-            >Approve MLS addition</button
+          <label
+            >Add a member<select bind:value={device} required>
+              <option value="" disabled>Choose a server member</option>
+              {#each candidates as contact (contact.authorization.value.device_id)}<option
+                  value={contact.authorization.value.device_id}
+                  >{memberName(contact, 'Unnamed member')} · {contact.authorization.value.device_id.slice(
+                    -8,
+                  )}</option
+                >{/each}
+            </select></label
           >
+          {#if device}{@const candidate = candidates.find(
+              (contact) => contact.authorization.value.device_id === device,
+            )}<RemoteAvatar
+              value={memberPicture(candidate)}
+              text={memberName(candidate, '?').slice(0, 2)}
+              size={28}
+            /><small>Device {device}</small>{/if}
+          <button disabled={busy || !device}>Add to encrypted channel</button>
         </form>{/if}
     </section>{/if}
   <section class="detail-section">
-    <h3><KeyRound size={16} /> Reachability</h3>
+    <h3><KeyRound size={16} /> Join encrypted channels</h3>
     <button disabled={!status.server_id || busy} on:click={publish}>Publish a KeyPackage</button
-    ><small>Publish before another channel creator adds this installation.</small>
+    ><small
+      >Publish your device key, then ask the channel creator to add you using Channel members above.
+      Newly added devices receive future messages, not earlier history.</small
+    >
   </section>
   <section class="detail-section">
     <h3><HardDrive size={16} /> History &amp; retention</h3>

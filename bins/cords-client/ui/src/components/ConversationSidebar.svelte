@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, Hash, LockKeyhole, Plus } from '@lucide/svelte';
+  import { ChevronDown, Globe, Hash, LockKeyhole, Plus } from '@lucide/svelte';
   import { availability, type Channel, type Identity, type Status } from '../model';
 
   export let status: Status;
@@ -120,7 +120,9 @@
               : channel.confidentiality_mode === 'public'
                 ? ' · public'
                 : ''}</span
-          >{#if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}<LockKeyhole
+          >{#if channel.confidentiality_mode === 'public'}<Globe
+              size={14}
+            />{:else if !channel.members.some((member) => member.authorization.value.device_id === status.device_id)}<LockKeyhole
               size={14}
             />{/if}
         </button>

@@ -595,7 +595,7 @@ If a corrective action would delete a volume, reset trust, replace `server-signi
 database, or discard an existing owner record, stop and take a verified backup first.
 # Public channels and channel replacement
 
-Upgrade server and desktop together for PostgreSQL schema 11. Back up the database
+Upgrade server and desktop together for PostgreSQL schema 12. Back up the database
 and matching server signing key, plus client vaults, before applying migrations.
 Restore matching pre-migration artifacts for rollback; never roll back live MLS
 state or regenerate the established server key.

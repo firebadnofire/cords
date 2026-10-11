@@ -46,6 +46,16 @@ export type Channel = {
           confidentiality_mode: ConfidentialityMode;
         };
       } | null;
+      predecessor_succession?: {
+        value: {
+          predecessor: {
+            value: { channel_id: string; name: string; confidentiality_mode: ConfidentialityMode };
+          };
+          successor_channel_id: string;
+          name: string;
+          confidentiality_mode: ConfidentialityMode;
+        };
+      } | null;
     };
   };
   requires_public_acknowledgement?: boolean;
@@ -98,6 +108,8 @@ export type Identity = {
   burn_deliveries?: { origin: string; last_error: string | null; next_retry_at: number }[];
 };
 export type View = {
+  channels?: Channel[];
+  contacts?: Contact[];
   status: Status;
   identity: Identity;
   preferences: unknown;
@@ -226,4 +238,13 @@ export function availability(implemented: boolean): SurfaceAvailability {
 
 export function selectedChannel(channels: Channel[], route: string): Channel | undefined {
   return channels.find((channel) => channel.channel_id === route);
+}
+
+// Contacts reach this boundary only after native signature and identity validation.
+export function memberName(contact: Contact | undefined, fallback: string): string {
+  return contact?.user_card?.value.nickname.trim() || fallback;
+}
+export function memberPicture(contact: Contact | undefined): Picture {
+  const avatar = contact?.user_card?.value.avatar;
+  return picture(avatar ? { ...avatar, zoom: avatar.zoom_milli / 1000 } : undefined);
 }

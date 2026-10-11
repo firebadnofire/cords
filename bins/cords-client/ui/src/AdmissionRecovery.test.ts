@@ -41,7 +41,7 @@ describe('admission and recovery presentation', () => {
       cursors: {},
     };
     invokeMock.mockImplementation(
-      async (command: string, args: { action?: { kind: string } } = {}) => {
+      async (command: string, args: { action?: { kind: string; local_only?: boolean } } = {}) => {
         if (command === 'list_accounts')
           return {
             accounts: [{ account_id: 'account', nickname: 'User', avatar_data: '' }],
@@ -100,8 +100,13 @@ describe('admission and recovery presentation', () => {
           };
           return { ...status };
         }
+        if (kind === 'remove_server') {
+          if (!args.action?.local_only) throw new Error('CORDS_HTTP_ERROR: HTTP 502 Bad Gateway');
+          status = { ...status, server_id: '', origin: '' };
+          return { remote_confirmed: false };
+        }
         if (kind === 'authenticate') return { ...status };
-        if (kind === 'channels') return [];
+        if (kind === 'channels' || kind === 'members') return [];
         throw new Error(`Unexpected UI request: ${command}/${kind}`);
       },
     );
@@ -198,6 +203,39 @@ describe('admission and recovery presentation', () => {
       await settle();
       expect(app.target.querySelector('.ownership-claim')).not.toBeNull();
       expect(app.target.querySelector('.server-button.selected')).not.toBeNull();
+    } finally {
+      await unmount(app.component);
+      app.target.remove();
+    }
+  });
+  it('offers separately confirmed local removal after a 502 departure failure', async () => {
+    const app = await open(false);
+    try {
+      app.target
+        .querySelector('.server-button')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await settle();
+      Array.from(app.target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+        .find((button) => button.textContent?.includes('Leave server'))!
+        .click();
+      await settle();
+      expect(app.target.textContent).toContain('Remove locally…');
+      Array.from(app.target.querySelectorAll<HTMLButtonElement>('dialog button'))
+        .find((button) => button.textContent?.includes('Confirm action'))!
+        .click();
+      await settle();
+      expect(app.target.textContent).toContain('Delete only the local server data?');
+      Array.from(app.target.querySelectorAll<HTMLButtonElement>('dialog button'))
+        .find((button) => button.textContent?.includes('Confirm action'))!
+        .click();
+      await settle();
+      expect(
+        invokeMock.mock.calls.some(
+          (call) =>
+            call[1]?.action?.kind === 'remove_server' && call[1]?.action?.local_only === true,
+        ),
+      ).toBe(true);
+      expect(app.target.textContent).toContain('Remote membership removal was not verified');
     } finally {
       await unmount(app.component);
       app.target.remove();

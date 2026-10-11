@@ -481,6 +481,7 @@ pub enum ConfidentialityMode {
     Public,
 }
 impl ConfidentialityMode {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Encrypted => "encrypted",
@@ -532,6 +533,8 @@ pub struct ChannelTransition {
     pub retired: bool,
     pub generation: u64,
     pub succession: Option<Signed<ChannelSuccession>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor_succession: Option<Box<Signed<ChannelSuccession>>>,
 }
 impl Statement for ChannelTransition {
     const DOMAIN: &'static str = "CORDS-CHANNEL-TRANSITION-V1";
@@ -562,6 +565,8 @@ impl Statement for PublicMessage {
 
 impl Signed<PublicMessage> {
     /// Verify all routing and author bindings. Identity freshness is enforced by the caller.
+    /// # Errors
+    /// Rejects invalid signatures, identities, capabilities, routing or message schemas.
     pub fn validate(
         &self,
         server_id: &str,
@@ -610,7 +615,7 @@ pub struct Channel {
     #[serde(default)]
     pub identity: Option<Signed<ChannelIdentity>>,
     #[serde(default)]
-    pub transition: Option<Signed<ChannelTransition>>,
+    pub transition: Option<Box<Signed<ChannelTransition>>>,
     /// Client-derived state; network metadata cannot authorize acknowledgement.
     #[serde(default)]
     pub requires_public_acknowledgement: bool,
@@ -686,7 +691,7 @@ pub struct EventUpload {
     pub ciphertext: String,
     pub idempotency_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub public_message: Option<Signed<PublicMessage>>,
+    pub public_message: Option<Box<Signed<PublicMessage>>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -18,6 +18,7 @@ async fn fixture() -> Result<(Service, tempfile::TempDir)> {
 
 #[tokio::test]
 #[ignore = "requires CORDS_TEST_DATABASE_URL; real PostgreSQL"]
+#[allow(clippy::too_many_lines)] // One complete channel-security acceptance scenario.
 async fn public_channel_signatures_identity_and_succession() -> Result<()> {
     use cords_protocol::messaging::{ChannelSuccession, Message, PublicMessage};
     let (s, _directory, code) = fixture_with_state(false).await?;
@@ -68,8 +69,21 @@ async fn public_channel_signatures_identity_and_succession() -> Result<()> {
         content_encoding: "public.signed".into(),
         ciphertext: String::new(),
         idempotency_key: payload.value.idempotency_key.clone(),
-        public_message: Some(payload.clone()),
+        public_message: Some(Box::new(payload.clone())),
     };
+    let (unauthorized, _) = identity()?;
+    let mut forged = upload.clone();
+    forged.public_message = Some(Box::new(unauthorized.sign_device(payload.value.clone())?));
+    assert!(
+        upload_event(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route.clone()),
+            Json(forged)
+        )
+        .await
+        .is_err()
+    );
     let event = upload_event(
         State(s.clone()),
         headers(&session)?,
@@ -190,6 +204,34 @@ async fn public_channel_signatures_identity_and_succession() -> Result<()> {
         })?,
         idempotency_key: id(),
     };
+    let mut invalid = request.clone();
+    invalid.record.value.name = "tampered succession".into();
+    assert!(
+        replace_channel(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route.clone()),
+            Json(invalid)
+        )
+        .await
+        .is_err()
+    );
+    let mut stale = request.clone();
+    let mut statement = stale.record.value.clone();
+    statement.issued_at = now()?.saturating_sub(301);
+    stale.record = owner.sign_device(statement)?;
+    assert!(
+        replace_channel(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route.clone()),
+            Json(stale)
+        )
+        .await
+        .is_err()
+    );
+    let initiating_contact = request.record.value.initiator.clone();
+    let replay = request.clone();
     assert_eq!(
         replace_channel(
             State(s.clone()),
@@ -212,12 +254,24 @@ async fn public_channel_signatures_identity_and_succession() -> Result<()> {
         .0,
         successor
     );
+    let mut replay = replay;
+    replay.idempotency_key = id();
+    assert!(
+        replace_channel(
+            State(s.clone()),
+            headers(&session)?,
+            Path(route.clone()),
+            Json(replay)
+        )
+        .await
+        .is_err()
+    );
     let new = channel_view(&s, &successor).await?;
     assert!(
         new.transition
             .context("transition")?
             .value
-            .succession
+            .predecessor_succession
             .is_some()
     );
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM route_events WHERE route_id=$1")
@@ -235,11 +289,52 @@ async fn public_channel_signatures_identity_and_succession() -> Result<()> {
         .await
         .is_err()
     );
+    let predecessor_identity = channel_view(&s, &successor)
+        .await?
+        .identity
+        .context("successor identity")?;
+    let third = id();
+    let chain = ChannelReplace {
+        record: owner.sign_device(ChannelSuccession {
+            version: 1,
+            server_id: s.0.identity.server_id(),
+            predecessor: predecessor_identity,
+            successor_channel_id: third.clone(),
+            name: "same name".into(),
+            confidentiality_mode: ConfidentialityMode::Public,
+            initiator: initiating_contact,
+            membership: session.membership.clone(),
+            issued_at: now()?,
+            nonce: id(),
+        })?,
+        idempotency_key: id(),
+    };
+    assert_eq!(
+        replace_channel(
+            State(s.clone()),
+            headers(&session)?,
+            Path(successor.clone()),
+            Json(chain)
+        )
+        .await?
+        .0,
+        third
+    );
+    let middle = channel_view(&s, &successor)
+        .await?
+        .transition
+        .context("middle channel state")?;
+    assert!(
+        middle.value.retired
+            && middle.value.predecessor_succession.is_some()
+            && middle.value.succession.is_some()
+    );
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires CORDS_TEST_DATABASE_URL; real TLS and PostgreSQL"]
+#[allow(clippy::too_many_lines)] // One complete channel-security acceptance scenario.
 async fn public_successor_two_clients_restart_archive_and_acknowledgement() -> Result<()> {
     use cords_client_core::client::Client;
     let (base, _directory, code) = fixture_with_state(false).await?;
@@ -355,7 +450,10 @@ async fn public_successor_two_clients_restart_archive_and_acknowledgement() -> R
     let server = member.status().server_id;
     member.remove_server(&server, true).await?;
     assert_eq!(
-        member.archived_channel_history(&server, &predecessor)?[0].body,
+        member
+            .archived_channel_history(&server, &predecessor)
+            .await?[0]
+            .body,
         "ENCRYPTED_ARCHIVE_MARKER"
     );
     member.shutdown().await;
@@ -792,7 +890,7 @@ async fn pending_admission_retains_signed_self_declared_card_and_denies_permissi
             State(s),
             headers(&member)?,
             Json(ChannelCreate {
-                confidentiality_mode: Default::default(),
+                confidentiality_mode: ConfidentialityMode::Encrypted,
                 name: "unauthorized".into(),
                 idempotency_key: id()
             })
@@ -844,7 +942,7 @@ async fn owner_burn_lockdown_recovery_is_atomic_one_time_and_revokes_old_authori
             State(s.clone()),
             headers(&old_session)?,
             Json(ChannelCreate {
-                confidentiality_mode: Default::default(),
+                confidentiality_mode: ConfidentialityMode::Encrypted,
                 name: "blocked".into(),
                 idempotency_key: id()
             })
@@ -1377,7 +1475,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         headers(&owner_session)?,
         Json(ChannelCreate {
-            confidentiality_mode: Default::default(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1430,7 +1528,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         HeaderMap::new(),
         Json(ChannelCreate {
-            confidentiality_mode: Default::default(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1466,7 +1564,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         headers(&other_session)?,
         Json(ChannelCreate {
-            confidentiality_mode: Default::default(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1487,7 +1585,7 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         State(s.clone()),
         headers(&other_session)?,
         Json(ChannelCreate {
-            confidentiality_mode: Default::default(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -1863,7 +1961,7 @@ async fn route_permissions_sequence_concurrency_and_restart() -> Result<()> {
         State(s.clone()),
         headers(&sa)?,
         Json(ChannelCreate {
-            confidentiality_mode: Default::default(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
             name: "test".into(),
             idempotency_key: id(),
         }),
@@ -2001,7 +2099,7 @@ async fn failed_event_transaction_does_not_consume_sequence_or_idempotency() -> 
         State(s.clone()),
         headers(&session)?,
         Json(ChannelCreate {
-            confidentiality_mode: Default::default(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
             name: "rollback".into(),
             idempotency_key: id(),
         }),
@@ -2193,7 +2291,7 @@ async fn initial_binding_is_authenticated_durable_and_idempotent() -> Result<()>
         State(s.clone()),
         headers(&issued)?,
         Json(ChannelCreate {
-            confidentiality_mode: Default::default(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
             name: "bound at creation".into(),
             idempotency_key: id(),
         }),

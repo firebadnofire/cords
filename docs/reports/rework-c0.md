@@ -13,13 +13,14 @@ execution: 2026-10-11. No C1 changes were made.
 
 This remediation tree is now committed as
 `c9cfa658c428f449ce60b20f61f1567260affb9a`; this does not turn missing macOS GUI
-evidence into a pass. The separately protected CI controller's validated public
-helpers were signed and pushed at `01235ee48174a051879b96ca4461309b942a62b9`.
-Controller Actions/publication remains disabled. Its secret-scope audit identified
-owner-wide release secrets sent by Forgejo v14 to every ordinary job, blocking
-workflow activation and the conditional Mac registration transition. No secret or
-runner setting changed; see [CI evidence](ci-rework.md) and
-[migration review](../controller-secrets-review.md).
+evidence into a pass. Historical CI controller preparation was signed and pushed
+at `01235ee48174a051879b96ca4461309b942a62b9`; that separate-repository design has
+since been superseded by the single canonical Cords monorepo and proposed external
+signing executor. Privileged publication remains disabled. The secret-scope audit
+identified owner-wide release secrets sent by Forgejo v14 to every ordinary job.
+No secret or runner setting changed; see the [current CI plan](../ci-monorepo-plan.md)
+and [CI evidence](ci-rework.md). This independent CI work does not satisfy the
+remaining C0 packaged macOS gate.
 
 ## Plan
 
@@ -128,7 +129,7 @@ signing domain, cipher suite, production migration or feature activation changed
 | Native server release build | Pass: 36.73 seconds |
 | Two independent packaged Windows clients | Pass for the cases below; real native UI/commands, TLS and PostgreSQL |
 | Packaged migration / known archive history / reopening | Pass for the isolated fixtures below |
-| Linux/macOS packaged desktop | **Not executed; incomplete platform gate** |
+| Linux/macOS packaged desktop | Linux subsequently PASS in the runtime below; macOS package integrity/startup PASS, packaged GUI gate **incomplete** |
 | Native compatible-token lifecycle | Unvalidated; no hardware support claim; C0 changes no hardware path |
 
 Initial workspace/frontend attempts exhausted drive C: MSVC `LNK1318`/PDB limit,
@@ -919,3 +920,164 @@ Repository-side metadata/workflow/fixture changes introduce no messenger behavio
 or protocol/storage change and do not supply the missing macOS graphical evidence.
 No extra repository, runner, credential migration or privileged publication is
 activated by that preparation. C0 is not marked complete.
+
+### C0 continuation — fresh Mac access and artifact checks
+
+Plan: recheck the existing native host, graphical access, packages and independent
+state paths; attempt only the user-authorized sudo access probes; close the separate
+native database-regression gap using disposable PostgreSQL and verified SSH; record
+each result before considering checkpoint activation. No product source, wire,
+storage, authentication, TLS or runtime behavior changes were made in this unit.
+
+Inspection ran on **2026-10-11 EDT**, starting **2026-10-12 00:22:11 UTC**. The Mac
+remains arm64, macOS **26.6.2 / 25G83**, Python **3.14.7**; it initially had **19 GiB**
+free. The native source checkout has only the three already-tested packaging changes
+listed above. Its lockfile still matches
+`3cdb276e86d3bd9c2b82fe752253bf521b5acef4206abeaeddde6a7b4b307ca4`.
+The current review revision is `7f3ae82589293f92f0f73b5d48326d0903cc7819`;
+since the C0 remediation commit, the only Cargo metadata delta is the canonical
+repository URL. Product source, migrations and the lockfile are unchanged.
+
+| Fresh check | Observed result |
+| --- | --- |
+| Verified SSH `.54` → `.42` | PASS as william; batch mode, strict host checking, no agent forwarding |
+| Existing package hashes | PASS: all three exactly match the recorded native artifacts above |
+| Both installed app bundles | PASS: `codesign --verify --deep --strict` |
+| Independent state databases | PASS: A/B still have distinct inodes `291099105` / `291099228` on device `16777230`; each is 4096 bytes. This does not prove account creation/unlock. |
+| Logged-in console | william UID 501; `OnConsole=TRUE`, `LoginDone=TRUE`; CoreGraphics reports one active display, ID 2 |
+| Unprivileged graphical access | **Unavailable**: Python and Swift both report Accessibility and capture permission false; `screencapture` exits 1, `could not create image from display` |
+| User-authorized sudo | PASS for `sudo -n /usr/bin/id` (UID 0); **GUI access still unavailable** under root and `launchctl asuser 501` |
+| Existing Screen Sharing | Read-only inspection finds launchd listening on TCP 5900 and the existing on-demand `com.apple.screensharing` service. No authenticated graphical session was established. |
+| Dependency security policy | PASS: `cargo-deny 0.20.2`, `cargo deny check`, exit 0; advisories/bans/licenses/sources OK, existing warning-level duplicates/unmatched exceptions remain |
+
+Exact access/integrity commands through the established strict SSH route:
+
+```sh
+/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-c0-refresh.py
+sudo -n /usr/bin/id
+sudo -n /usr/sbin/screencapture -x /Users/william/cords-c0-macos-20261011/validation-refresh-20261011/display-sudo.png
+/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-sudo-gui-probe.py
+/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-display-inspection.py
+```
+
+The sudo harness runs both `sudo -n /usr/bin/swift -e` and
+`sudo -n /bin/launchctl asuser 501 /usr/bin/swift -e` with
+`AXIsProcessTrusted()`, `CGPreflightScreenCaptureAccess()` and
+`CGSessionCopyCurrentDictionary()`. Both permission checks return false in each
+context. `sudo -n /bin/launchctl asuser 501 /usr/sbin/screencapture -x` also exits 1
+with the same display error. Sudo availability is not permission to claim a GUI pass.
+The display harness calls `CGGetActiveDisplayList` and inspects
+`sudo -n /bin/launchctl print system/com.apple.screensharing` and
+`sudo -n /usr/sbin/lsof -nP -iTCP:5900 -sTCP:LISTEN` only.
+
+No TCC database, privacy setting, Screen Sharing configuration, account, runner,
+credential, Gatekeeper policy or SSH/TLS verification was changed. The user was
+asked to establish an authenticated existing Screen Sharing path, enable trusted
+automation through normal macOS Privacy & Security, or perform guided local
+acceptance. Actual packaged account creation/unlock, trust/authentication,
+encrypted/public exchange, synchronization, restart history and offline archives
+remain pending on macOS.
+
+Non-secret local evidence is retained under
+`C:/Users/william/AppData/Local/Temp/cords-c0-refresh-20261011`; corresponding public
+probe scripts are in the existing isolated Mac root. Harness SHA-256:
+
+```text
+8400ee923947f807a88e96138d6cea54c9542519d124deeac3dc93330be774b3  mac-c0-refresh.py
+0ec329fc228138d95e333f32d1d87f5b020f4dc5270e9870989ed7700b6a3701  mac-sudo-gui-probe.py
+1513e0d816ecbd0d40f678df6f89787e39162d0455b9a373e250f42d836f85d4  mac-display-inspection.py
+```
+
+### C0 continuation — native macOS real database regressions
+
+The previously ignored database suite was executed **natively on `.42`**, using
+its existing Rust/Cargo **1.97.1** and the unchanged C0 source/lockfile. A new,
+separate PostgreSQL service on `.54` supplied persistence; this is native macOS
+client/server-core execution with a remote database, not a macOS PostgreSQL
+installation or a packaged GUI test.
+
+Fixture: `/home/william/cords-c0-mac-db-20261011-7f3ae825` on `.54`. The sole new
+container and volume carry that exact `chat.cords.instance` label. PostgreSQL
+**17.10 (Debian 17.10-1.pgdg12+1)** was started from the already-present image:
+
+```text
+image ID: sha256:8164afa59e26be9f78959e538d6c9da8553d67e601d8ebd0d5e9cbf558c3986e
+registry digest: postgres@sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f
+container ID: 7b358f0d3ca3c456ca57ddd7e61c0d10f2f3f6759e5c49f1fafe49128ac26072
+```
+
+The fixture limits PostgreSQL to 1 GiB/one CPU and binds its assigned port to
+**127.0.0.1:32770** only. Fresh random test credentials live in mode-0600 files;
+their values were never printed or committed. The foreground reverse SSH tunnel
+exposed only Mac **127.0.0.1:58431**, with strict host checking, no agent forwarding
+and `ExitOnForwardFailure=yes`. Database traffic crosses the network inside SSH;
+no database TLS acceptance is claimed. The Cords TLS fixtures independently use
+validated test certificates and restrict their actual HTTPS servers to TLS 1.3.
+
+Exact outer commands on `.54`:
+
+```sh
+bash -n /home/william/cords-ci-review-20261011/mac-postgres-fixture.sh
+shellcheck /home/william/cords-ci-review-20261011/mac-postgres-fixture.sh
+bash /home/william/cords-ci-review-20261011/mac-postgres-fixture.sh
+```
+
+The validated fixture harness creates only its named database/container/volume,
+waits for readiness, copies the disposable database URL over verified SSH, and runs:
+
+```sh
+ssh -n -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no \
+  -o ExitOnForwardFailure=yes -R 127.0.0.1:58431:127.0.0.1:32770 \
+  william@192.168.86.42 \
+  '/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-postgres-checks.py /Users/william/cords-c0-macos-20261011/validation-refresh-20261011/database-url'
+```
+
+The native Python harness verifies private credential-file permissions, sets
+`CORDS_TEST_DATABASE_URL` from that file without logging it, and executes:
+
+```sh
+cd /Users/william/cords-c0-macos-20261011/source
+export PATH=/opt/homebrew/bin:/Users/william/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
+cargo test --release -p cords-server-core --locked -- --ignored --test-threads=1
+```
+
+**PASS: 21 passed, 0 failed, 0 ignored, 4 filtered out; 17.25 seconds**, after
+2m38s native release compilation. The four ordinary server unit tests are filtered
+by `--ignored`, not counted as passes here; earlier native workspace results remain
+separate. The selected suite covers authenticated admission and bootstrap,
+concurrent ownership claims, authorization/revocation serialization, rollback
+rejection, idempotency/transaction failure, sequence persistence, WebSocket limits,
+public signatures/succession, and independent TLS clients with MLS, departure,
+restart and archives. It validates existing runtime semantics; it does not activate
+ADR 0007's future root/report formats or terminal-burn checkpoint.
+
+Cleanup PASS: the exact labeled fixture was stopped, PostgreSQL exit code **0**,
+and the foreground SSH tunnel ended. Its private database volume, credentials and
+logs remain retained as isolated evidence; no purge or live-state rollback was
+performed. Before/after production container IDs, start times and running states
+compare byte-for-byte. Both existing `cords-server` and `cords-postgres` remain
+running; neither was restarted for this test. No runner, deployment, toolchain or
+release-signing credential was modified. Native Mac free space afterward is 18 GiB.
+
+Harness validation initially failed on ShellCheck's unused readiness-loop variable
+before any service was created. The loop now records its attempt number; Bash
+syntax and ShellCheck then passed. An attempt to hash the Windows stdout log while
+its writer was active failed with a file-sharing error; hashing after completion
+passed. Neither harness issue is recorded as a product test pass or hidden.
+The harness refuses an existing fixture directory rather than overwriting state.
+
+Retained test stdout: `.54` fixture `mac-postgres-checks.log`, SHA-256
+`c98b10460642efa81c76c401d8fe0080e5a8f2c60efa1beb7ef85701232fde5f`.
+The local Windows log additionally contains outer fixture/readiness/cleanup output
+and uses Windows line endings, so its bytes/hash differ. Public harness hashes:
+
+```text
+7036be5d7d33daa2c6ecec13f57c720ab76a86895f1e237a587a3fda6b4bcb78  mac-postgres-checks.py
+69c3394beb8e2e5174344851145928b92d117eb37e77ada322e08aebb0fc6594  mac-postgres-fixture.sh
+```
+
+C0 is **still incomplete**: the macOS packaged GUI workflows require an
+authenticated graphical path and their own recorded acceptance. Native core/TLS
+tests do not substitute for it. C1 and later product checkpoints remain inactive;
+privileged CI publication remains separately disabled.

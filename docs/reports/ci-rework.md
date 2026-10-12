@@ -1,5 +1,10 @@
 # CI/CD rework evidence — 2026-10-11
 
+Current C0 status: the [C0 acceptance record](rework-c0.md) now records completion
+after native macOS packaged GUI acceptance. Earlier C0-pending statements here are
+historical. C1 remains inactive; this CI/CD work and privileged publication remain
+incomplete and disabled independently of C0.
+
 Status: **incomplete, not activated**. No hosted workflow, production release, tag,
 registry object or shared gh-sync repository was modified by these local tests.
 The Cords remediation tree is now committed as

@@ -90,3 +90,7 @@ Never restore stale live security state. C0 changes no runtime storage or signin
 
 Evidence/status: [C0 record](reports/rework-c0.md). No future gate is marked complete
 by the acceptance manifest or by this plan.
+
+C0 acceptance completed on 2026-10-11 with separately recorded native packaged
+Windows, Linux and macOS evidence. C1 and later checkpoints remain inactive under
+the user's C0-only instruction; release publication has separate unresolved gates.

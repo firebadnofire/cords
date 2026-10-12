@@ -1,26 +1,28 @@
 # C0 acceptance record
 
-Status: **C0 acceptance incomplete; C1 and later checkpoints inactive.**
+Status: **C0 acceptance complete on 2026-10-11; C1 and later checkpoints inactive.**
 Dependency remediation and fresh Windows portable-package acceptance passed on
 2026-10-11. Fresh native Linux packaged GUI acceptance also passed in the
 documented Debian 12 runtime on the openSUSE host. Native macOS packaged acceptance
-is pending; SSH access through the Linux jump host is now verified. Missing macOS
-evidence is not waived by Windows/Linux results.
+passed through the existing Parsec connection to `williams-mac-mini`, with strict
+SSH access through the Linux jump host. The final section records actual independent
+vaults, verified TLS, messaging, restart and offline archive evidence. Earlier
+pending/failed results below are historical and superseded only by that evidence.
 
 Source baseline: `2c4febab7594b252214c1179c81a5f6775b70d3d`, plus the C0 working
 changes below. Initial contracts/tests: 2026-10-10. Remediation and fresh packaged
 execution: 2026-10-11. No C1 changes were made.
 
 This remediation tree is now committed as
-`c9cfa658c428f449ce60b20f61f1567260affb9a`; this does not turn missing macOS GUI
-evidence into a pass. Historical CI controller preparation was signed and pushed
+`c9cfa658c428f449ce60b20f61f1567260affb9a`; subsequent native macOS acceptance
+is recorded separately below. Historical CI controller preparation was signed and pushed
 at `01235ee48174a051879b96ca4461309b942a62b9`; that separate-repository design has
 since been superseded by the single canonical Cords monorepo and proposed external
 signing executor. Privileged publication remains disabled. The secret-scope audit
 identified owner-wide release secrets sent by Forgejo v14 to every ordinary job.
 No secret or runner setting changed; see the [current CI plan](../ci-monorepo-plan.md)
-and [CI evidence](ci-rework.md). This independent CI work does not satisfy the
-remaining C0 packaged macOS gate.
+and [CI evidence](ci-rework.md). C0 completion does not satisfy those independent
+runner-isolation, provenance, credential or publication gates.
 
 ## Plan
 
@@ -129,7 +131,7 @@ signing domain, cipher suite, production migration or feature activation changed
 | Native server release build | Pass: 36.73 seconds |
 | Two independent packaged Windows clients | Pass for the cases below; real native UI/commands, TLS and PostgreSQL |
 | Packaged migration / known archive history / reopening | Pass for the isolated fixtures below |
-| Linux/macOS packaged desktop | Linux subsequently PASS in the runtime below; macOS package integrity/startup PASS, packaged GUI gate **incomplete** |
+| Linux/macOS packaged desktop | PASS in the separately documented native runtimes below; Mac GUI acceptance completed in the final section |
 | Native compatible-token lifecycle | Unvalidated; no hardware support claim; C0 changes no hardware path |
 
 Initial workspace/frontend attempts exhausted drive C: MSVC `LNK1318`/PDB limit,
@@ -1081,3 +1083,247 @@ C0 is **still incomplete**: the macOS packaged GUI workflows require an
 authenticated graphical path and their own recorded acceptance. Native core/TLS
 tests do not substitute for it. C1 and later product checkpoints remain inactive;
 privileged CI publication remains separately disabled.
+
+### Final C0 gate — native macOS packaged GUI acceptance through Parsec
+
+**PASS, 2026-10-11 EDT.** The existing authenticated Parsec connection presented
+`williams-mac-mini`. Windows Computer Use operated that connection; the application,
+WebView, vaults and packaged server executed natively on `.42`. No TCC, Gatekeeper,
+Screen Sharing, personal-account or runner configuration was changed. Sudo was not
+used to bypass the earlier graphical permission failures. The Mac remained arm64,
+macOS **26.6.2 / 25G83**, including the final `sw_vers` check. The user's separate
+macOS update download was left alone.
+
+#### Plan and implementation
+
+The units were: prepare a disposable PostgreSQL/TLS fixture; create and unlock two
+independent packaged accounts; validate encrypted/public exchange and catch-up;
+validate existing channel succession and offline archives; restart server/database;
+verify durable/security evidence; stop only fixture resources and record results.
+Each dependent unit followed a passing check. No product source, protocol, migration,
+Cargo dependency or runtime behavior changed during this acceptance run.
+
+Review HEAD was `8ecbf0117ae488d8c01c70a55b87d489e410bbe1`. Comparison with
+`c9cfa658c428f449ce60b20f61f1567260affb9a` confirmed no changes in crates, migrations,
+client source/UI or Cargo.lock; Cargo.toml's sole intervening delta was the canonical
+repository URL. The previously recorded native packaging delta and package versions
+remain applicable. All three artifact hashes in the native package table above
+were freshly rechecked and matched exactly. The application version is **0.1.0**;
+this is acceptance of the recorded packages, not a new release.
+
+Actual client installations were `installation-fixed-A/Cords.app` and
+`installation-fixed-B/Cords.app` under `/Users/william/cords-c0-macos-20261011`.
+Each launch ran `codesign --verify --deep --strict` before the actual
+`Contents/MacOS/cords-client` executable. Fresh account state was separate from the
+earlier empty startup fixtures:
+
+| Installation | Local state / account | Independent device |
+| --- | --- | --- |
+| A | `gui-parsec-20261011/vault-A`; Mac C0 Alice | `01a12d98-3891-7c70-82a7-6fa8a06e382d` |
+| B | `gui-parsec-20261011/vault-B`; Mac C0 Bob | `01a12d9e-bb54-7851-80f7-a821ee96c746` |
+
+Both accounts were created through the packaged GUI using independently generated
+test passwords. Neither vault/account/device was copied from the other. Final
+`accounts.db` inodes were **291268767** and **291284904**; both read-only SQLite
+integrity checks returned `ok`. `CORDS_CLIENT_STATE` selected each vault and
+`CORDS_CLIENT_CA` supplied only the fixture public CA. No migration-directory override
+or hidden test-only invoke hook was used.
+
+The native packaged server ran from
+`extracted-server/cords-server-macos-aarch64/cords-server` with its packaged
+migrations and a private fixture config. PostgreSQL **17.10** ran on `.54` in the
+separate labeled container `cords-c0-mac-gui-20261011-8ecbf01-postgres` with its own
+database `cords_desktop`, role `cords_c0_test`, random credential and retained volume.
+Caddy **2.10.2** supplied a real TLS 1.3 endpoint and HSTS on loopback
+`https://localhost:58443`. Both clients verified the private test CA and explicitly
+accepted the same device-verified server signing identity:
+`FuOIDpt1khOc9r6bYRZh3WEwWwncuK6oYNZWL9R1g1g`.
+
+PostgreSQL image ID was
+`sha256:8164afa59e26be9f78959e538d6c9da8553d67e601d8ebd0d5e9cbf558c3986e`;
+Caddy image ID was
+`sha256:aac61abc4024c323602ccb9ee38bd68b147601f518626b2a055e06944e01c510`.
+PostgreSQL was limited to 1 GiB/one CPU, Caddy to 256 MiB/one CPU. Only loopback
+listeners were created. The native server's loopback HTTP port was **58442** and
+the Mac database forward **58441**. Database traffic crossed verified SSH; this
+does not claim PostgreSQL TLS. Caddy terminated TLS before native loopback HTTP.
+
+#### Exact commands and retained harnesses
+
+Windows used this route, with no agent forwarding or relaxed host checking:
+
+```powershell
+ssh.exe -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no william@192.168.86.54
+```
+
+On `.54`, remote Mac commands used:
+
+```sh
+ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no william@192.168.86.42 '/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-gui-process.py start-server'
+ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no william@192.168.86.42 '/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-gui-process.py start-client --who A --no-ca'
+ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no william@192.168.86.42 '/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-gui-process.py stop-client --who A'
+ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no william@192.168.86.42 '/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-gui-process.py start-client --who A'
+ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no william@192.168.86.42 '/opt/homebrew/bin/python3 /Users/william/cords-c0-macos-20261011/mac-gui-process.py start-client --who B'
+```
+
+Fixture preparation on `.54` used these retained harnesses with non-secret source;
+generated credentials/configurations stayed private outside Git:
+
+```sh
+python3 /home/william/cords-ci-review-20261011/mac-gui-fixture.py
+python3 /home/william/cords-ci-review-20261011/mac-gui-mount-fix.py
+python3 /home/william/cords-ci-review-20261011/mac-gui-retry.py
+```
+
+The first fixture attempt failed because Caddy could not read its mode-0600 config.
+Making that public config readable still failed under SELinux Enforcing. Diagnosis
+identified the fixture bind-mount label; the stopped failed TLS container was retained
+as `-tls-failed-permission`. A replacement **fixture** mount used `:ro,Z` and mode
+0644, with the same fixture data volumes. Global SELinux policy stayed Enforcing.
+No dependent client test was counted as passing before verified TLS readiness.
+
+The strict SSH forwarding command on `.54` was:
+
+```sh
+ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no -N -T -o ExitOnForwardFailure=yes -L 127.0.0.1:58442:127.0.0.1:58442 -R 127.0.0.1:58441:127.0.0.1:32773 -R 127.0.0.1:58443:127.0.0.1:58443 william@192.168.86.42
+```
+
+The database restart assigned host port **32774**, which replaced **32773** in
+the new tunnel after the original tunnel's full process identity was verified and
+gracefully stopped. No stale database or security state was restored.
+
+Client B restart and the offline test used `stop-client --who B` followed by
+`start-client --who B`. Server unavailability used `stop-server`. Database/TLS
+restart used `docker stop --time 15` for the two exact label-verified fixture
+containers, then `mac-gui-retry.py`; Docker reported `--time` deprecated, so final
+cleanup used `docker stop --timeout 15`. All stops completed without force.
+
+For Parsec text transport, the Mac's native Edit → Paste menu consumed test text
+put in its clipboard through strict SSH, for example:
+
+```sh
+printf C0_MAC_PUBLIC_AFTER_DB_RESTART_20261011 | /usr/bin/pbcopy
+/usr/bin/pbcopy < /Users/william/cords-c0-macos-20261011/gui-parsec-20261011/password-B
+```
+
+Passwords were pasted only into observed masked test-vault fields. Their values
+were never printed. The fixture clipboard was cleared with `pbcopy < /dev/null`
+afterward. Parsec text/Return forwarding and occasional clicks failed to reach the
+intended control; fresh observation, native menus and mouse actions resolved those
+transport limitations. Those failures were not attributed to Cords.
+
+#### Observed acceptance results
+
+| Gate | Native packaged result |
+| --- | --- |
+| Independent startup/accounts/unlock | PASS: Alice and Bob created through their respective native windows; Bob's restarted picker contains only Bob, with no message history before unlock; correct password reopens the same device/vault. |
+| Certificate validation | PASS: first Alice launch without the fixture CA refuses connection with `UnknownIssuer`; adding the explicit test CA to the isolated client environment permits verified discovery. No TLS verification bypass. |
+| Trust/authentication/ownership | PASS: both clients explicitly trust the same server identity and authenticate; Alice claims the fixture bootstrap through the GUI; Bob is a distinct admitted member. |
+| Encrypted messaging | PASS: Bob publishes its own KeyPackage, Alice selects Bob's verified device and adds it, MLS advances to epoch 1, Alice/Bob exchange and decrypt their distinct markers. |
+| Public messaging | PASS: Alice explicitly creates a true public route, sees the permanent plaintext warning, and exchanges distinct signed public markers with Bob without an MLS invitation. |
+| Catch-up/client persistence | PASS: while Bob is stopped, Alice sends one encrypted and one public marker; Bob restarts/unlocks/reconnects with the same device and pin and displays both old messages and the new catch-up messages in each route. |
+| Existing channel lifecycle | PASS: Alice creates a distinct public successor of the encrypted route; the original becomes retired/read-only with its encrypted identity retained. Bob receives the lifecycle transition. The successor starts empty; old encrypted messages stay in the archive. |
+| Public successor acknowledgement | PASS: the encrypted → public successor requires the explicit warning acknowledgement before Alice's composer becomes available. A fresh public channel instead shows its established plaintext warning; no extra fresh-public acknowledgement contract is invented. |
+| Offline archives | PASS: with native server stopped, Bob restarts, unlocks locally and opens all three encrypted messages from the read-only sealed archive without server authentication. This is server-unavailable testing, not a physically disconnected Mac. |
+| Server/database restart | PASS: native server, fixture PostgreSQL, TLS and tunnel restart using retained current state. Bob and Alice reconnect/authenticate with the same pin and channel identities; Bob's new public message is received by Alice. |
+| Durable ownership/lifecycle | PASS: read-only PostgreSQL inspection shows `CLAIMED`, null consumed claim hash, claimed timestamp, Alice's original owner device, original encrypted tombstone and distinct public successor. |
+| Server confidentiality/local sealing | PASS: all three encrypted markers absent from serialized server envelopes and decoded ciphertext; all four public markers present in signed public envelopes. Closed local vault files also contain none of the encrypted markers; both SQLite integrity checks pass. Marker absence supplements crypto tests; it is not a proof against every plaintext leak. |
+| TLS/unauthenticated rejection | PASS: verified TLS 1.3 discovery HTTP 200 / verify result 0; omitted CA exits 60, forced TLS 1.2 exits 35, unauthenticated channel request exits 22 under curl `--fail`. |
+| Cleanup/preservation | PASS: exact fixture clients/server/tunnel/containers stopped gracefully; evidence, vaults and volumes retained. Production `cords-server` / `cords-postgres` IDs, start times and running states exactly match the pre-test snapshot. |
+
+Received encrypted markers:
+`C0_MAC_ALICE_ENCRYPTED_20261011`, `C0_MAC_BOB_ENCRYPTED_20261011`,
+`C0_MAC_ENCRYPTED_OFFLINE_CATCHUP_20261011`.
+Received public markers:
+`C0_MAC_ALICE_PUBLIC_20261011`, `C0_MAC_BOB_PUBLIC_20261011`,
+`C0_MAC_PUBLIC_OFFLINE_CATCHUP_20261011`,
+`C0_MAC_PUBLIC_AFTER_DB_RESTART_20261011`.
+The final public message was observed on both native clients at **21:23:42 EDT**.
+Read-only server inspection found **8** route events including the MLS handshake.
+
+Durable channels, preserved after database restart:
+
+```text
+01a12da2-8be7-7d31-a2b2-dd3227e3ee52 encrypted retired
+01a12da6-4b99-7e71-a8ed-296bbf1b864e public active
+01a12daf-09a9-7373-9a7e-3d318ad25d81 public active; replaces 01a12da2-8be7-7d31-a2b2-dd3227e3ee52
+```
+
+Exact independent network checks on `.54` (private test CA only):
+
+```sh
+curl --silent --show-error --fail --cacert /home/william/cords-c0-mac-gui-20261011-8ecbf01/ca.pem --tlsv1.3 --tls-max 1.3 -o /dev/null -w 'TLS %{ssl_verify_result} HTTP %{http_code}\n' https://localhost:58443/.well-known/cords/server
+curl --silent --show-error --max-time 5 https://localhost:58443/.well-known/cords/server
+curl --silent --show-error --max-time 5 --cacert /home/william/cords-c0-mac-gui-20261011-8ecbf01/ca.pem --tlsv1.2 --tls-max 1.2 https://localhost:58443/.well-known/cords/server
+curl --silent --show-error --max-time 5 --cacert /home/william/cords-c0-mac-gui-20261011-8ecbf01/ca.pem --fail https://localhost:58443/api/v1/channels
+```
+
+Expected negative exits were asserted explicitly. PostgreSQL read-only commands
+used `docker exec cords-c0-mac-gui-20261011-8ecbf01-postgres psql -X -v
+ON_ERROR_STOP=1 -U cords_c0_test -d cords_desktop -At -c` with:
+
+```sql
+SELECT envelope FROM route_events ORDER BY route_id,sequence;
+SELECT state,claim_code_hash IS NULL,claimed_at IS NOT NULL FROM server_ownership_bootstrap;
+SELECT claimed_by_device_id FROM server_ownership;
+SELECT id,confidentiality_mode,retired,replaces_channel_id FROM channels ORDER BY created_at,id;
+```
+
+The first query was consumed privately by Python `json.loads` and URL-safe Base64
+decoding of each `ciphertext`; only counts/assertion results were printed. Production
+preservation compared the exact output of `docker inspect NAME --format
+'{{.Id}} {{.State.StartedAt}} {{.State.Running}}'` with the pre-test snapshot.
+
+#### Evidence, cleanup and gate decision
+
+Fixture logs/configuration/vaults are retained privately under
+`/Users/william/cords-c0-macos-20261011/gui-parsec-20261011` on `.42` and
+`/home/william/cords-c0-mac-gui-20261011-8ecbf01` on `.54`. Do not publish private
+server logs/configuration/passwords. The disposable one-time bootstrap code briefly
+appeared unmasked in a GUI observation before the mouse-operated claim consumed
+it; no production bootstrap or release credential was used.
+
+Final process check: native server PID **53139**, Alice **52781** and Bob **53097**
+all stopped; tunnel **4009743** stopped. Both current fixture containers and the
+retained failed-permission TLS container are stopped. No volume/vault deletion,
+database rewind, runner transition, personal-account change or live service restart
+was performed. This cleanup retains evidence; it does not claim forensic erasure.
+
+Retained harness/result SHA-256:
+
+```text
+19c014ceca07019ee1324c232222192db62e28fd31e066ad300a78359a8968be  mac-gui-fixture.py
+fdfb4fe74263a0c464d026447d0bdfce77c473308c4b63ac2afc449a705f31df  mac-gui-mount-fix.py
+c961e77ed8ce8bb7cf68b546744dda1aa618227b99686325f33676cda026cb81  mac-gui-retry.py
+9288fdac761e6e473da04f3ed8ff068724e877c33f575bb322b0b50b37ccc6de  mac-gui-process.py
+e73cc3ae7bdca14e2e85f50ed8c193418a02b8df107239aef9ac402e95c747b9  acceptance-summary.json
+9353b5eb6bf04dd1f931da3e3a7f738bf32e313551861f466da8de88586fa94e  vault-storage-check.json
+```
+
+**C0 complete:** contracts/audit/vectors, executable signing/migration regressions,
+post-dependency Rust/frontend/security checks, real PostgreSQL checks and fresh
+independent packaged Windows/Linux/macOS messaging baseline now have recorded
+passing evidence. The native Mac database suite above independently passed all
+21 explicit persistence regressions. No dependency/product change followed those
+checks; this final change records acceptance only.
+
+Report validation passed `git diff --check`, relative-link resolution and balanced
+code-fence checks for this report, the plan and the CI status annotation. The locked
+dependency hash and all three native artifact references were checked again. No
+new product edit justified repeating the already-passing native regression suites.
+
+Limits remain explicit: Windows portable execution is not installer/uninstaller
+acceptance; Linux evidence covers the recorded Debian runtime; native Mac GUI
+execution covers the aarch64 PKG payload on Apple Silicon. The universal DMG passed
+native integrity/slice checks, but Intel Mac GUI execution, Apple distribution trust,
+notarization and release signatures are not claimed. Private-CA TLS fixtures do not
+prove a production public-Web-PKI deployment. Native hardware lifecycle support,
+new root/report formats and future checkpoint features remain unvalidated/inactive.
+Neither graceful restarts nor transactional SQL interruption prove power-loss
+recovery. Existing functional controls were preserved; this C0 run does not claim
+that all unfinished UI features are implemented.
+
+**C1 remains inactive under the user's C0-only instruction. Privileged publication
+remains disabled:** runner authorization/OS isolation, owner-secret consumer
+migration and external signer/provenance gates belong to the separate monorepo CI
+work and are not satisfied by this acceptance. No security boundary is waived.

@@ -1,7 +1,8 @@
 # Cords monorepo CI/CD plan
 
-Status: repository-side preparation; privileged publication disabled. C0 remains
-incomplete and C1 remains inactive. The user's 2026-10-11 single-repository correction
+Status: repository-side preparation; privileged publication disabled. C0 acceptance
+is complete as recorded in [the C0 report](reports/rework-c0.md); C1 remains inactive.
+The user's 2026-10-11 single-repository correction
 supersedes the earlier controller/publication repository and Mac registration plans.
 
 ## Plan

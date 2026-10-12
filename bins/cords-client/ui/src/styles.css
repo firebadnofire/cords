@@ -629,9 +629,9 @@
   font-size: 11px;
 }
 .connection-error span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .cords-conversation {
   min-height: 0;

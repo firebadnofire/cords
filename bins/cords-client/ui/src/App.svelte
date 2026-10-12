@@ -173,6 +173,14 @@
   async function action<T>(kind: string, fields: Record<string, unknown> = {}): Promise<T> {
     return invoke<T>('conversation_action', { action: { kind, ...fields } });
   }
+  function openArchives() {
+    void run(async () => {
+      archives = await action<Channel[]>('channel_archives');
+      archiveMessages = [];
+      archiveChannel = undefined;
+      overlay = 'archives';
+    });
+  }
   async function refresh() {
     if (!status || refreshing) return;
     refreshing = true;
@@ -559,15 +567,6 @@
             >
             <button on:click={() => (overlay = 'connect')}>Review connection</button>
           </div>{/if}
-        <button
-          on:click={() =>
-            void run(async () => {
-              archives = await action<Channel[]>('channel_archives');
-              archiveMessages = [];
-              archiveChannel = undefined;
-              overlay = 'archives';
-            })}>Archives · locally retained history</button
-        >
         {#if selected?.transition?.value.succession || selected?.transition?.value.predecessor_succession}
           {@const succession = (selected.transition?.value.succession ??
             selected.transition?.value.predecessor_succession)!.value}
@@ -653,6 +652,15 @@
         {identity}
         {status}
         {servers}
+        {openArchives}
+        assessPassword={(password, nickname) => invoke('check_password', { password, nickname })}
+        changePassword={(currentPassword, newPassword, allowWeak) =>
+          invoke('change_local_password', {
+            accountId: status?.account_id,
+            currentPassword,
+            newPassword,
+            allowWeak,
+          })}
         close={() => (overlay = null)}
         save={savePreferences}
         lockNow={() => returnToPicker('lock')}
@@ -817,7 +825,11 @@
           >{#if error}<p role="alert" class="error">{error}</p>{/if}
         </form></Modal
       >{/if}
-    {#if overlay === 'archives'}<Modal title="Channel Archives" close={() => (overlay = null)} wide>
+    {#if overlay === 'archives'}<Modal
+        title="Retained channel archives"
+        close={() => (overlay = 'settings')}
+        wide
+      >
         <div class="modal-body">
           <p>
             Partial locally retained history, sealed in this account vault. Archives contain only

@@ -308,6 +308,53 @@ impl Client {
         Ok(())
     }
 
+    /// Authenticate the current password and atomically rewrap the same vault key.
+    /// This changes neither identity nor conversation state. Older backups keep their wrapper.
+    /// # Errors
+    /// Returns an error for a wrong current password, invalid new password, stale wrapper or
+    /// failed storage write. A failed operation leaves the previous password usable.
+    pub async fn change_password(&mut self, current: &[u8], new: &[u8]) -> Result<()> {
+        use subtle::ConstantTimeEq as _;
+        ensure!(
+            std::str::from_utf8(new)?.chars().count() >= 12,
+            "use a password of at least 12 characters"
+        );
+        let row = sqlx::query(
+            "SELECT id,protection,salt,wrapped_key FROM installation WHERE singleton=1",
+        )
+        .fetch_one(self.store.pool())
+        .await?;
+        ensure!(
+            row.try_get::<String, _>("id")? == self.installation,
+            "vault identity changed"
+        );
+        ensure!(
+            row.try_get::<String, _>("protection")? == "passphrase",
+            "migrate OS-protected storage before changing its password"
+        );
+        let previous_salt: Vec<u8> = row.try_get("salt")?;
+        let previous_wrapped: Vec<u8> = row.try_get("wrapped_key")?;
+        let wrapping = protection::derive_wrapping_key(current, &previous_salt)?;
+        let context = format!("{}/master/v1", self.installation);
+        let unlocked = protection::open(&wrapping, context.as_bytes(), &previous_wrapped)
+            .context("current password was not accepted")?;
+        ensure!(
+            bool::from(unlocked.as_slice().ct_eq(self.key.as_ref())),
+            "vault key changed; lock and unlock this account again"
+        );
+        let salt = protection::random_key();
+        let wrapping = protection::derive_wrapping_key(new, salt.as_ref())?;
+        let wrapped = protection::seal(&wrapping, context.as_bytes(), self.key.as_ref())?;
+        let result = sqlx::query("UPDATE installation SET salt=?1,wrapped_key=?2 WHERE singleton=1 AND id=?3 AND protection='passphrase' AND salt=?4 AND wrapped_key=?5")
+            .bind(salt.as_ref()).bind(wrapped).bind(&self.installation)
+            .bind(previous_salt).bind(previous_wrapped).execute(self.store.pool()).await?;
+        ensure!(
+            result.rows_affected() == 1,
+            "password protection changed concurrently; retry with the current password"
+        );
+        Ok(())
+    }
+
     /// Clear the current server bearer session while preserving the encrypted local vault.
     /// # Errors
     /// Returns an error when the cleared state cannot be persisted.
@@ -3044,6 +3091,93 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite")
     }
     const PASS: &[u8] = b"independent test installation passphrase";
+    #[tokio::test]
+    async fn password_change_is_atomic_and_preserves_account_state() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let other = tempfile::tempdir()?;
+        let mut client = Client::create(temp.path(), &migrations(), PASS, None).await?;
+        let independent = Client::create(other.path(), &migrations(), PASS, None).await?;
+        let independent_id = independent.status().account_id;
+        independent.shutdown().await;
+        seed_server(&mut client, "retained-pin", "received secret history").await?;
+        client
+            .save_ui_preferences(serde_json::json!({"displayName":"private nickname"}))
+            .await?;
+        client.durable.pending = Some(Pending {
+            path: "/pending-existing-operation".into(),
+            body: serde_json::json!({"idempotency_key":"stable"}),
+            kind: "roster".into(),
+            route: "same-route".into(),
+        });
+        client.persist(&[], &[]).await?;
+        let before = client.status();
+        let key = Zeroizing::new(*client.key);
+        let crypto = client.crypto.snapshot()?;
+        let sealed: Vec<u8> = sqlx::query_scalar("SELECT sealed FROM client_state")
+            .fetch_one(client.store.pool())
+            .await?;
+        let wrapper: Vec<u8> = sqlx::query_scalar("SELECT wrapped_key FROM installation")
+            .fetch_one(client.store.pool())
+            .await?;
+        let new = b"different account password with enough entropy";
+        assert!(
+            client
+                .change_password(b"incorrect current password", new)
+                .await
+                .is_err()
+        );
+        assert!(client.change_password(PASS, b"short").await.is_err());
+        sqlx::raw_sql("CREATE TRIGGER refuse_password_change BEFORE UPDATE ON installation BEGIN SELECT RAISE(ABORT,'injected password write failure'); END;").execute(client.store.pool()).await?;
+        assert!(client.change_password(PASS, new).await.is_err());
+        assert_eq!(
+            sqlx::query_scalar::<_, Vec<u8>>("SELECT wrapped_key FROM installation")
+                .fetch_one(client.store.pool())
+                .await?,
+            wrapper
+        );
+        sqlx::query("DROP TRIGGER refuse_password_change")
+            .execute(client.store.pool())
+            .await?;
+        client.change_password(PASS, new).await?;
+        assert!(client.change_password(PASS, new).await.is_err());
+        client.change_password(new, new).await?;
+        assert_ne!(
+            sqlx::query_scalar::<_, Vec<u8>>("SELECT wrapped_key FROM installation")
+                .fetch_one(client.store.pool())
+                .await?,
+            wrapper
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, Vec<u8>>("SELECT sealed FROM client_state")
+                .fetch_one(client.store.pool())
+                .await?,
+            sealed
+        );
+        client.shutdown().await;
+        assert!(
+            Client::open_existing(temp.path(), &migrations(), PASS, None)
+                .await
+                .is_err()
+        );
+        let client = Client::open_existing(temp.path(), &migrations(), new, None).await?;
+        assert_eq!(client.status().account_id, before.account_id);
+        assert_eq!(client.status().device_id, before.device_id);
+        assert_eq!(client.status().server_id, before.server_id);
+        assert_eq!(client.key.as_ref(), key.as_ref());
+        assert_eq!(client.crypto.snapshot()?, crypto);
+        assert_eq!(
+            client.history("same-route").await?[0].body,
+            "received secret history"
+        );
+        assert_eq!(client.ui_preferences()["displayName"], "private nickname");
+        assert_eq!(
+            client.durable.pending.as_ref().unwrap().body["idempotency_key"],
+            "stable"
+        );
+        let independent = Client::open_existing(other.path(), &migrations(), PASS, None).await?;
+        assert_eq!(independent.status().account_id, independent_id);
+        Ok(())
+    }
     async fn seed_server(client: &mut Client, server: &str, body: &str) -> Result<()> {
         client.clear_active_server()?;
         client.durable.server_id = server.into();

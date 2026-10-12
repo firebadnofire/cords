@@ -27,6 +27,12 @@
   export let burnIdentity: () => void;
   export let designateSuccessor: (accountId: string) => Promise<string>;
   export let acceptSuccessor: (designationHash: string) => Promise<void>;
+  export let openArchives: () => void;
+  export let changePassword: (current: string, next: string, allowWeak: boolean) => Promise<void>;
+  export let assessPassword: (
+    password: string,
+    nickname: string,
+  ) => Promise<{ weak: boolean; reasons: string[] }>;
 
   type Page =
     | 'My Account'
@@ -68,6 +74,40 @@
   let successorAccount = '';
   let designationHash = '';
   let successorNotice = '';
+  let currentPassword = '';
+  let newPassword = '';
+  let confirmation = '';
+  let passwordNotice = '';
+  let passwordWarning: string[] = [];
+
+  async function updatePassword(allowWeak = false) {
+    if (busy) return;
+    error = '';
+    passwordNotice = '';
+    if (newPassword !== confirmation) {
+      error = 'Passwords do not match.';
+      return;
+    }
+    busy = true;
+    try {
+      const assessment = await assessPassword(newPassword, value.displayName);
+      if (assessment.weak && !allowWeak) {
+        passwordWarning = assessment.reasons;
+        return;
+      }
+      await changePassword(currentPassword, newPassword, allowWeak);
+      passwordNotice =
+        'Password changed. Use the new password the next time you unlock this account.';
+      currentPassword = newPassword = confirmation = '';
+      passwordWarning = [];
+    } catch (caught) {
+      error = String(caught);
+      currentPassword = newPassword = confirmation = '';
+      passwordWarning = [];
+    } finally {
+      busy = false;
+    }
+  }
 
   async function designationAction(accept: boolean) {
     busy = true;
@@ -383,6 +423,24 @@
           <h2>Encrypted local cache</h2>
           <p>Old MLS epoch keys are not retained by the displayed-message cache.</p>
         </div>
+        <section>
+          <h2>Retained channel archives</h2>
+          <p>
+            Read-only, partial history received by this device and sealed in this account vault.
+            Available offline, including after leaving a server.
+          </p>
+          <button on:click={openArchives}>Browse retained channel archives</button>
+        </section>
+        <section>
+          <h2>Archived servers</h2>
+          <p>
+            These are saved server bookmarks and departure status, not complete server histories.
+          </p>
+          {#each servers.filter((server) => server.archived) as server (server.server_id)}
+            <p>{server.origin}</p>
+          {:else}<p>No archived server bookmarks.</p>{/each}
+          <button on:click={() => (page = 'Server trust')}>Manage saved servers</button>
+        </section>
         <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
           >Configure retention</button
         ><button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
@@ -578,6 +636,51 @@
             ><span>Encrypted local state and pinned server identity</span>
           </div>
         </div>
+        <section>
+          <h2>Change local unlock password</h2>
+          <p>
+            Protects this account on this installation. Identity, device keys, messages and archives
+            stay the same. Existing backups retain their previous password protection.
+          </p>
+          <form on:submit|preventDefault={() => void updatePassword()}>
+            <label
+              >Current password<input
+                type="password"
+                autocomplete="current-password"
+                bind:value={currentPassword}
+                required
+              /></label
+            >
+            <label
+              >New password<input
+                type="password"
+                autocomplete="new-password"
+                bind:value={newPassword}
+                on:input={() => (passwordWarning = [])}
+                required
+              /></label
+            >
+            <label
+              >Confirm new password<input
+                type="password"
+                autocomplete="new-password"
+                bind:value={confirmation}
+                required
+              /></label
+            >
+            <p>Use at least 12 characters.</p>
+            <button disabled={busy}>Change local password</button>
+          </form>
+          {#if passwordWarning.length}
+            <div role="alert">
+              <p>{passwordWarning.join(' ')}</p>
+              <button disabled={busy} on:click={() => void updatePassword(true)}
+                >Use this password anyway</button
+              >
+            </div>
+          {/if}
+          {#if passwordNotice}<p role="status">{passwordNotice}</p>{/if}
+        </section>
         <section>
           <h2>Auto-lock</h2>
           <label

@@ -25,6 +25,7 @@ fn main() {
             conversation::session_control,
             conversation::remove_local_account,
             conversation::record_activity,
+            conversation::change_local_password,
             conversation::conversation_action,
             conversation::conversation_view,
             images::load_image_url

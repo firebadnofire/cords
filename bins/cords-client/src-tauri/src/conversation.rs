@@ -297,6 +297,39 @@ pub(crate) async fn record_activity(state: tauri::State<'_, Desktop>) -> Result<
     Ok(())
 }
 
+#[tauri::command]
+pub(crate) async fn change_local_password(
+    state: tauri::State<'_, Desktop>,
+    account_id: String,
+    current_password: String,
+    new_password: String,
+    allow_weak: bool,
+) -> Result<(), String> {
+    let current_password = Zeroizing::new(current_password);
+    let new_password = Zeroizing::new(new_password);
+    let mut runtime = state.0.lock().await;
+    let client = runtime.client.as_mut().ok_or("unlock an account first")?;
+    if client.status().account_id != account_id {
+        return Err(
+            "The active account changed; reopen its settings before changing the password".into(),
+        );
+    }
+    let preferences = client.ui_preferences();
+    let nickname = preferences
+        .get("displayName")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if assess_password(&new_password, nickname).weak && !allow_weak {
+        return Err("Review the weak-password warning before continuing".into());
+    }
+    client
+        .change_password(current_password.as_bytes(), new_password.as_bytes())
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    runtime.last_activity = Some(Instant::now());
+    Ok(())
+}
+
 #[derive(Deserialize)] // Recovery/bootstrap codes must not appear in derived Debug output.
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Action {
@@ -696,7 +729,7 @@ async fn synchronize(state: Arc<Mutex<Runtime>>, generation: u64) {
             Err(error) => {
                 let recovery = client.reload().await;
                 runtime.connected = false;
-                runtime.error = Some(error.to_string());
+                runtime.error = Some(format!("{error:#}"));
                 if let Err(error) = recovery {
                     runtime.error = Some(format!("Storage recovery failed: {error}"));
                     runtime.client = None;

@@ -17,6 +17,7 @@ sqlx.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "net"] }
 uuid.workspace = true
 zeroize.workspace = true
+subtle.workspace = true
 rand_core.workspace = true
 minicbor.workspace = true
 fs2 = "0.4"

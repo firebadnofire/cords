@@ -35,7 +35,16 @@ impl PostgresStore {
     /// # Errors
     /// Returns [`StorageError`] if migrations cannot be loaded or applied.
     pub async fn migrate(&self, path: &Path) -> Result<(), StorageError> {
-        Migrator::new(path).await?.run(&self.pool).await?;
+        let migrator = Migrator::new(path).await?;
+        let mut connection = self.pool.acquire().await?;
+        // SQLx 0.8 may return before releasing its session advisory lock on
+        // migration failure. Never return that connection to the pool. Mark it
+        // before awaiting so cancellation also closes the session and its locks.
+        connection.close_on_drop();
+        let result = migrator.run_direct(&mut *connection).await;
+        let closed = connection.close().await;
+        result?;
+        closed?;
         Ok(())
     }
 
@@ -48,7 +57,7 @@ impl PostgresStore {
             sqlx::query_scalar("SELECT version FROM cords_schema_metadata WHERE singleton = TRUE")
                 .fetch_optional(&self.pool)
                 .await?;
-        if version != Some(12) {
+        if version != Some(13) {
             return Err(StorageError::SchemaVersion);
         }
         Ok(())

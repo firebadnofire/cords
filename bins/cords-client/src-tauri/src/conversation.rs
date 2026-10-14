@@ -128,12 +128,83 @@ fn picker_safe(mut accounts: Vec<AccountSummary>) -> Vec<AccountSummary> {
     for (index, account) in accounts.iter_mut().enumerate() {
         if account.genericize {
             account.avatar_data.clear();
+            account.avatar_x_milli = 50_000;
+            account.avatar_y_milli = 50_000;
+            account.avatar_zoom_milli = 1_000;
         }
         if account.hide_nickname_on_lock {
             account.nickname = format!("Account {}", index + 1);
         }
     }
     accounts
+}
+
+/// Mirror lock-screen-safe presentation metadata after a successful unlock or settings save.
+/// The picker never opens a vault merely to obtain this presentation data.
+async fn mirror_picker_metadata(
+    registry: &AccountRegistry,
+    account_id: &str,
+    preferences: &Value,
+) -> Result<AccountSummary, String> {
+    let mut account = registry
+        .list()
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|item| item.account_id == account_id)
+        .ok_or("local account not found")?;
+    if let Some(name) = preferences.get("displayName").and_then(Value::as_str) {
+        account.nickname = name.to_string();
+    }
+    account.avatar_data = preferences
+        .pointer("/avatar/data")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let crop_number = |field: &str, default: f64, min: f64, max: f64, scale: f64| {
+        preferences
+            .pointer(&format!("/avatar/{field}"))
+            .and_then(Value::as_f64)
+            .filter(|number| number.is_finite() && (*number >= min && *number <= max))
+            .map_or(default, |number| (number * scale).round())
+    };
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        account.avatar_x_milli = crop_number("x", 50_000.0, 0.0, 100.0, 1_000.0) as u32;
+        account.avatar_y_milli = crop_number("y", 50_000.0, 0.0, 100.0, 1_000.0) as u32;
+        account.avatar_zoom_milli = crop_number("zoom", 1_000.0, 1.0, 4.0, 1_000.0) as u16;
+    }
+    account.genericize = preferences
+        .get("genericize")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    account.hide_nickname_on_lock = preferences
+        .get("hideNicknameOnLock")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    account.auto_lock_minutes = preferences
+        .get("autoLockMinutes")
+        .and_then(Value::as_u64)
+        .and_then(|number| u32::try_from(number).ok());
+    if preferences
+        .get("autoLockMinutes")
+        .is_some_and(Value::is_null)
+    {
+        account.auto_lock_minutes = None;
+    }
+    account.lock_on_os_lock = preferences
+        .get("lockOnOsLock")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    account.lock_on_suspend = preferences
+        .get("lockOnSuspend")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    registry
+        .update_metadata(&account)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(account)
 }
 
 #[tauri::command]
@@ -177,13 +248,7 @@ pub(crate) async fn create_account(
         .await
         .map_err(|e| e.to_string())?;
     let account_id = client.status().account_id;
-    let policy = registry
-        .list()
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .find(|a| a.account_id == account_id)
-        .ok_or("created account missing from registry")?;
+    let policy = mirror_picker_metadata(&registry, &account_id, &client.ui_preferences()).await?;
     Ok(activate(&state_arc, account_id, client, &policy).await)
 }
 
@@ -202,17 +267,11 @@ pub(crate) async fn unlock_account(
         }
         (registry(&app, &mut runtime).await?, state.0.clone())
     };
-    let policy = registry
-        .list()
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .find(|a| a.account_id == account_id)
-        .ok_or("local account not found")?;
     let client = registry
         .unlock(&account_id, &password)
         .await
         .map_err(|e| e.to_string())?;
+    let policy = mirror_picker_metadata(&registry, &account_id, &client.ui_preferences()).await?;
     Ok(activate(&state_arc, account_id, client, &policy).await)
 }
 
@@ -244,13 +303,7 @@ pub(crate) async fn migrate_legacy_account(
         .await
         .map_err(|e| e.to_string())?;
     let account_id = client.status().account_id;
-    let policy = registry
-        .list()
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .find(|a| a.account_id == account_id)
-        .ok_or("migrated account missing from registry")?;
+    let policy = mirror_picker_metadata(&registry, &account_id, &client.ui_preferences()).await?;
     Ok(activate(&state_arc, account_id, client, &policy).await)
 }
 
@@ -400,6 +453,16 @@ pub(crate) enum Action {
     Synchronize,
     Members,
     MembershipRequests,
+    RoleCatalog,
+    RoleAudit {
+        after: u64,
+    },
+    AccountRoles {
+        account: String,
+    },
+    ChangeRolePolicy {
+        request: cords_protocol::roles::RoleChangeRequest,
+    },
     ApproveMembership {
         device: String,
     },
@@ -504,6 +567,14 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
         Action::Synchronize => serde_json::to_value(client.synchronize().await?)?,
         Action::Members => serde_json::to_value(client.members().await?)?,
         Action::MembershipRequests => serde_json::to_value(client.membership_requests().await?)?,
+        Action::RoleCatalog => serde_json::to_value(client.role_catalog().await?)?,
+        Action::RoleAudit { after } => serde_json::to_value(client.role_audit(after).await?)?,
+        Action::AccountRoles { account } => {
+            serde_json::to_value(client.account_roles(&account).await?)?
+        }
+        Action::ChangeRolePolicy { request } => {
+            serde_json::to_value(client.change_role_policy(&request).await?)?
+        }
         Action::ApproveMembership { device } => {
             serde_json::to_value(client.approve_membership(&device).await?)?
         }
@@ -547,51 +618,8 @@ pub(crate) async fn conversation_action(
                 preferences,
                 runtime.active_account_id.clone(),
                 runtime.registry.clone(),
-            ) && let Some(mut account) = registry
-                .list()
-                .await
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .find(|item| item.account_id == account_id)
-            {
-                if let Some(name) = preferences.get("displayName").and_then(Value::as_str) {
-                    account.nickname = name.to_string();
-                }
-                account.avatar_data = preferences
-                    .pointer("/avatar/data")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                account.genericize = preferences
-                    .get("genericize")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                account.hide_nickname_on_lock = preferences
-                    .get("hideNicknameOnLock")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                account.auto_lock_minutes = preferences
-                    .get("autoLockMinutes")
-                    .and_then(Value::as_u64)
-                    .and_then(|n| u32::try_from(n).ok());
-                if preferences
-                    .get("autoLockMinutes")
-                    .is_some_and(Value::is_null)
-                {
-                    account.auto_lock_minutes = None;
-                }
-                account.lock_on_os_lock = preferences
-                    .get("lockOnOsLock")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
-                account.lock_on_suspend = preferences
-                    .get("lockOnSuspend")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
-                registry
-                    .update_metadata(&account)
-                    .await
-                    .map_err(|e| e.to_string())?;
+            ) {
+                let account = mirror_picker_metadata(&registry, &account_id, &preferences).await?;
                 runtime.auto_lock_minutes = account.auto_lock_minutes;
                 runtime.lock_on_suspend = account.lock_on_suspend;
             }

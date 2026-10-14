@@ -1,0 +1,22 @@
+{
+  "libjxl": {
+    "url": "https://github.com/libjxl/libjxl.git",
+    "revision": "a7a9c787341cf703dede03c2009fa460cae5e5df",
+    "version": "0.12.0",
+    "submodules": {
+      "third_party/brotli": "028fb5a23661f123017c060daa546b55cf4bde29",
+      "third_party/highway": "457c891775a7397bdb0376bb1031e6e027af1c48",
+      "third_party/skcms": "96d9171c94b937a1b5f0293de7309ac16311b722"
+    }
+  },
+  "emsdk": {
+    "url": "https://github.com/emscripten-core/emsdk.git",
+    "revision": "e4fe26ef59168ff44f4c23c466e497bf60b3411e",
+    "version": "4.0.20",
+    "release": "c387d7a7e9537d0041d2c3ae71b7538cc978104e"
+  },
+  "cmake": "3.31.6",
+  "ninja": "1.11.1",
+  "rust": "1.97.1",
+  "wasm-bindgen": "0.2.126"
+}

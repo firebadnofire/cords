@@ -547,6 +547,14 @@ async fn https_fixture(
     service: &Service,
     certificate: &rcgen::CertifiedKey<rcgen::KeyPair>,
 ) -> Result<TestHttps> {
+    https_fixture_at(service, certificate, "127.0.0.1:0").await
+}
+
+async fn https_fixture_at(
+    service: &Service,
+    certificate: &rcgen::CertifiedKey<rcgen::KeyPair>,
+    address: &str,
+) -> Result<TestHttps> {
     use hyper_util::{
         rt::{TokioExecutor, TokioIo},
         server::conn::auto::Builder,
@@ -562,7 +570,7 @@ async fn https_fixture(
         vec![certificate.cert.der().clone()],
         rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.signing_key.serialize_der()).into(),
     )?;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let listener = tokio::net::TcpListener::bind(address).await?;
     let origin = format!("https://localhost:{}", listener.local_addr()?.port());
     let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
     let app = crate::router(
@@ -1319,7 +1327,118 @@ async fn bootstrap_restart_rotation_and_legacy_initialization_are_explicit() -> 
 }
 
 #[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real PostgreSQL audit pagination"]
+async fn role_audit_pages_are_bounded_contiguous_and_owner_authorized() -> Result<()> {
+    use cords_protocol::roles::{Role, RoleChange, RoleChangeRequest};
+    let (s, _directory, code) = fixture_with_state(false).await?;
+    let (owner, contact) = identity()?;
+    let session = claim_ownership(
+        State(s.clone()),
+        Json(ownership_request(&s, &owner, contact, &code).await?),
+    )
+    .await?
+    .0;
+    let role_id = id();
+    for revision in 0..52 {
+        let change = if revision == 0 {
+            RoleChange::Initialize
+        } else {
+            RoleChange::PutRole {
+                role: Role {
+                    id: role_id.clone(),
+                    name: format!("Audit fixture {revision}"),
+                    color: "#4488aa".into(),
+                    description: String::new(),
+                    priority: 1,
+                    permissions: std::collections::BTreeSet::new(),
+                    mentionable: false,
+                },
+            }
+        };
+        let response = roles::change(
+            State(s.clone()),
+            headers(&session)?,
+            Json(RoleChangeRequest {
+                expected_revision: revision,
+                request_id: id(),
+                change,
+            }),
+        )
+        .await?
+        .0;
+        assert_eq!(response.value.revision, u64::try_from(revision + 1)?);
+    }
+    for (after, expected) in [(0, 50), (50, 2), (52, 0)] {
+        let page = roles::audit(
+            State(s.clone()),
+            Query(serde_json::from_value(serde_json::json!({"after":after}))?),
+            headers(&session)?,
+        )
+        .await?
+        .0;
+        page.verify(&encode(s.0.identity.signing_key.verifying_key().to_bytes()))?;
+        assert_eq!(page.value.head_revision, 52);
+        assert_eq!(page.value.entries.len(), expected);
+        assert_eq!(
+            page.value
+                .entries
+                .iter()
+                .map(|entry| entry.revision)
+                .collect::<Vec<_>>(),
+            ((after + 1)..=(after + u64::try_from(expected)?)).collect::<Vec<_>>()
+        );
+    }
+    let invalid = roles::audit(
+        State(s.clone()),
+        Query(serde_json::from_value(serde_json::json!({"after":53}))?),
+        headers(&session)?,
+    )
+    .await;
+    assert!(matches!(invalid, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+    let (other, contact) = identity()?;
+    let other = join(&s, &other, contact).await?;
+    assert!(
+        roles::audit(
+            State(s.clone()),
+            Query(roles::AuditQuery::default()),
+            headers(&other)?
+        )
+        .await
+        .is_err()
+    );
+    sqlx::query("UPDATE sessions SET active=false")
+        .execute(s.0.store.pool())
+        .await?;
+    assert!(
+        roles::audit(
+            State(s),
+            Query(roles::AuditQuery::default()),
+            headers(&session)?
+        )
+        .await
+        .is_err()
+    );
+    Ok(())
+}
+
+fn websocket_peer_closed(error: &tokio_tungstenite::tungstenite::Error) -> bool {
+    use tokio_tungstenite::tungstenite;
+    // Revocation requires transport termination, not a graceful close handshake.
+    // Windows can reset a socket dropped while the client's Pong is in flight.
+    matches!(error, tungstenite::Error::Io(error) if matches!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+    ))
+}
+
+#[tokio::test]
 #[ignore = "requires CORDS_TEST_DATABASE_URL; run explicitly against real PostgreSQL"]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Handshake, frame-limit and revocation checks share one live listener"
+)]
 async fn websocket_requires_normal_session_protocol_and_enforces_limits() -> Result<()> {
     use futures_util::{SinkExt as _, StreamExt as _};
     use tokio_tungstenite::{connect_async, tungstenite};
@@ -1375,7 +1494,8 @@ async fn websocket_requires_normal_session_protocol_and_enforces_limits() -> Res
     assert_eq!(response.headers()["sec-websocket-protocol"], WS_PROTOCOL);
     oversized
         .send(Message::Binary(vec![0; 4097].into()))
-        .await?;
+        .await
+        .context("sending oversized frame")?;
     let closed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match oversized.next().await {
@@ -1387,7 +1507,9 @@ async fn websocket_requires_normal_session_protocol_and_enforces_limits() -> Res
         Ok::<_, anyhow::Error>(())
     })
     .await;
-    closed.context("oversized socket did not close")??;
+    closed
+        .context("oversized socket did not close")?
+        .context("observing oversized socket rejection")?;
     let (mut socket, _) = connect_async(request(Some(&session.token), Some(WS_PROTOCOL))?).await?;
     sqlx::query("UPDATE sessions SET active=false")
         .execute(s.0.store.pool())
@@ -1397,8 +1519,13 @@ async fn websocket_requires_normal_session_protocol_and_enforces_limits() -> Res
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match socket.next().await {
-                Some(Ok(Message::Ping(_))) => socket.flush().await?,
+                Some(Ok(Message::Ping(_))) => match socket.flush().await {
+                    Ok(()) => (),
+                    Err(error) if websocket_peer_closed(&error) => break,
+                    Err(error) => return Err(error.into()),
+                },
                 Some(Ok(Message::Close(_))) | None => break,
+                Some(Err(error)) if websocket_peer_closed(&error) => break,
                 Some(Err(error)) => return Err(error.into()),
                 _ => anyhow::bail!("revoked session received an application notification"),
             }
@@ -1406,7 +1533,8 @@ async fn websocket_requires_normal_session_protocol_and_enforces_limits() -> Res
         Ok::<_, anyhow::Error>(())
     })
     .await
-    .context("revoked socket did not close")??;
+    .context("revoked socket did not close")?
+    .context("observing revoked socket rejection")?;
     assert!(
         matches!(connect_async(request(Some(&session.token), Some(WS_PROTOCOL))?).await,
         Err(tungstenite::Error::Http(response)) if response.status() == StatusCode::FORBIDDEN)
@@ -1424,6 +1552,299 @@ fn headers(session: &Session) -> Result<HeaderMap> {
         format!("Bearer {}", session.token).parse()?,
     );
     Ok(headers)
+}
+
+/// Manual fixture only, deliberately excluded from the automated suite. No
+/// production executable gains an unlock shortcut or acceptance-mode credential.
+#[tokio::test]
+#[ignore = "manual packaged desktop acceptance; requires explicit fixture directory and stop file"]
+async fn desktop_role_acceptance_fixture() -> Result<()> {
+    use cords_client_core::accounts::AccountRegistry;
+    let root = std::path::PathBuf::from(
+        std::env::var("CORDS_ROLE_DESKTOP_FIXTURE")
+            .context("set CORDS_ROLE_DESKTOP_FIXTURE to a new disposable directory")?,
+    );
+    anyhow::ensure!(
+        root.is_absolute() && !root.exists(),
+        "fixture directory must be new and absolute"
+    );
+    std::fs::create_dir(&root)?;
+    let (service, _server_directory, code) = fixture_with_state(false).await?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let ca = root.join("fixture-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let registry = AccountRegistry::open(&root.join("vault"), &migrations, Some(&ca)).await?;
+    // Public test-only password, never used for real accounts or deployed services.
+    let mut owner = registry
+        .create("Role acceptance", "Test-only Role Vault 9321!", false)
+        .await?;
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    owner
+        .create_channel_with_mode("Role acceptance", ConfidentialityMode::Public)
+        .await?;
+    if std::env::var("CORDS_ROLE_DESKTOP_SEED_AUDIT").as_deref() == Ok("1") {
+        use cords_protocol::roles::{Role, RoleChange, RoleChangeRequest};
+        println!("Seeding three authorized role changes for manual audit-view acceptance");
+        let role_id = id();
+        let changes = [
+            RoleChange::Initialize,
+            RoleChange::PutRole {
+                role: Role {
+                    id: role_id.clone(),
+                    name: "GUI role".into(),
+                    color: "#4488aa".into(),
+                    description: String::new(),
+                    priority: 1,
+                    permissions: std::collections::BTreeSet::new(),
+                    mentionable: false,
+                },
+            },
+            RoleChange::AssignRole {
+                account_id: owner.status().account_id,
+                role_id,
+            },
+        ];
+        for (revision, change) in changes.into_iter().enumerate() {
+            owner
+                .change_role_policy(&RoleChangeRequest {
+                    expected_revision: i64::try_from(revision)?,
+                    request_id: id(),
+                    change,
+                })
+                .await?;
+        }
+    }
+    owner.shutdown().await;
+    std::fs::write(
+        root.join("ready.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "origin":tls.origin,"state":root.join("vault"),"ca":ca,
+            "server_id":service.0.identity.server_id()
+        }))?,
+    )?;
+    println!("Packaged role fixture ready at {}", root.display());
+    tokio::time::timeout(Duration::from_mins(30), async {
+        while !root.join("stop").exists() {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .context("manual fixture timed out without completion")?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM server_roles WHERE name='GUI role'")
+        .fetch_one(service.0.store.pool())
+        .await?;
+    anyhow::ensure!(count == 1, "GUI role was not persisted exactly once");
+    let assignments: i64 = sqlx::query_scalar("SELECT count(*) FROM account_roles a JOIN server_roles r ON r.id=a.role_id WHERE r.name='GUI role'")
+        .fetch_one(service.0.store.pool()).await?;
+    anyhow::ensure!(
+        assignments == 1,
+        "GUI role was not assigned to exactly one test account"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; independent vaults over verified TLS"]
+#[allow(
+    clippy::too_many_lines,
+    reason = "One uninterrupted two-vault and same-origin restart acceptance scenario"
+)]
+async fn role_catalog_owner_api_is_signed_persistent_and_does_not_activate_access() -> Result<()> {
+    use cords_client_core::client::Client;
+    use cords_protocol::roles::{Role, RoleChange, RoleChangeRequest};
+    let (service, _directory, code) = fixture_with_state(false).await?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let mut tls = https_fixture(&service, &certificate).await?;
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let owner_path = root.path().join("owner");
+    let mut owner = Client::open(
+        &owner_path,
+        &migrations,
+        Some(b"role fixture owner"),
+        Some(&ca),
+    )
+    .await?;
+    let mut member = Client::open(
+        &root.path().join("member"),
+        &migrations,
+        Some(b"role fixture member"),
+        Some(&ca),
+    )
+    .await?;
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    member.trust(&tls.origin).await?;
+    member.authenticate().await?;
+    assert!(member.role_catalog().await.is_err());
+    let initial = owner.role_catalog().await?;
+    assert_eq!(initial.revision, 0);
+    assert!(!initial.active);
+    let init = RoleChangeRequest {
+        expected_revision: 0,
+        request_id: id(),
+        change: RoleChange::Initialize,
+    };
+    assert!(member.change_role_policy(&init).await.is_err());
+    let receipt = owner.change_role_policy(&init).await?;
+    assert_eq!(owner.change_role_policy(&init).await?, receipt);
+    let role = Role {
+        id: id(),
+        name: "Developer team".into(),
+        color: "#4488aa".into(),
+        description: "Persisted through verified TLS".into(),
+        priority: 10,
+        permissions: std::collections::BTreeSet::new(),
+        mentionable: false,
+    };
+    let create = RoleChangeRequest {
+        expected_revision: 1,
+        request_id: id(),
+        change: RoleChange::PutRole { role: role.clone() },
+    };
+    assert_eq!(owner.change_role_policy(&create).await?.revision, 2);
+    let stale = RoleChangeRequest {
+        expected_revision: 1,
+        request_id: id(),
+        change: RoleChange::DeleteRole {
+            role_id: role.id.clone(),
+        },
+    };
+    assert!(owner.change_role_policy(&stale).await.is_err());
+    let assign = RoleChangeRequest {
+        expected_revision: 2,
+        request_id: id(),
+        change: RoleChange::AssignRole {
+            account_id: member.status().account_id,
+            role_id: cords_protocol::roles::ADMIN_ROLE.into(),
+        },
+    };
+    let assignment_receipt = owner.change_role_policy(&assign).await?;
+    let assigned = owner.account_roles(&member.status().account_id).await?;
+    assert_eq!(assigned.catalog.revision, 3);
+    assert_eq!(
+        assigned.role_ids,
+        [cords_protocol::roles::ADMIN_ROLE.to_owned()].into()
+    );
+    assert!(
+        member
+            .account_roles(&member.status().account_id)
+            .await
+            .is_err()
+    );
+    assert!(owner.account_roles("../role-policy").await.is_err());
+    assert!(owner.account_roles("unknown-account").await.is_err());
+    // An inactive catalog is not an authority grant, including after reauthentication.
+    member.authenticate().await?;
+    assert!(member.role_catalog().await.is_err());
+    assert!(member.create_channel("must remain denied").await.is_err());
+    // A lost acknowledgement is recoverable after the target loses membership.
+    // Retrying is historical acknowledgement only, never a fresh grant.
+    sqlx::query("UPDATE memberships SET active=false WHERE device_id IN (SELECT device_id FROM device_contacts WHERE account_id=$1)")
+        .bind(member.status().account_id)
+        .execute(service.0.store.pool()).await?;
+    assert_eq!(owner.change_role_policy(&assign).await?, assignment_receipt);
+    let mut substituted = assign.clone();
+    substituted.change = RoleChange::AssignRole {
+        account_id: member.status().account_id,
+        role_id: role.id.clone(),
+    };
+    assert!(owner.change_role_policy(&substituted).await.is_err());
+    substituted.request_id = id();
+    substituted.expected_revision = 3;
+    assert!(owner.change_role_policy(&substituted).await.is_err());
+    let committed: i64 = sqlx::query_scalar("SELECT count(*) FROM role_policy_changes")
+        .fetch_one(service.0.store.pool())
+        .await?;
+    assert_eq!(committed, 3);
+    let audit = owner.role_audit(0).await?;
+    assert_eq!(audit.entries.len(), 3);
+    assert_eq!(audit.head_revision, 3);
+    assert_eq!(audit.entries[2].operation, "assign_role");
+    assert_eq!(audit.entries[2].actor_device_id, owner.status().device_id);
+    let page = owner.role_audit(2).await?;
+    assert_eq!(page.entries, audit.entries[2..]);
+    assert!(owner.role_audit(3).await?.entries.is_empty());
+    assert!(owner.role_audit(4).await.is_err());
+    assert!(member.role_audit(0).await.is_err());
+    owner.shutdown().await;
+    let mut owner = Client::open(
+        &owner_path,
+        &migrations,
+        Some(b"role fixture owner"),
+        Some(&ca),
+    )
+    .await?;
+    let catalog = owner.role_catalog().await?;
+    assert_eq!(catalog.revision, 3);
+    assert!(catalog.roles.contains(&role));
+    assert!(!catalog.active);
+    // Server service restart against the same database and identity retains exact policy.
+    let restarted = Service::with_policy(
+        service.0.store.clone(),
+        service.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::Public,
+    )?;
+    let address = format!(
+        "127.0.0.1:{}",
+        tls.origin.rsplit(':').next().context("TLS port missing")?
+    );
+    tls.task.abort();
+    assert!(
+        (&mut tls.task)
+            .await
+            .is_err_and(|error| error.is_cancelled())
+    );
+    let second_tls = https_fixture_at(&restarted, &certificate, &address).await?;
+    assert_eq!(second_tls.origin, tls.origin);
+    owner.authenticate().await?;
+    assert_eq!(owner.role_catalog().await?, catalog);
+    assert_eq!(owner.role_audit(0).await?, audit);
+    assert_eq!(
+        owner.account_roles(&member.status().account_id).await?,
+        assigned
+    );
+    // Removal must remain available after departure; retries do not create new audit entries.
+    let revoke = RoleChangeRequest {
+        expected_revision: 3,
+        request_id: id(),
+        change: RoleChange::RevokeRole {
+            account_id: member.status().account_id,
+            role_id: cords_protocol::roles::ADMIN_ROLE.into(),
+        },
+    };
+    let receipt = owner.change_role_policy(&revoke).await?;
+    assert_eq!(receipt.revision, 4);
+    assert_eq!(owner.change_role_policy(&revoke).await?, receipt);
+    assert!(
+        owner
+            .account_roles(&member.status().account_id)
+            .await?
+            .role_ids
+            .is_empty()
+    );
+    let removals = owner.role_audit(3).await?;
+    assert_eq!(removals.entries.len(), 1);
+    assert_eq!(removals.entries[0].operation, "revoke_role");
+    let mut unknown = revoke;
+    unknown.expected_revision = 4;
+    unknown.request_id = id();
+    unknown.change = RoleChange::RevokeRole {
+        account_id: "unknown-account".into(),
+        role_id: cords_protocol::roles::ADMIN_ROLE.into(),
+    };
+    assert!(owner.change_role_policy(&unknown).await.is_err());
+    assert_eq!(owner.role_audit(3).await?, removals);
+    Ok(())
 }
 async fn grant_fixture_owner(s: &Service, mut session: Session) -> Result<Session> {
     let member = session.membership.value.clone();

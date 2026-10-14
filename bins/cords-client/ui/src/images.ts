@@ -65,11 +65,54 @@ export function safeSvg(source: string): string {
   }
   return new XMLSerializer().serializeToString(document.documentElement);
 }
+
+const animationUnavailable =
+  'Animated profile-picture processing is not available yet. This image was not converted or saved.';
+
+// This legacy still-image path must never flatten an animation while the bundled
+// streaming JXL workflow is being integrated. Inspect framing before browser decode.
+function requireStillRaster(bytes: Uint8Array, mime: string): void {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const text = new TextDecoder('ascii');
+  let offset = mime === 'image/png' ? 8 : 12;
+  while (offset < bytes.length) {
+    const png = mime === 'image/png';
+    const overhead = png ? 12 : 8;
+    if (bytes.length - offset < overhead) throw new Error('Truncated image chunk');
+    const length = view.getUint32(offset + (png ? 0 : 4), !png);
+    const end = offset + overhead + length;
+    if (end > bytes.length) throw new Error('Truncated image chunk');
+    const tag = text.decode(bytes.subarray(offset + (png ? 4 : 0), offset + (png ? 8 : 4)));
+    if (
+      (png && tag === 'acTL') ||
+      (!png &&
+        (tag === 'ANIM' ||
+          tag === 'ANMF' ||
+          (tag === 'VP8X' && length > 0 && bytes[offset + 8] & 2)))
+    )
+      throw new Error(animationUnavailable);
+    if (png && tag === 'IEND') return;
+    offset = end + (!png && length % 2 ? 1 : 0);
+  }
+}
+
 export async function importImage(bytes: Uint8Array): Promise<string> {
   if (!bytes.length || bytes.length > 5 * 1024 * 1024)
     throw new Error('Choose an image up to 5 MiB');
   let mime: string;
   let payload = bytes;
+  const signature = new TextDecoder('ascii').decode(bytes.subarray(0, 6));
+  if (
+    signature === 'GIF87a' ||
+    signature === 'GIF89a' ||
+    (bytes[0] === 255 && bytes[1] === 10) ||
+    (bytes[0] === 0 &&
+      bytes[1] === 0 &&
+      bytes[2] === 0 &&
+      bytes[3] === 12 &&
+      new TextDecoder('ascii').decode(bytes.subarray(4, 8)) === 'JXL ')
+  )
+    throw new Error(animationUnavailable);
   if (bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71) mime = 'image/png';
   else if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) mime = 'image/jpeg';
   else if (
@@ -83,6 +126,7 @@ export async function importImage(bytes: Uint8Array): Promise<string> {
     );
     mime = 'image/svg+xml';
   }
+  if (mime === 'image/png' || mime === 'image/webp') requireStillRaster(bytes, mime);
   let binary = '';
   for (const byte of payload) binary += String.fromCharCode(byte);
   const image = new Image();

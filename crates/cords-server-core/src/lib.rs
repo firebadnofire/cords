@@ -1,5 +1,6 @@
 //! Phase 0 server identity and HTTP application services.
 
+pub mod authorization;
 pub mod messaging;
 pub mod ownership;
 

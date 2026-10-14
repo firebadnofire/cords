@@ -436,6 +436,15 @@ pub fn router(service: Service) -> Router {
             "/api/v1/routes/{route}/events",
             get(history).post(upload_event),
         )
+        .route(
+            "/api/v1/role-policy",
+            get(roles::catalog).post(roles::change),
+        )
+        .route(
+            "/api/v1/role-policy/accounts/{account}",
+            get(roles::account_roles),
+        )
+        .route("/api/v1/role-policy/audit", get(roles::audit))
         .route("/api/v1/events", get(websocket))
         .with_state(service)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(MAX_ENVELOPE))
@@ -1861,5 +1870,6 @@ async fn socket_loop(
 
 mod departure;
 mod lifecycle;
+mod roles;
 #[cfg(test)]
 mod tests;

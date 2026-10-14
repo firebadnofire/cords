@@ -2333,6 +2333,127 @@ impl Client {
         }
         Ok(requests)
     }
+    /// Read the owner-only preparatory catalog using the pinned server identity.
+    /// # Errors
+    /// Rejects unsupported/active policy versions, invalid signatures and transport failures.
+    pub async fn role_catalog(&mut self) -> Result<cords_protocol::roles::RoleCatalog> {
+        self.ensure_session().await?;
+        let catalog: Signed<cords_protocol::roles::RoleCatalog> =
+            self.get("/api/v1/role-policy").await?;
+        catalog.verify(&self.durable.server_key)?;
+        ensure!(
+            catalog.value.version == 1
+                && catalog.value.server_id == self.durable.server_id
+                && catalog.value.roles.len() <= cords_protocol::roles::MAX_ROLES,
+            "invalid role catalog"
+        );
+        ensure!(
+            !catalog.value.active,
+            "active role policy requires the upgraded enforcement client"
+        );
+        Ok(catalog.value)
+    }
+
+    /// Load a signed account assignment snapshot without combining different revisions.
+    /// # Errors
+    /// Rejects wrong account/server bindings, unknown roles and unsupported active policies.
+    pub async fn account_roles(
+        &mut self,
+        account: &str,
+    ) -> Result<cords_protocol::roles::AccountRoles> {
+        ensure!(
+            !account.is_empty()
+                && account.len() <= 128
+                && account
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+            "invalid account identifier"
+        );
+        self.ensure_session().await?;
+        let state: Signed<cords_protocol::roles::AccountRoles> = self
+            .get(&format!("/api/v1/role-policy/accounts/{account}"))
+            .await?;
+        state.verify(&self.durable.server_key)?;
+        let value = &state.value;
+        ensure!(
+            value.account_id == account
+                && value.catalog.version == 1
+                && value.catalog.server_id == self.durable.server_id
+                && !value.catalog.active
+                && value.catalog.roles.len() <= cords_protocol::roles::MAX_ROLES
+                && value.role_ids.len() <= cords_protocol::roles::MAX_ROLES
+                && value
+                    .role_ids
+                    .iter()
+                    .all(|id| id != cords_protocol::roles::DEFAULT_ROLE
+                        && value.catalog.roles.iter().any(|role| &role.id == id)),
+            "invalid or unsupported account role snapshot"
+        );
+        Ok(state.value)
+    }
+
+    /// Read a bounded, contiguous page of role administration metadata.
+    /// # Errors
+    /// Rejects unsigned, substituted, truncated and out-of-order responses.
+    pub async fn role_audit(&mut self, after: u64) -> Result<cords_protocol::roles::RoleAuditPage> {
+        use cords_protocol::roles::{ROLE_AUDIT_PAGE_SIZE, RoleAuditPage};
+        self.ensure_session().await?;
+        let page: Signed<RoleAuditPage> = self
+            .get(&format!("/api/v1/role-policy/audit?after={after}"))
+            .await?;
+        page.verify(&self.durable.server_key)?;
+        let value = &page.value;
+        ensure!(
+            value.version == 1
+                && value.server_id == self.durable.server_id
+                && value.after_revision == after
+                && value.head_revision >= after
+                && value.entries.len()
+                    == usize::try_from(
+                        (value.head_revision - after).min(ROLE_AUDIT_PAGE_SIZE as u64)
+                    )?,
+            "invalid role audit page"
+        );
+        for (index, entry) in value.entries.iter().enumerate() {
+            ensure!(
+                entry.revision == after + u64::try_from(index)? + 1
+                    && matches!(
+                        entry.operation.as_str(),
+                        "initialize" | "put_role" | "delete_role" | "assign_role" | "revoke_role"
+                    ),
+                "invalid role audit ordering or operation"
+            );
+        }
+        Ok(page.value)
+    }
+
+    /// Persist a preparatory role change; this does not activate channel permissions.
+    /// Keep the same request ID and contents when retrying an uncertain response.
+    /// # Errors
+    /// Rejects mismatched receipts, stale revisions and unauthorized changes.
+    pub async fn change_role_policy(
+        &mut self,
+        request: &cords_protocol::roles::RoleChangeRequest,
+    ) -> Result<cords_protocol::roles::RoleChangeReceipt> {
+        self.ensure_session().await?;
+        ensure!(request.expected_revision >= 0, "invalid policy revision");
+        let receipt: Signed<cords_protocol::roles::RoleChangeReceipt> =
+            self.post("/api/v1/role-policy", request, true).await?;
+        receipt.verify(&self.durable.server_key)?;
+        ensure!(
+            receipt.value.version == 1
+                && receipt.value.server_id == self.durable.server_id
+                && receipt.value.request_id == request.request_id
+                && receipt.value.request_digest == hash(canonical(request)?)
+                && receipt.value.actor_device_id == self.identity.authorization.value.device_id
+                && receipt.value.revision
+                    == u64::try_from(request.expected_revision)?
+                        .checked_add(1)
+                        .context("policy revision overflow")?,
+            "invalid role change receipt"
+        );
+        Ok(receipt.value)
+    }
     /// Approve a verified pending device request.
     /// # Errors
     /// Returns an error when approval is unauthorized or the request is no longer pending.
@@ -3171,7 +3292,12 @@ mod tests {
         );
         assert_eq!(client.ui_preferences()["displayName"], "private nickname");
         assert_eq!(
-            client.durable.pending.as_ref().unwrap().body["idempotency_key"],
+            client
+                .durable
+                .pending
+                .as_ref()
+                .context("pending request was not preserved")?
+                .body["idempotency_key"],
             "stable"
         );
         let independent = Client::open_existing(other.path(), &migrations(), PASS, None).await?;

@@ -6,6 +6,9 @@
     account_id: string;
     nickname: string;
     avatar_data: string;
+    avatar_x_milli?: number;
+    avatar_y_milli?: number;
+    avatar_zoom_milli?: number;
     hide_nickname_on_lock?: boolean;
     genericize?: boolean;
   };
@@ -142,6 +145,9 @@
                 {#if account.avatar_data}<img
                     src={account.avatar_data}
                     alt=""
+                    style:object-position="{(account.avatar_x_milli ?? 50_000) / 1000}% {(account.avatar_y_milli ?? 50_000) / 1000}%"
+                    style:transform="scale({(account.avatar_zoom_milli ?? 1000) / 1000})"
+                    style:transform-origin="{(account.avatar_x_milli ?? 50_000) / 1000}% {(account.avatar_y_milli ?? 50_000) / 1000}%"
                   />{:else if account.hide_nickname_on_lock || account.genericize}<UserRound
                     size={38}
                   />{:else}<b>{initials(account.nickname)}</b>{/if}

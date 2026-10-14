@@ -102,6 +102,18 @@ describe('server membership interface', () => {
       target,
       props: {
         status: { ...status, ownership_state: 'CLAIMED' },
+        loadRoleAudit: vi.fn(async () => {
+          throw new Error('Not used');
+        }),
+        loadAccountRoles: vi.fn(async () => {
+          throw new Error('Not used');
+        }),
+        loadRoles: vi.fn(async () => {
+          throw new Error('Role editor is not used by this membership test');
+        }),
+        changeRole: vi.fn(async () => {
+          throw new Error('Role editor is not used by this membership test');
+        }),
         channels: [],
         contacts: [],
         identity: {

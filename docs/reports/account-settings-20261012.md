@@ -146,6 +146,26 @@ PostgreSQL code/schema are unchanged. Roles/server units require those fresh gat
 No controlled power-loss test was performed. Changing a password does not revoke
 copies of the storage key or alter old backups, snapshots or journal copies.
 
+### Picker profile-crop follow-up
+
+The lock-screen account picker now stores its own non-secret copy of the local PNG
+preview's crop position and zoom, using the same object positioning and transform as
+the ordinary avatar component. Existing registry rows gain centered, 1× defaults
+without opening their vaults. On the next successful unlock, Cords mirrors the
+already protected profile preferences into the picker registry, so an existing
+account needs no manual profile edit before its next lock uses the saved crop.
+
+Genericized accounts continue to remove the preview and reset its crop metadata
+before it reaches the locked picker. No remote image is fetched while locked and
+no profile URL is added to the picker registry.
+
+Validation for this follow-up: `cargo test --release -p cords-client-core --locked`
+passed 15 tests, including metadata persistence and migration from the old registry
+schema; `npm test` passed 40 UI tests, including crop rendering in AccountPicker;
+`npm run check`, `npm run lint`, `npm run build`, release Clippy and `git diff --check`
+passed. A fresh packaged acceptance build was not made for this source-only
+follow-up; it remains required before calling the Windows rendering change released.
+
 ## Live roster observation
 
 The original running personal package is under `dist/cords-client-windows-x86_64-0.1.0`.

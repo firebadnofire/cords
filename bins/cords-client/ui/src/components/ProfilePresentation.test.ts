@@ -151,4 +151,30 @@ describe('verified profile presentation', () => {
     expect(target.textContent).toContain('Account 2');
     await unmount(component);
   });
+  it('applies the saved local crop to an account-picker picture', async () => {
+    const target = document.createElement('div');
+    const component = mount(AccountPicker, {
+      target,
+      props: {
+        accounts: [
+          {
+            account_id: 'fire',
+            nickname: 'FireBADnoFire',
+            avatar_data: 'data:image/png;base64,aGVsbG8=',
+            avatar_x_milli: 25_500,
+            avatar_y_milli: 74_250,
+            avatar_zoom_milli: 1_500,
+          },
+        ],
+        unlock: vi.fn(),
+        create: vi.fn(),
+        migrate: vi.fn(),
+        assess: vi.fn(),
+      },
+    });
+    const image = target.querySelector<HTMLImageElement>('.picker-avatar img');
+    expect(image?.getAttribute('style')).toContain('25.5% 74.25%');
+    expect(image?.getAttribute('style')).toContain('scale(1.5)');
+    await unmount(component);
+  });
 });

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "crates/cords-avatar-source",
   "bins/cords-dev",
   "bins/cords-client/src-tauri",
   "bins/cords-server",

@@ -8,6 +8,7 @@
   import Modal from './components/Modal.svelte';
   import Settings from './components/Settings.svelte';
   import Admin from './components/Admin.svelte';
+  import type { AccountRoles, RoleAuditPage, RoleCatalog, RoleReceipt } from './rolePolicy';
   import CordsRail from './components/CordsRail.svelte';
   import ConversationSidebar from './components/ConversationSidebar.svelte';
   import CordsHeader from './components/CordsHeader.svelte';
@@ -32,7 +33,14 @@
 
   let status: Status | null = null;
   let servers: ServerListing[] = [];
-  type LocalAccount = { account_id: string; nickname: string; avatar_data: string };
+  type LocalAccount = {
+    account_id: string;
+    nickname: string;
+    avatar_data: string;
+    avatar_x_milli: number;
+    avatar_y_milli: number;
+    avatar_zoom_milli: number;
+  };
   let accounts: LocalAccount[] = [];
   let selectedAccount = '';
   let activeAccount = '';
@@ -695,6 +703,10 @@
           channels = await action<Channel[]>('channels');
         }}
         {decideMembership}
+        loadRoles={() => action<RoleCatalog>('role_catalog')}
+        loadAccountRoles={(account) => action<AccountRoles>('account_roles', { account })}
+        loadRoleAudit={(after) => action<RoleAuditPage>('role_audit', { after })}
+        changeRole={(request) => action<RoleReceipt>('change_role_policy', { request })}
       />{/if}
     {#if overlay === 'connect'}<Modal
         title="Connection and trust"

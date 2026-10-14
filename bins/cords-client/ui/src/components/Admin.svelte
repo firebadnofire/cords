@@ -14,6 +14,16 @@
   import ConfidentialitySelect from './ConfidentialitySelect.svelte';
   import AdminUnavailable from './AdminUnavailable.svelte';
   import RemoteAvatar from './RemoteAvatar.svelte';
+  import RoleManagement from './RoleManagement.svelte';
+  import MemberRoles from './MemberRoles.svelte';
+  import RoleAudit from './RoleAudit.svelte';
+  import type {
+    AccountRoles,
+    RoleAuditPage,
+    RoleCatalog,
+    RoleRequest,
+    RoleReceipt,
+  } from '../rolePolicy';
   import {
     picture,
     memberName,
@@ -56,6 +66,10 @@
   }
   export let select: (id: string) => Promise<void>;
   export let decideMembership: (device: string, approve: boolean) => Promise<void>;
+  export let loadRoles: () => Promise<RoleCatalog>;
+  export let loadAccountRoles: (account: string) => Promise<AccountRoles>;
+  export let loadRoleAudit: (after: number) => Promise<RoleAuditPage>;
+  export let changeRole: (request: RoleRequest) => Promise<RoleReceipt>;
   type Page =
     | 'Overview'
     | 'Members'
@@ -319,75 +333,22 @@
               <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
                 >Manage server membership</button
               >
+              {#if manager}
+                {#key `${status.server_id}/${selectedContact.authorization.value.account_id}`}
+                  <MemberRoles
+                    account={selectedContact.authorization.value.account_id}
+                    load={loadAccountRoles}
+                    change={changeRole}
+                  />
+                {/key}
+              {/if}
             </div>{/if}
           <div class="admin-footnote">
             <LockKeyhole size={16} />Server membership removal and MLS conversation removal are
             distinct transitions.
           </div>
         {:else if page === 'Roles'}
-          <header class="admin-page-header">
-            <div>
-              <h1>Roles</h1>
-              <p>Roles map display labels to stable capability strings.</p>
-            </div>
-            <button
-              class="admin-primary dev-unimplemented"
-              disabled
-              aria-disabled="true"
-              title={pending}>Create role</button
-            >
-          </header>
-          <div class="role-workspace">
-            <aside class="role-list">
-              <span class="role-count">Current membership capabilities</span
-              >{#each identity?.membership?.capabilities ?? [] as capability (capability)}<button
-                  class="active"
-                  ><i></i><span
-                    ><strong>{capability}</strong><small>Granted to this device session</small
-                    ></span
-                  ></button
-                >{:else}<div class="empty"><small>No capability data available.</small></div>{/each}
-            </aside>
-            <div class="role-editor">
-              <div class="role-editor-head">
-                <div class="role-icon">R</div>
-                <div>
-                  <h2>Role editor</h2>
-                  <p>Role definitions and assignments are not exposed.</p>
-                </div>
-              </div>
-              {#each ['General permissions', 'Moderation', 'Messaging', 'Voice'] as group (group)}<section
-                  class="permission-group"
-                >
-                  <h3>{group}</h3>
-                  <div class="permission-row">
-                    <span
-                      ><strong>Future capability controls</strong><small
-                        >Requires an authoritative role API.</small
-                      ></span
-                    >
-                    <div class="permission-choice">
-                      <button
-                        class="dev-unimplemented"
-                        disabled
-                        aria-disabled="true"
-                        title={pending}>Deny</button
-                      ><button
-                        class="dev-unimplemented"
-                        disabled
-                        aria-disabled="true"
-                        title={pending}>Neutral</button
-                      ><button
-                        class="dev-unimplemented"
-                        disabled
-                        aria-disabled="true"
-                        title={pending}>Allow</button
-                      >
-                    </div>
-                  </div>
-                </section>{/each}
-            </div>
-          </div>
+          {#key status.server_id}<RoleManagement load={loadRoles} change={changeRole} />{/key}
         {:else if page === 'Channels'}
           <header class="admin-page-header">
             <div>
@@ -508,6 +469,8 @@
               disabled={busy || !manager}>Create channel</button
             >
           </form>
+        {:else if page === 'Audit Log'}
+          {#key status.server_id}<RoleAudit load={loadRoleAudit} />{/key}
         {:else}
           <AdminUnavailable {page} {status} {identity} />
         {/if}

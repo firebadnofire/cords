@@ -47,6 +47,26 @@ if (-not $versionMatch.Success -or $versionMatch.Groups[1].Value -notmatch '^[0-
 }
 $version = $versionMatch.Groups[1].Value
 
+$uiDirectory = Join-Path $repositoryRoot 'bins\cords-client\ui'
+# npm ci replaces node_modules, including executables that Windows locks while
+# the development server is running. Fail before partially removing dependencies.
+$esbuildDirectory = Join-Path $uiDirectory 'node_modules\@esbuild'
+$runningEsbuild = @(Get-CimInstance Win32_Process -Filter "Name = 'esbuild.exe'" | Where-Object {
+    $_.ExecutablePath -and $_.ExecutablePath.StartsWith(
+        "$esbuildDirectory\", [StringComparison]::OrdinalIgnoreCase
+    )
+})
+if ($runningEsbuild.Count -gt 0) {
+    $processIds = ($runningEsbuild | ForEach-Object { $_.ProcessId }) -join ', '
+    throw "Cords frontend dependencies are in use by esbuild (PID: $processIds). Stop this checkout's Vite/Tauri development server with Ctrl+C, then rerun this script. npm ci cannot replace a running executable on Windows."
+}
+
+$targetDirectory = if ($env:CARGO_TARGET_DIR) {
+    [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR)
+} else {
+    Join-Path $repositoryRoot 'target'
+}
+
 $nativeArchitecture = if (-not [string]::IsNullOrWhiteSpace($env:PROCESSOR_ARCHITEW6432)) {
     $env:PROCESSOR_ARCHITEW6432
 } else {
@@ -89,7 +109,7 @@ $packageRoot = Join-Path $temporaryRoot $packageName
 
 try {
     Write-Step "Building Cords Windows client $version for $architecture"
-    Push-Location (Join-Path $repositoryRoot 'bins\cords-client\ui')
+    Push-Location $uiDirectory
     try {
         Invoke-Native -Command npm.cmd -Arguments @('ci')
         Invoke-Native -Command npm.cmd -Arguments @('run', 'build')
@@ -99,9 +119,10 @@ try {
 
     Invoke-Native -Command cargo -Arguments @(
         'build', '--locked', '--release', '--manifest-path', $cargoToml,
-        '--target', $rustTarget, '-p', 'cords-client', '--features', 'custom-protocol'
+        '--target', $rustTarget, '--target-dir', $targetDirectory,
+        '-p', 'cords-client', '--features', 'custom-protocol'
     )
-    $client = Join-Path $repositoryRoot "target\$rustTarget\release\cords-client.exe"
+    $client = Join-Path $targetDirectory "$rustTarget\release\cords-client.exe"
     if (-not (Test-Path -LiteralPath $client -PathType Leaf) -or (Get-Item -LiteralPath $client).Length -eq 0) {
         throw "Windows client was not produced: $client"
     }
@@ -146,7 +167,21 @@ try {
             [IO.Path]::GetFileName($resolvedTemporaryRoot) -notmatch '^cords-windows-client-[0-9a-f]{32}$') {
             throw "Refusing to remove an unexpected staging directory: $resolvedTemporaryRoot"
         }
-        Remove-Item -LiteralPath $resolvedTemporaryRoot -Recurse -Force
+        # Windows scanners may briefly retain a directory entry after its last
+        # file is removed. Retry only this validated, run-specific staging path.
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            if (-not (Test-Path -LiteralPath $resolvedTemporaryRoot)) { break }
+            try {
+                Remove-Item -LiteralPath $resolvedTemporaryRoot -Recurse -Force -ErrorAction Stop
+                break
+            } catch {
+                if ($attempt -eq 3) {
+                    throw "Failed to clean build staging directory '$resolvedTemporaryRoot' after 3 attempts: $($_.Exception.Message)"
+                }
+                Write-Warning "Staging cleanup failed; retrying ($attempt/3): $($_.Exception.Message)"
+                Start-Sleep -Milliseconds 250
+            }
+        }
     }
 }
 

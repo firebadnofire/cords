@@ -47,6 +47,27 @@ Node.js/npm, and the Windows `tar.exe` utility:
 & C:\path\to\cords\build-scripts\windows-client.ps1
 ```
 
+Stop this checkout's Vite/Tauri development server with Ctrl+C before building.
+`npm ci` replaces dependencies and Windows cannot replace a running
+`esbuild.exe`; the script detects this conflict before installing. It does not
+terminate development servers automatically. Administrator privileges are not
+needed to resolve this lock.
+
+Temporary staging cleanup retries up to three times for transient Windows file
+locks and reports a persistent failure with the staging path.
+
+For a build on another drive, set these paths before running the script:
+
+```powershell
+$env:CARGO_TARGET_DIR = 'D:\cords-build\target'
+$env:CORDS_DIST_DIR = 'D:\cords-build\dist'
+$env:TEMP = 'D:\cords-build\temp'
+$env:TMP = $env:TEMP
+$env:npm_config_cache = 'D:\cords-build\npm-cache'
+New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+& C:\path\to\cords\build-scripts\windows-client.ps1
+```
+
 The result is a portable ZIP containing `Cords.exe`, `README.md`, the license,
 and `migrations/sqlite/`. Keep this resource directory beside the executable:
 release builds resolve migrations from the extracted package, not the source

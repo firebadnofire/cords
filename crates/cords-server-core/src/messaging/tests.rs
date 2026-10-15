@@ -662,20 +662,13 @@ async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and
             .nickname,
         "Second network user"
     );
-    let avatar = requests[0]
-        .user_card
-        .as_ref()
-        .context("missing card")?
-        .value
-        .avatar
-        .as_ref()
-        .context("missing avatar resolution data")?;
-    assert_eq!(avatar.url, "https://images.example/second-user.webp");
-    assert!(avatar.data.is_empty());
-    assert_eq!(
-        (&avatar.shape, avatar.x, avatar.y, avatar.zoom_milli),
-        (&"square".to_string(), 25, 75, 1500)
-    );
+    let card = requests[0].user_card.as_ref().context("missing card")?;
+    // The current native profile contract removed URL publication. Local PNG
+    // previews must not leak through admission while canonical JXL is pending.
+    assert!(card.value.avatar.is_none());
+    let published = serde_json::to_string(card)?;
+    assert!(!published.contains("images.example"));
+    assert!(!published.contains("data:image/png"));
     owner.approve_membership(&member.status().device_id).await?;
     member.authenticate().await?;
     assert!(member.create_channel("not permitted").await.is_err());
@@ -1634,6 +1627,10 @@ async fn desktop_role_acceptance_fixture() -> Result<()> {
     })
     .await
     .context("manual fixture timed out without completion")?;
+    if std::env::var("CORDS_ROLE_DESKTOP_DEFAULTS_ONLY").as_deref() == Ok("1") {
+        verify_untouched_role_defaults(&service).await?;
+        return Ok(());
+    }
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM server_roles WHERE name='GUI role'")
         .fetch_one(service.0.store.pool())
         .await?;
@@ -1644,6 +1641,23 @@ async fn desktop_role_acceptance_fixture() -> Result<()> {
         assignments == 1,
         "GUI role was not assigned to exactly one test account"
     );
+    Ok(())
+}
+
+async fn verify_untouched_role_defaults(service: &Service) -> Result<()> {
+    let mut tx = service.0.store.pool().begin().await?;
+    let snapshot = crate::authorization::persistence::load(&mut tx).await?;
+    anyhow::ensure!(
+        snapshot.revision == 0 && !snapshot.active,
+        "Opening Roles mutated policy"
+    );
+    let policy = snapshot.policy.context("Missing automatic defaults")?;
+    anyhow::ensure!(policy.roles().len() == 3, "Expected three built-in roles");
+    let changes: i64 = sqlx::query_scalar("SELECT count(*) FROM role_policy_changes")
+        .fetch_one(&mut *tx)
+        .await?;
+    anyhow::ensure!(changes == 0, "Opening Roles submitted a setup operation");
+    tx.rollback().await?;
     Ok(())
 }
 
@@ -1687,6 +1701,10 @@ async fn role_catalog_owner_api_is_signed_persistent_and_does_not_activate_acces
     let initial = owner.role_catalog().await?;
     assert_eq!(initial.revision, 0);
     assert!(!initial.active);
+    assert_eq!(initial.roles.len(), 3);
+    for role in crate::authorization::default_roles() {
+        assert!(initial.roles.contains(&role));
+    }
     let init = RoleChangeRequest {
         expected_revision: 0,
         request_id: id(),
@@ -2778,3 +2796,4 @@ async fn initial_binding_is_authenticated_durable_and_idempotent() -> Result<()>
     );
     Ok(())
 }
+mod enforced_roles;

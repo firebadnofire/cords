@@ -5,12 +5,33 @@
 
   export let value: Picture;
   export let title: string;
+  export let source: 'local' | 'url' = 'local';
   let url = value.url;
   let error = '';
   let busy = false;
   let drag: { pointer: number; clientX: number; clientY: number; x: number; y: number } | null =
     null;
   const clamp = (number: number, min: number, max: number) => Math.max(min, Math.min(max, number));
+
+  async function local(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    busy = true;
+    error = '';
+    try {
+      if (!file.size || file.size > 5 * 1024 * 1024)
+        throw new Error('Choose an image up to 5 MiB for the local preview');
+      const data = await importImage(new Uint8Array(await file.arrayBuffer()));
+      value = { ...blankPicture(), data };
+      url = '';
+    } catch (caught) {
+      error = String(caught);
+    } finally {
+      input.value = '';
+      busy = false;
+    }
+  }
 
   async function remote() {
     busy = true;
@@ -67,21 +88,37 @@
 
 <section class="image-editor" aria-label={title}>
   <h2>{title}</h2>
-  <label
-    >HTTPS image URL<input
-      type="url"
-      bind:value={url}
-      placeholder="https://example.org/avatar.webp"
-    /></label
-  >
-  <p class="hint">
-    Loading contacts this host directly and may reveal your IP address. The signed user card shares
-    this URL and crop metadata, never image bytes. A bounded PNG preview is kept only in encrypted
-    local preferences; SVG scripts, references, fonts and CSS are rejected.
-  </p>
+  {#if source === 'local'}
+    <label
+      >Choose a local image<input
+        type="file"
+        disabled={busy}
+        accept=".png,.apng,.jpg,.jpeg,.webp,.gif,.jxl,.svg,image/png,image/jpeg,image/webp,image/gif,image/jxl,image/svg+xml"
+        on:change={local}
+      /></label
+    >
+    <p class="hint">
+      This saves a private local preview. Shared JPEG XL upload is still being integrated. Animated
+      images are rejected rather than converted to a still image.
+    </p>
+  {:else}
+    <label
+      >HTTPS image URL<input
+        type="url"
+        bind:value={url}
+        placeholder="https://example.org/avatar.webp"
+      /></label
+    >
+    <p class="hint">
+      Loading contacts this host directly and may reveal your IP address. This Jewel image stays in
+      encrypted local preferences and is not published in your user card. SVG scripts, references,
+      fonts and CSS are rejected.
+    </p>
+  {/if}
   <div class="actions">
-    <button disabled={busy || !url} on:click={remote}>{busy ? 'Loading…' : 'Load URL'}</button
-    ><button
+    {#if source === 'url'}
+      <button disabled={busy || !url} on:click={remote}>{busy ? 'Loading…' : 'Load URL'}</button
+      >{/if}<button
       disabled={busy}
       on:click={() => {
         url = '';

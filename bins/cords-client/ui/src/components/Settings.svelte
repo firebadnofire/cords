@@ -37,7 +37,6 @@
   type Page =
     | 'My Account'
     | 'Identity & devices'
-    | 'Profile image'
     | 'Recovery'
     | 'Jewel'
     | 'Server trust'
@@ -53,7 +52,7 @@
     | 'Security'
     | 'Advanced';
   const groups: { title: string; pages: Page[] }[] = [
-    { title: 'Account', pages: ['My Account', 'Identity & devices', 'Profile image', 'Recovery'] },
+    { title: 'Account', pages: ['My Account', 'Identity & devices', 'Recovery'] },
     { title: 'App & connections', pages: ['Jewel', 'Server trust', 'Local history'] },
     {
       title: 'Preferences',
@@ -194,7 +193,8 @@
             <div>
               <strong>{draft.displayName || 'You'}</strong><span>Portable Cords identity</span
               ><small
-                >Nickname, profile image URL and crop are shared when you request membership.</small
+                >Your nickname is shared when you request membership. Image previews stay local
+                until JPEG XL publication is available.</small
               >
             </div>
           </div>
@@ -204,27 +204,6 @@
           <label>Display name<input maxlength="100" bind:value={draft.displayName} /></label
           ><ImageEditor title="Profile picture" bind:value={draft.avatar} />
         </section>
-      {:else if page === 'Profile image'}
-        <header class="settings-page-header">
-          <h1>Profile image</h1>
-          <p>Choose, validate and crop the image shown by this installation.</p>
-        </header>
-        <div class="profile-preview-row">
-          <Avatar value={draft.avatar} text={draft.displayName.slice(0, 2)} size={76} />
-          <div>
-            <strong>Local presentation</strong>
-            <p>
-              The HTTPS URL and crop are public presentation metadata. The normalized preview stays
-              encrypted on this installation.
-            </p>
-          </div>
-        </div>
-        <ImageEditor title="Profile image source and crop" bind:value={draft.avatar} />
-        <div class="account-banner">
-          <Info size={19} /><span
-            >Signed user cards publish the HTTPS URL and crop, not the locally cached image bytes.</span
-          >
-        </div>
       {:else if page === 'Jewel'}
         <header class="settings-page-header">
           <h1>The Jewel</h1>
@@ -249,7 +228,7 @@
             ><option value="none">Decorative</option></select
           ></label
         >
-        <ImageEditor title="Jewel image" bind:value={draft.jewel} />
+        <ImageEditor title="Jewel image" source="url" bind:value={draft.jewel} />
       {:else if page === 'Identity & devices'}
         <header class="settings-page-header">
           <h1>Portable identity</h1>
@@ -526,8 +505,8 @@
         </header>
         <div class="account-banner">
           <LockKeyhole size={19} /><span
-            >Loading an HTTPS profile image contacts that host directly and may reveal your IP
-            address.</span
+            >Profile pictures do not contact external image hosts. Local previews stay encrypted on
+            this installation.</span
           >
         </div>
         <label class="toggle-row"
@@ -782,7 +761,7 @@
         >
       {/if}
 
-      {#if ['My Account', 'Profile image', 'Jewel', 'Appearance', 'Accessibility', 'Privacy', 'Security'].includes(page)}<footer
+      {#if ['My Account', 'Jewel', 'Appearance', 'Accessibility', 'Privacy', 'Security'].includes(page)}<footer
           class="settings-actions"
         >
           <button class="primary" disabled={busy || !status} on:click={persist}

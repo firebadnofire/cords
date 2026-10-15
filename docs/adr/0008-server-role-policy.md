@@ -7,6 +7,51 @@
 - Extends AGENTS.md section 10 with persistent account roles. Existing capability
   strings retain meaning; owner-only transitions remain owner-only.
 
+## Approved enforced-RBAC milestone (2026-10-15)
+
+The approved [seven-checkpoint contract](../plans/member-rbac-milestone.md)
+supersedes this ADR's preparatory-runtime end state and server-distributed role
+notification design. The following requirements are normative for that milestone;
+the remaining sections describe the baseline until the integration gate passes.
+
+New installations must enforce RBAC immediately once the integrated implementation
+is delivered. There is no permanent legacy/preparatory mode or activation wizard.
+Development assignments are archived, never silently promoted to authority. Native
+signature validation constructs restricted encrypted-channel account boundaries
+from existing active, delivery-enabled device memberships only. Account access
+cannot reactivate excluded/revoked devices, change joined-sequence history bounds,
+or create MLS membership. Invalid/expired identity evidence supplies no grant.
+
+Pending cryptographic removals fence application sends only in affected encrypted
+channels. Authorized control processing remains possible. An unavailable committer
+leaves the original fenced; it never justifies use of revoked devices or old keys.
+Recovery uses a current eligible committer or explicitly confirmed authenticated
+succession with fresh channel identity and MLS state. The existing owner/create
+and scoped management authority remains required. The initiating device signs both
+the pinned predecessor identity and proposed successor identity; clients verify
+the initiator chain and signed server acceptance. Pending-removal succession needs
+a dedicated, validated recovery path, not general removal of the existing guard.
+Replacement is not continuity of the original group, and partial local archives
+may differ between devices.
+
+Moderation must include account kick, ban/unban, timeouts and authenticated durable
+message deletion. Redaction never removes required MLS control messages. Exact
+OpenMLS omission limits and safe rejoin must pass independent-client tests before
+deletion is activated. Server-side own-message deletion binds authenticated event
+authorship without requiring encrypted plaintext.
+
+Notifications originate in client-core after authenticated retrieval/decryption.
+Direct, role and everyone mentions are structured message content; encrypted routes
+do not disclose them for recipient distribution. Local mention filtering is not
+server-enforced mention authorization. Notification preferences, initial-sync
+boundaries and persistent deduplication are independent of unread/read state.
+Defaults are All Messages with hidden previews; roles never determine notification
+access. Actual packaged tests are required per supported desktop platform.
+
+Checkpoint candidates stay outside automatic migrations until every dependent
+security gate passes. Schema 15 is rejected by the current schema-14 service. Native
+boundary preparation does not itself activate RBAC or establish endpoint coverage.
+
 ## Deterministic authority
 
 Roles use stable opaque identifiers independent of mutable names. `$` is presentation
@@ -15,6 +60,14 @@ and `builtin:admin`; custom IDs are UUIDs. The default role is implicitly held b
 accepted account. Admin explicitly inherits moderator grants; priority alone grants
 no capabilities and does not inherit every lower custom role. All other inheritance
 is excluded to avoid cycles and surprising grant propagation.
+
+The server pre-initializes the three built-in role definitions during database
+migration. Opening Roles requires no setup operation. Schema 14 seeds only an
+untouched empty catalog and preserves all existing definitions and assignments.
+The installed defaults are revision zero, with no invented actor or user audit
+event. An older preparatory client's explicit `initialize` request may acknowledge
+that untouched baseline once, but cannot reset an edited catalog. Default role
+definitions do not activate RBAC or grant explicit account assignments.
 
 Effective server grants are the union of assigned roles, default, and explicit admin
 inheritance. Revocation/burn/inactive account/unapproved device gates apply first.

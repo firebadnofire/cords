@@ -82,6 +82,16 @@ publication remains disabled under its independently incomplete security gates.
 
 ## Compatibility and rollback
 
+Role catalog startup now uses schema 14: migration
+`202610140001_role_catalog_defaults.sql` seeds the three built-ins at baseline
+revision zero only when the schema-13 catalog is untouched and empty. It preserves
+existing customizations, assignments, audit and idempotency records. Migration
+failure rolls back atomically; retry uses the same migration. Back up the matching
+database and server identity before operator deployment. Schema-13 binaries reject
+schema 14; do not downgrade metadata or rewind live state to run an older binary.
+Restore rehearsal is limited to isolated backups, otherwise repair forward with a
+compatible binary. No policy activation or live deployment is implied.
+
 Keep legacy routes and signed records intact. Store policy changes with expected
 revision, authenticated actor, idempotency key and atomic audit entry. Stale writes
 return conflict, never last-writer-wins. After policy activation, old binaries that

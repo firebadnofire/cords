@@ -397,42 +397,9 @@ impl Client {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("You")
             .to_owned();
-        let picture = preferences.get("avatar");
-        let url = picture
-            .and_then(|p| p.get("url"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        let avatar = if url.is_empty() {
-            None
-        } else {
-            // Quantization is explicit and bounded; malformed preferences must not silently clamp.
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            fn quantize(value: f64, min: f64, max: f64, scale: f64) -> Result<u16> {
-                ensure!(
-                    value.is_finite() && (min..=max).contains(&value),
-                    "invalid avatar crop or zoom"
-                );
-                Ok((value * scale).round() as u16)
-            }
-            let number = |field: &str, default: f64| {
-                picture
-                    .and_then(|p| p.get(field))
-                    .and_then(serde_json::Value::as_f64)
-                    .unwrap_or(default)
-            };
-            Some(cords_protocol::messaging::UserCardPicture {
-                url: url.into(),
-                data: String::new(),
-                shape: picture
-                    .and_then(|p| p.get("shape"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("circle")
-                    .into(),
-                x: quantize(number("x", 50.0), 0.0, 100.0, 1.0)?,
-                y: quantize(number("y", 50.0), 0.0, 100.0, 1.0)?,
-                zoom_milli: quantize(number("zoom", 1.0), 1.0, 4.0, 1000.0)?,
-            })
-        };
+        // URL profile pictures were removed. Private PNG previews must never be
+        // published as a substitute for the pending canonical lossless JXL path.
+        let avatar = None;
         let mut contact = self.identity.contact(&self.crypto.public_key())?;
         contact.user_card = Some(self.identity.sign_device(
             cords_protocol::messaging::UserCard {
@@ -3469,7 +3436,7 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
-    async fn user_card_publishes_avatar_url_without_local_png_cache() -> Result<()> {
+    async fn user_card_never_publishes_removed_avatar_url_or_private_preview() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
         client
@@ -3488,18 +3455,11 @@ mod tests {
             .await?;
 
         let contact = client.self_contact()?;
-        let avatar = contact
-            .user_card
-            .context("missing user card")?
-            .value
-            .avatar
-            .context("missing avatar")?;
-        assert_eq!(avatar.url, "https://images.example/profile.webp");
-        assert!(avatar.data.is_empty());
-        let encoded = serde_json::to_string(&avatar)?;
-        assert!(!encoded.contains("data:image"));
-        assert!(!encoded.contains("\"data\""));
-        assert_eq!((avatar.x, avatar.y, avatar.zoom_milli), (25, 75, 1500));
+        let card = contact.user_card.context("missing user card")?;
+        assert!(card.value.avatar.is_none());
+        let encoded = serde_json::to_string(&card)?;
+        assert!(!encoded.contains("images.example"));
+        assert!(!encoded.contains("local-only-cache"));
         Ok(())
     }
     #[tokio::test]

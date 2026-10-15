@@ -60,7 +60,7 @@ async function settle() {
   await tick();
 }
 describe('verified profile presentation', () => {
-  it('shows another device’s nickname and resolved cropped picture in public messages', async () => {
+  it('shows another device’s nickname without fetching their removed URL picture', async () => {
     invokeMock.mockResolvedValue(btoa('image'));
     const target = document.createElement('div');
     const component = mount(ConversationView, {
@@ -92,8 +92,8 @@ describe('verified profile presentation', () => {
     expect(target.querySelector('.message-meta strong')?.getAttribute('title')).toBe(
       'arbiter-device',
     );
-    expect(target.querySelector('.cords-message img')?.getAttribute('style')).toContain('25% 75%');
-    expect(invokeMock).toHaveBeenCalledWith('load_image_url', {
+    expect(target.querySelector('.cords-message img')).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalledWith('load_image_url', {
       url: 'https://images.example/arbiter.webp',
     });
     await unmount(component);
@@ -161,6 +161,7 @@ describe('verified profile presentation', () => {
             account_id: 'fire',
             nickname: 'FireBADnoFire',
             avatar_data: 'data:image/png;base64,aGVsbG8=',
+            avatar_shape: 'square',
             avatar_x_milli: 25_500,
             avatar_y_milli: 74_250,
             avatar_zoom_milli: 1_500,
@@ -175,6 +176,33 @@ describe('verified profile presentation', () => {
     const image = target.querySelector<HTMLImageElement>('.picker-avatar img');
     expect(image?.getAttribute('style')).toContain('25.5% 74.25%');
     expect(image?.getAttribute('style')).toContain('scale(1.5)');
+    expect(image?.parentElement?.classList.contains('square')).toBe(true);
+    expect(target.querySelector('.add-account .picker-avatar.square')).toBeNull();
+    await unmount(component);
+  });
+  it('does not reveal an image or its square shape for a genericized picker entry', async () => {
+    const target = document.createElement('div');
+    const component = mount(AccountPicker, {
+      target,
+      props: {
+        accounts: [
+          {
+            account_id: 'fire',
+            nickname: 'Account 1',
+            genericize: true,
+            avatar_data: 'data:image/png;base64,aGVsbG8=',
+            avatar_shape: 'square',
+          },
+        ],
+        unlock: vi.fn(),
+        create: vi.fn(),
+        migrate: vi.fn(),
+        assess: vi.fn(),
+      },
+    });
+    expect(target.querySelector('.picker-avatar img')).toBeNull();
+    expect(target.querySelector('.picker-avatar.square')).toBeNull();
+    expect(target.querySelector('.picker-avatar svg')).not.toBeNull();
     await unmount(component);
   });
 });

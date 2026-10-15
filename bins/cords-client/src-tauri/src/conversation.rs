@@ -128,6 +128,7 @@ fn picker_safe(mut accounts: Vec<AccountSummary>) -> Vec<AccountSummary> {
     for (index, account) in accounts.iter_mut().enumerate() {
         if account.genericize {
             account.avatar_data.clear();
+            account.avatar_shape = "circle".into();
             account.avatar_x_milli = 50_000;
             account.avatar_y_milli = 50_000;
             account.avatar_zoom_milli = 1_000;
@@ -160,6 +161,11 @@ async fn mirror_picker_metadata(
         .pointer("/avatar/data")
         .and_then(Value::as_str)
         .unwrap_or_default()
+        .to_string();
+    account.avatar_shape = preferences
+        .pointer("/avatar/shape")
+        .and_then(Value::as_str)
+        .unwrap_or("circle")
         .to_string();
     let crop_number = |field: &str, default: f64, min: f64, max: f64, scale: f64| {
         preferences
@@ -811,8 +817,37 @@ fn lock_required(
 
 #[cfg(test)]
 mod tests {
-    use super::lock_required;
+    use super::{AccountSummary, lock_required, picker_safe};
     use std::time::Duration;
+
+    #[test]
+    fn picker_preserves_visible_shape_and_redacts_genericized_shape() {
+        let visible = AccountSummary {
+            account_id: "visible".into(),
+            nickname: "Visible".into(),
+            avatar_data: "data:image/png;base64,aGVsbG8=".into(),
+            avatar_shape: "square".into(),
+            avatar_x_milli: 25_000,
+            avatar_y_milli: 75_000,
+            avatar_zoom_milli: 1_500,
+            genericize: false,
+            hide_nickname_on_lock: false,
+            auto_lock_minutes: Some(15),
+            lock_on_os_lock: true,
+            lock_on_suspend: true,
+        };
+        let mut hidden = visible.clone();
+        hidden.genericize = true;
+        hidden.hide_nickname_on_lock = true;
+        let result = picker_safe(vec![visible.clone(), hidden]);
+        assert_eq!(result[0], visible);
+        assert!(result[1].avatar_data.is_empty());
+        assert_eq!(result[1].avatar_shape, "circle");
+        assert_eq!(result[1].avatar_x_milli, 50_000);
+        assert_eq!(result[1].avatar_y_milli, 50_000);
+        assert_eq!(result[1].avatar_zoom_milli, 1_000);
+        assert_eq!(result[1].nickname, "Account 2");
+    }
 
     #[test]
     fn inactivity_and_suspend_lock_without_network_activity_input() {

@@ -2,9 +2,16 @@
 
 Status: implementation in progress; no feature acceptance gate is complete.
 Current evidence and remaining codec work: [2026-10-14 implementation report](../reports/embedded-jxl-avatars-20261014.md).
+Picker shape correction and current missing publication/rendering path:
+[2026-10-14 follow-up](../reports/avatar-picker-shape-20261014.md).
 Approved scope: local upload, animated cropping, lossless embedded JXL, signed
 profile distribution, and playback in the existing Rust/Svelte/Tauri application.
-HTTPS avatars remain an advanced option. Preserve concurrent account and role work.
+User amendment (2026-10-14): remove URL profile pictures; local files are the only
+profile-picture source. Preserve concurrent account and role work and the separate
+Jewel behavior. First replace the profile editor's URL controls with a local picker,
+stop publishing/fetching profile URLs, and validate selection/crop/failure behavior.
+The existing private still-image preview is explicitly local-only until the JXL
+pipeline is connected; do not publish it as a substitute for lossless JXL.
 
 ## Plan and execution gates
 
@@ -31,14 +38,14 @@ type, build, mock, or partial implementation.
    do not instantiate two default 256 MiB memories under the shared budget. This
    keeps the same 384 MiB heap reservation as source-WASM-to-JXL processing.
 2. **Signed profiles:** update the unreleased client/server baseline together;
-   authenticate tagged embedded/URL avatars with existing device signatures and
+   authenticate embedded avatars with existing device signatures and
    deterministic CBOR. Add durable profile ordering and bounded server validation.
 3. **Distribution:** separate profile presentation from hot-path authorization,
    exchange device-bound card hashes on member/request pages, fetch full signed
    cards when changed, and publish idempotently to joined servers. Validate with
    real PostgreSQL and independent clients across two servers and restarts.
 4. **UI and caches:** upload during creation/editing, animated drag/zoom crop,
-   confirmation/removal, advanced URL mode, common avatar player, account-isolated
+   confirmation/removal, common avatar player, account-isolated
    bounded caches, accessibility and visibility pausing. Test the actual packaged
    upload-to-remote-render workflow on Windows, Linux and macOS without native JXL.
 5. **Packaging/documentation:** bundle local codec assets, narrow CSP additions,
@@ -85,13 +92,13 @@ type, build, mock, or partial implementation.
 
 ## Signed profile and validation contract
 
-- Exactly one tagged source: embedded `{encoding: base64, mime: image/jxl,
-sha256, data}` or HTTPS URL, with shape presentation. Embedded crops are baked.
+- Only an embedded source: `{encoding: base64, mime: image/jxl,
+sha256, data}`, with shape presentation. Embedded crops are baked. URL sources are rejected.
   Signature authenticates the complete card. Strict Base64, digest, actual format,
   dimensions and bounded decoding checks apply to untrusted incoming images.
 - No legacy signed-card reader, downgrade, alternate signed representation or
   fabricated migration signature. Reject incompatible servers before publication.
-  Existing URL selection remains supported in the current baseline.
+  URL selection, publication and fetching are removed from the current client.
 - Signed per-account/device profile revisions increase on an actual profile
   change, using checked arithmetic and atomic durable saves. Reuse one signed
   revision across servers, authentication renewal and retries. Do not use timestamps
@@ -121,7 +128,7 @@ notification images never replace the canonical animation.
 Hash-based caches are bounded to 64 MiB encoded memory, 128 MiB decoded memory and
 128 MiB sealed disk. These are ceilings, not additional allowances above the shared
 processing memory cap. Evict with LRU; stream large animations. Clear workers and
-memory on lock/account switch; respect picker privacy and remote HTTPS safeguards.
+memory on lock/account switch; respect picker privacy. Profile images never fetch external URLs.
 Invalid avatars fall back to initials with an unavailable state and bounded retries.
 
 ## Validation
@@ -137,5 +144,5 @@ Protocol and integration tests cover restart-persistent rollback/conflict reject
 cross-server stale replay, idempotency, cache tampering, validation floods and
 bounded concurrency, publication/replacement/removal/offline saves, scoped transport
 limits and isolated account switches. UI tests cover actual upload/crop/save/player,
-reduced motion, pausing, errors and advanced URLs. Report packaged/platform/CI proof
+reduced motion, pausing, errors and rejection of URL sources. Report packaged/platform/CI proof
 separately from local tests; do not claim unavailable gates passed.

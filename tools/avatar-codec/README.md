@@ -89,3 +89,20 @@ requires encode workers to report each synchronous decode's entry/exit for the
 15-second watchdog. Its tests include a real worker stuck in WebAssembly. The
 codec command loop, editor integration and per-allocation worker accounting are
 not yet connected; this supervisor alone is not the complete aggregate-memory gate.
+
+The production TypeScript `avatarJxlReader` now wraps the actual coalesced decoder
+incrementally. It preserves raw duration ticks/timebase/loops, returns one borrowed
+WASM canvas at a time, enforces incoming-avatar dimensions, and cleans up on decode
+failure. It requires an already reserved, exclusively owned module and the external
+worker watchdog; it does not create a worker or complete the upload/player path.
+Run its real-WASM adapter tests with Node 24 (the command also runs the ten core
+codec tests):
+
+```powershell
+node --experimental-transform-types tools/avatar-codec/test-reader.mts target/avatar-codec
+```
+
+These tests require the fixture-enabled build above. Missing assets fail explicitly.
+They compare every frame with the fixture decoder oracle, exercise an actual
+128 MiB imported memory, and check truncated input, cleanup, static alpha and
+over-limit incoming payloads. Tiny fixture arrays are test-only.

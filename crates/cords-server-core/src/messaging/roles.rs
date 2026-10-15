@@ -1,9 +1,9 @@
-//! Preparatory role administration. Schema 13 prevents activation; only the
-//! current owner can edit the catalog until the full enforcement gate passes.
+//! Role administration. The normal preparatory schema remains owner-only;
+//! the staged enforced schema derives actors from current durable policy.
 use super::*;
-use crate::authorization::{PolicyError, Subject, persistence};
+use crate::authorization::{PolicyError, Subject, persistence, runtime};
 use cords_protocol::roles::{
-    AccountRoles, RoleCatalog, RoleChange, RoleChangeReceipt, RoleChangeRequest,
+    AccountRoles, Permission, RoleCatalog, RoleChange, RoleChangeReceipt, RoleChangeRequest,
 };
 
 impl From<persistence::Error> for ApiError {
@@ -24,6 +24,53 @@ impl From<persistence::Error> for ApiError {
             }
         }
     }
+}
+
+impl From<runtime::Error> for ApiError {
+    fn from(error: runtime::Error) -> Self {
+        match error {
+            runtime::Error::Denied | runtime::Error::Policy(PolicyError::Denied) => denied(),
+            runtime::Error::Repository(error) => error.into(),
+            runtime::Error::Database(error) => error.into(),
+            runtime::Error::NotReady | runtime::Error::Encoding(_) | runtime::Error::Policy(_) => {
+                Self(StatusCode::SERVICE_UNAVAILABLE, "CORDS_POLICY_UNAVAILABLE")
+            }
+        }
+    }
+}
+
+async fn administrative_subject(
+    service: &Service,
+    tx: &mut Tx<'_>,
+    member: &Membership,
+    any_permission: &[Permission],
+) -> Result<Subject> {
+    let active: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(&mut **tx)
+        .await?;
+    if !active {
+        // This branch is exclusively the pre-enforcement schema. Its assignments
+        // remain preparatory and are archived before the staged schema activates.
+        return owner_subject(tx, member).await;
+    }
+    let decision = runtime::load(
+        tx,
+        &member.device_id,
+        &service.0.identity.server_id(),
+        &encode(service.0.identity.signing_key.verifying_key().to_bytes()),
+        now()?,
+        None,
+    )
+    .await?;
+    decision.require(Permission::ViewServer)?;
+    if !any_permission.is_empty()
+        && !any_permission
+            .iter()
+            .any(|permission| decision.permissions.contains(permission))
+    {
+        return Err(denied());
+    }
+    Ok(decision.subject)
 }
 
 async fn owner_subject(tx: &mut Tx<'_>, member: &Membership) -> Result<Subject> {
@@ -54,11 +101,17 @@ pub(super) async fn catalog(
     State(s): State<Service>,
     headers: HeaderMap,
 ) -> Result<Json<Signed<RoleCatalog>>> {
-    let member = s.authenticate(&headers, "server.manage").await?;
+    let member = s.authenticate(&headers, "channel.read").await?;
     let mut tx = s.0.store.pool().begin().await?;
     s.authorize_mutation(&mut tx, &headers, &member, None)
         .await?;
-    owner_subject(&mut tx, &member.value).await?;
+    administrative_subject(
+        &s,
+        &mut tx,
+        &member.value,
+        &[Permission::ManageRoles, Permission::AssignRoles],
+    )
+    .await?;
     let snapshot = persistence::load(&mut tx).await?;
     let roles = snapshot.policy.map_or_else(Vec::new, |policy| {
         policy.roles().values().cloned().collect()
@@ -79,11 +132,11 @@ pub(super) async fn change(
     headers: HeaderMap,
     Json(request): Json<RoleChangeRequest>,
 ) -> Result<Json<Signed<RoleChangeReceipt>>> {
-    let member = s.authenticate(&headers, "server.manage").await?;
+    let member = s.authenticate(&headers, "channel.read").await?;
     let mut tx = s.0.store.pool().begin().await?;
     s.authorize_mutation(&mut tx, &headers, &member, None)
         .await?;
-    let actor = owner_subject(&mut tx, &member.value).await?;
+    let actor = administrative_subject(&s, &mut tx, &member.value, &[]).await?;
     let revision = if let Some(revision) =
         persistence::committed_revision(&mut tx, &member.value.device_id, &request).await?
     {
@@ -128,11 +181,17 @@ pub(super) async fn account_roles(
     if account.is_empty() || account.len() > 128 {
         return Err(bad());
     }
-    let member = s.authenticate(&headers, "server.manage").await?;
+    let member = s.authenticate(&headers, "channel.read").await?;
     let mut tx = s.0.store.pool().begin().await?;
     s.authorize_mutation(&mut tx, &headers, &member, None)
         .await?;
-    owner_subject(&mut tx, &member.value).await?;
+    administrative_subject(
+        &s,
+        &mut tx,
+        &member.value,
+        &[Permission::ManageRoles, Permission::AssignRoles],
+    )
+    .await?;
     let snapshot = persistence::load(&mut tx).await?;
     let exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM account_heads WHERE account_id=$1)")
@@ -178,11 +237,11 @@ pub(super) async fn audit(
     headers: HeaderMap,
 ) -> Result<Json<Signed<cords_protocol::roles::RoleAuditPage>>> {
     use cords_protocol::roles::{ROLE_AUDIT_PAGE_SIZE, RoleAuditEntry, RoleAuditPage};
-    let member = s.authenticate(&headers, "server.manage").await?;
+    let member = s.authenticate(&headers, "channel.read").await?;
     let mut tx = s.0.store.pool().begin().await?;
     s.authorize_mutation(&mut tx, &headers, &member, None)
         .await?;
-    owner_subject(&mut tx, &member.value).await?;
+    administrative_subject(&s, &mut tx, &member.value, &[Permission::ViewAudit]).await?;
     let snapshot = persistence::load(&mut tx).await?;
     if query.after > uint(snapshot.revision)? {
         return Err(bad());
@@ -267,6 +326,16 @@ async fn assignment_target(tx: &mut Tx<'_>, account: &str) -> Result<Subject> {
             .await?;
     if burned {
         return Err(denied());
+    }
+    let active: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(&mut **tx)
+        .await?;
+    if active {
+        let admitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_account_admission WHERE account_id=$1 AND accepted)")
+            .bind(account).fetch_one(&mut **tx).await?;
+        if !admitted {
+            return Err(denied());
+        }
     }
     let contacts: Vec<String> = sqlx::query_scalar(
         "SELECT d.contact FROM device_contacts d JOIN memberships m ON m.device_id=d.device_id WHERE d.account_id=$1 AND m.active AND NOT EXISTS(SELECT 1 FROM device_revocations r WHERE r.device_id=d.device_id) FOR SHARE OF d,m",

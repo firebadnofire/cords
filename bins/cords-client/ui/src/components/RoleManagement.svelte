@@ -134,12 +134,10 @@
   </div>
   {#if !catalog.roles.length}
     <p>
-      No role catalog has been initialized. Start with $default, $moderator, and $admin. This does
-      not assign roles or grant access.
+      This server has no built-in roles. Ask its operator to upgrade the server and apply its
+      database migrations, then reload.
     </p>
-    <button disabled={busy || !!retry} on:click={() => submit({ operation: 'initialize' })}
-      >Initialize role catalog</button
-    >
+    <button disabled={busy || !!retry} on:click={reload}>Reload server state</button>
   {:else}
     <div class="role-workspace">
       <aside class="role-list" aria-label="Server roles">

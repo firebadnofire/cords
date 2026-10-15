@@ -170,11 +170,10 @@ describe('server membership interface', () => {
     for (let index = 0; index < 10; index++) await Promise.resolve();
     await tick();
     const avatar = target.querySelector<HTMLImageElement>('.membership-request-card img');
-    expect(invokeMock).toHaveBeenCalledWith('load_image_url', {
+    expect(invokeMock).not.toHaveBeenCalledWith('load_image_url', {
       url: 'https://images.example/second-user.webp',
     });
-    expect(avatar?.getAttribute('src')).toContain('data:image/png');
-    expect(avatar?.getAttribute('style')).toContain('25% 75%');
+    expect(avatar).toBeNull();
     await unmount(component);
     target.remove();
   });

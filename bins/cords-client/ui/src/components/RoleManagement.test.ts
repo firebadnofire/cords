@@ -40,6 +40,42 @@ function rename(target: HTMLElement, name: string) {
 }
 
 describe('server-backed role editor', () => {
+  it('opens preinitialized roles without submitting a setup request', async () => {
+    const state = catalog();
+    state.revision = 0;
+    state.roles = ['default', 'moderator', 'admin'].map((name, index) => ({
+      ...state.roles[0],
+      id: `builtin:${name}`,
+      name,
+      priority: index * 100,
+    }));
+    const change = vi.fn();
+    const target = document.createElement('div');
+    const component = mount(RoleManagement, { target, props: { load: async () => state, change } });
+    await settle();
+    for (const name of ['default', 'moderator', 'admin'])
+      expect(target.textContent).toContain(`$${name}`);
+    expect(button(target, 'Create role').disabled).toBe(false);
+    expect(target.textContent).not.toContain('Initialize role catalog');
+    expect(change).not.toHaveBeenCalled();
+    await unmount(component);
+  });
+
+  it('requests an operator upgrade for an empty legacy catalog instead of client initialization', async () => {
+    const change = vi.fn();
+    const target = document.createElement('div');
+    const component = mount(RoleManagement, {
+      target,
+      props: { load: async () => ({ ...catalog(), roles: [] }), change },
+    });
+    await settle();
+    expect(target.textContent).toContain('upgrade the server');
+    expect(button(target, 'Create role').disabled).toBe(true);
+    expect(target.textContent).not.toContain('Initialize role catalog');
+    expect(change).not.toHaveBeenCalled();
+    await unmount(component);
+  });
+
   it('saves stable identity with the observed revision and reloads authoritative state', async () => {
     let state = catalog();
     const load = vi.fn(async () => state);

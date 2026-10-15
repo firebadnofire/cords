@@ -7,8 +7,10 @@
 ## Decision
 
 Implement the [approved amended plan](../plans/embedded-jxl-avatars.md) in gated
-functional units. Embedded JXL is the default local-upload result. HTTPS sources
-remain an advanced option. This supersedes ADR 0004's URL-only shared-picture and
+functional units. Embedded JXL is the local-upload result. The user's 2026-10-14
+amendment removes URL profile pictures entirely, including entry, publication and
+remote fetching; the separate local Jewel is outside this change. This supersedes
+ADR 0005's URL publication/viewer-fetch requirement and ADR 0004's URL-only shared-picture and
 PNG-preview format choices where the avatar feature changes them; account vault,
 locked-picker privacy, identity and password isolation remain unchanged.
 

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { clearRemoteImages } from './remoteImages';
   import ConfidentialitySelect from './components/ConfidentialitySelect.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { LockKeyhole } from '@lucide/svelte';
@@ -37,6 +36,7 @@
     account_id: string;
     nickname: string;
     avatar_data: string;
+    avatar_shape: 'circle' | 'square';
     avatar_x_milli: number;
     avatar_y_milli: number;
     avatar_zoom_milli: number;
@@ -118,7 +118,6 @@
     } else overlay = 'connect';
   }
   function clearSensitiveUi() {
-    clearRemoteImages();
     status = null;
     identity = null;
     prefs = defaults();

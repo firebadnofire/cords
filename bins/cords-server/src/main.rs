@@ -261,7 +261,7 @@ async fn main() -> Result<()> {
         }
         Command::Serve {
             migrate,
-            require_current_schema,
+            require_current_schema: _,
         } => {
             if migrate {
                 store
@@ -269,12 +269,12 @@ async fn main() -> Result<()> {
                     .await
                     .context("failed to apply PostgreSQL migrations")?;
             }
-            if require_current_schema || !migrate {
-                store
-                    .require_current()
-                    .await
-                    .context("database schema is not current")?;
-            }
+            // Applying migrations is not proof that this binary understands the
+            // resulting schema, especially with an operator-supplied directory.
+            store
+                .require_current()
+                .await
+                .context("database schema is not current for this server binary")?;
             store
                 .health()
                 .await

@@ -176,7 +176,10 @@ async fn apply_change(
 ) -> Result<(&'static str, String), Error> {
     Ok(match change {
         Change::Initialize => {
-            if snapshot.policy.is_some() {
+            // Compatibility for an older preparatory UI. Defaults already exist;
+            // acknowledge its explicit setup request only at the untouched baseline.
+            // Never reset edited roles or insert a synthetic user audit on migration.
+            if snapshot.revision != 0 {
                 return Err(Error::Conflict);
             }
             let policy = Policy::new(default_roles(), DeviceAdmission::AccountAuthorized)?;
@@ -184,7 +187,16 @@ async fn apply_change(
                 return Err(PolicyError::Denied.into());
             }
             for role in policy.roles().values() {
-                write_role(tx, role).await?;
+                if snapshot
+                    .policy
+                    .as_ref()
+                    .is_some_and(|current| current.roles().get(&role.id) != Some(role))
+                {
+                    return Err(Error::Conflict);
+                }
+                if snapshot.policy.is_none() {
+                    write_role(tx, role).await?;
+                }
             }
             ("initialize", "server".to_owned())
         }

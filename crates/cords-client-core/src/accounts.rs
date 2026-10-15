@@ -26,6 +26,7 @@ pub struct AccountSummary {
     pub account_id: String,
     pub nickname: String,
     pub avatar_data: String,
+    pub avatar_shape: String,
     /// Lock-screen-safe crop coordinates, scaled by 1,000 to preserve profile framing.
     pub avatar_x_milli: u32,
     pub avatar_y_milli: u32,
@@ -96,6 +97,7 @@ impl AccountRegistry {
                local_id TEXT NOT NULL UNIQUE,
                nickname TEXT NOT NULL,
                avatar_data TEXT NOT NULL DEFAULT '',
+               avatar_shape TEXT NOT NULL DEFAULT 'circle',
                avatar_x_milli INTEGER NOT NULL DEFAULT 50000,
                avatar_y_milli INTEGER NOT NULL DEFAULT 50000,
                avatar_zoom_milli INTEGER NOT NULL DEFAULT 1000,
@@ -109,8 +111,9 @@ impl AccountRegistry {
         )
         .execute(&pool)
         .await?;
-        // Existing installations predate crop metadata. Keep their established centered framing.
+        // Existing installations predate crop/shape metadata. Preserve centered, circular defaults.
         for (column, definition) in [
+            ("avatar_shape", "TEXT NOT NULL DEFAULT 'circle'"),
             ("avatar_x_milli", "INTEGER NOT NULL DEFAULT 50000"),
             ("avatar_y_milli", "INTEGER NOT NULL DEFAULT 50000"),
             ("avatar_zoom_milli", "INTEGER NOT NULL DEFAULT 1000"),
@@ -147,7 +150,7 @@ impl AccountRegistry {
     /// # Errors
     /// Returns an error when registry rows are unavailable or invalid.
     pub async fn list(&self) -> Result<Vec<AccountSummary>> {
-        let rows = sqlx::query("SELECT account_id,nickname,avatar_data,avatar_x_milli,avatar_y_milli,avatar_zoom_milli,genericize,hide_nickname_on_lock,auto_lock_minutes,lock_on_os_lock,lock_on_suspend FROM local_accounts ORDER BY created_at,account_id")
+        let rows = sqlx::query("SELECT account_id,nickname,avatar_data,avatar_shape,avatar_x_milli,avatar_y_milli,avatar_zoom_milli,genericize,hide_nickname_on_lock,auto_lock_minutes,lock_on_os_lock,lock_on_suspend FROM local_accounts ORDER BY created_at,account_id")
             .fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
@@ -156,6 +159,7 @@ impl AccountRegistry {
                     account_id: row.try_get("account_id")?,
                     nickname: row.try_get("nickname")?,
                     avatar_data: row.try_get("avatar_data")?,
+                    avatar_shape: row.try_get("avatar_shape")?,
                     avatar_x_milli: row.try_get::<i64, _>("avatar_x_milli")?.try_into()?,
                     avatar_y_milli: row.try_get::<i64, _>("avatar_y_milli")?.try_into()?,
                     avatar_zoom_milli: row.try_get::<i64, _>("avatar_zoom_milli")?.try_into()?,
@@ -277,6 +281,10 @@ impl AccountRegistry {
             "invalid cached avatar"
         );
         ensure!(
+            matches!(summary.avatar_shape.as_str(), "circle" | "square"),
+            "invalid avatar shape"
+        );
+        ensure!(
             summary.avatar_x_milli <= 100_000 && summary.avatar_y_milli <= 100_000,
             "invalid avatar crop position"
         );
@@ -288,11 +296,12 @@ impl AccountRegistry {
             matches!(summary.auto_lock_minutes, None | Some(1 | 5 | 15 | 30 | 60)),
             "invalid auto-lock interval"
         );
-        let changed = sqlx::query("UPDATE local_accounts SET nickname=?2,avatar_data=?3,avatar_x_milli=?4,avatar_y_milli=?5,avatar_zoom_milli=?6,genericize=?7,hide_nickname_on_lock=?8,auto_lock_minutes=?9,lock_on_os_lock=?10,lock_on_suspend=?11 WHERE account_id=?1")
+        let changed = sqlx::query("UPDATE local_accounts SET nickname=?2,avatar_data=?3,avatar_x_milli=?4,avatar_y_milli=?5,avatar_zoom_milli=?6,genericize=?7,hide_nickname_on_lock=?8,auto_lock_minutes=?9,lock_on_os_lock=?10,lock_on_suspend=?11,avatar_shape=?12 WHERE account_id=?1")
             .bind(&summary.account_id).bind(&summary.nickname).bind(&summary.avatar_data)
             .bind(summary.avatar_x_milli).bind(summary.avatar_y_milli).bind(summary.avatar_zoom_milli)
             .bind(summary.genericize).bind(summary.hide_nickname_on_lock)
             .bind(summary.auto_lock_minutes.map(i64::from)).bind(summary.lock_on_os_lock).bind(summary.lock_on_suspend)
+            .bind(&summary.avatar_shape)
             .execute(&self.pool).await?.rows_affected();
         ensure!(changed == 1, "local account not found");
         Ok(())
@@ -454,7 +463,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn picker_crop_metadata_persists_with_safe_defaults() -> Result<()> {
+    async fn picker_crop_and_shape_persist_with_safe_defaults() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let registry = AccountRegistry::open(temp.path(), &migrations(), None).await?;
         let client = registry
@@ -477,11 +486,16 @@ mod tests {
             ),
             (50_000, 50_000, 1_000)
         );
+        assert_eq!(summary.avatar_shape, "circle");
+        summary.avatar_shape = "square".into();
         summary.avatar_data = "data:image/png;base64,aGVsbG8=".into();
         summary.avatar_x_milli = 25_500;
         summary.avatar_y_milli = 74_250;
         summary.avatar_zoom_milli = 1_500;
         registry.update_metadata(&summary).await?;
+
+        registry.pool.close().await;
+        let registry = AccountRegistry::open(temp.path(), &migrations(), None).await?;
 
         let stored = registry
             .list()
@@ -490,6 +504,7 @@ mod tests {
             .find(|item| item.account_id == account_id)
             .context("updated account missing")?;
         assert_eq!(stored.avatar_data, summary.avatar_data);
+        assert_eq!(stored.avatar_shape, "square");
         assert_eq!(
             (
                 stored.avatar_x_milli,
@@ -498,6 +513,9 @@ mod tests {
             ),
             (25_500, 74_250, 1_500)
         );
+        summary.avatar_shape = "triangle".into();
+        assert!(registry.update_metadata(&summary).await.is_err());
+        assert_eq!(registry.list().await?[0].avatar_shape, "square");
         Ok(())
     }
 
@@ -536,6 +554,10 @@ mod tests {
         assert!(names.contains(&"avatar_x_milli".to_string()));
         assert!(names.contains(&"avatar_y_milli".to_string()));
         assert!(names.contains(&"avatar_zoom_milli".to_string()));
+        assert!(names.contains(&"avatar_shape".to_string()));
+        registry.pool.close().await;
+        // Opening a second time must not attempt to add existing columns again.
+        AccountRegistry::open(temp.path(), &migrations(), None).await?;
         Ok(())
     }
 

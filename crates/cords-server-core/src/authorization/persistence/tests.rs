@@ -165,7 +165,7 @@ async fn additive_role_migration_preserves_legacy_and_rolls_back_failure() -> Re
     let next = "202610120001_role_policy.sql";
     for file in std::fs::read_dir(&source)? {
         let file = file?;
-        if file.file_name() != next {
+        if file.file_name().to_string_lossy().as_ref() < next {
             std::fs::copy(file.path(), staged.path().join(file.file_name()))?;
         }
     }
@@ -191,6 +191,8 @@ async fn additive_role_migration_preserves_legacy_and_rolls_back_failure() -> Re
             .await?;
     assert!(policy_table.is_none());
     std::fs::write(staged.path().join(next), migration)?;
+    let defaults = "202610140001_role_catalog_defaults.sql";
+    std::fs::copy(source.join(defaults), staged.path().join(defaults))?;
     for _ in 0..2 {
         store.migrate(staged.path()).await?;
         store.require_current().await?;
@@ -209,7 +211,100 @@ async fn additive_role_migration_preserves_legacy_and_rolls_back_failure() -> Re
     let snapshot = load(&mut tx).await?;
     assert_eq!(snapshot.revision, 0);
     assert!(!snapshot.active);
-    assert!(snapshot.policy.is_none());
+    assert_eq!(snapshot.policy.context("preinitialized")?.roles().len(), 3);
     tx.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn role_defaults_migrate_atomically_and_preserve_existing_edits() -> Result<()> {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/postgres");
+    let next = "202610140001_role_catalog_defaults.sql";
+    for edited in [false, true] {
+        let store = store().await?;
+        let staged = tempfile::tempdir()?;
+        for file in std::fs::read_dir(&source)? {
+            let file = file?;
+            if file.file_name().to_string_lossy().as_ref() < next {
+                std::fs::copy(file.path(), staged.path().join(file.file_name()))?;
+            }
+        }
+        store.migrate(staged.path()).await?;
+        assert!(store.require_current().await.is_err());
+        if edited {
+            sqlx::query("INSERT INTO account_heads VALUES('owner','opaque')")
+                .execute(store.pool())
+                .await?;
+            sqlx::query("INSERT INTO device_contacts VALUES('owner-device','owner','opaque')")
+                .execute(store.pool())
+                .await?;
+            commit(&store, &request(0, Change::Initialize)).await?;
+            let mut role = default_roles().remove(1);
+            role.description = "Existing operator customization".into();
+            commit(&store, &request(1, Change::PutRole { role })).await?;
+        }
+        let before: Vec<(String, String)> =
+            sqlx::query_as("SELECT id,definition FROM server_roles ORDER BY id")
+                .fetch_all(store.pool())
+                .await?;
+        let migration = std::fs::read_to_string(source.join(next))?;
+        std::fs::write(
+            staged.path().join(next),
+            format!("{migration}\nSELECT * FROM missing_defaults_failure;"),
+        )?;
+        assert!(store.migrate(staged.path()).await.is_err());
+        let version: i64 = sqlx::query_scalar("SELECT version FROM cords_schema_metadata")
+            .fetch_one(store.pool())
+            .await?;
+        assert_eq!(version, 13);
+        let after: Vec<(String, String)> =
+            sqlx::query_as("SELECT id,definition FROM server_roles ORDER BY id")
+                .fetch_all(store.pool())
+                .await?;
+        assert_eq!(after, before);
+        std::fs::write(staged.path().join(next), migration)?;
+        for _ in 0..2 {
+            store.migrate(staged.path()).await?;
+            store.require_current().await?;
+        }
+        let mut tx = store.pool().begin().await?;
+        let snapshot = load(&mut tx).await?;
+        assert!(!snapshot.active);
+        assert_eq!(snapshot.revision, if edited { 2 } else { 0 });
+        let policy = snapshot.policy.context("defaults exist without setup")?;
+        if edited {
+            assert_eq!(
+                policy.roles()[cords_protocol::roles::MODERATOR_ROLE].description,
+                "Existing operator customization"
+            );
+            let after: Vec<(String, String)> =
+                sqlx::query_as("SELECT id,definition FROM server_roles ORDER BY id")
+                    .fetch_all(&mut *tx)
+                    .await?;
+            assert_eq!(after, before);
+        } else {
+            let expected = Policy::new(default_roles(), DeviceAdmission::AccountAuthorized)?;
+            assert_eq!(policy.roles(), expected.roles());
+        }
+        let audits: i64 = sqlx::query_scalar("SELECT count(*) FROM role_policy_changes")
+            .fetch_one(&mut *tx)
+            .await?;
+        assert_eq!(audits, if edited { 2 } else { 0 });
+        tx.rollback().await?;
+        if !edited {
+            sqlx::query("INSERT INTO account_heads VALUES('owner','opaque')")
+                .execute(store.pool())
+                .await?;
+            sqlx::query("INSERT INTO device_contacts VALUES('owner-device','owner','opaque')")
+                .execute(store.pool())
+                .await?;
+            let mut role = default_roles().remove(1);
+            role.description = "First edit without setup".into();
+            let edit = request(0, Change::PutRole { role });
+            assert_eq!(commit(&store, &edit).await?, 1);
+            assert_eq!(commit(&store, &edit).await?, 1);
+        }
+    }
     Ok(())
 }

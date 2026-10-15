@@ -258,14 +258,13 @@ impl Service {
         }
         Ok(())
     }
-    // Hold account/session authorization until the mutation commits. Account
-    // certification and revocation take the matching exclusive advisory lock.
-    async fn authorize_mutation(
+    // Hold account/session authorization until the operation's transaction ends.
+    // Certification and revocation take the matching exclusive advisory lock.
+    async fn authorize_session(
         &self,
         tx: &mut Tx<'_>,
         headers: &HeaderMap,
         member: &Signed<Membership>,
-        route: Option<(&str, bool)>,
     ) -> Result<()> {
         // Ownership transitions exclude all mutation transactions before account/row locks.
         sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended('server-ownership',0))")
@@ -291,6 +290,16 @@ impl Service {
         {
             return Err(denied());
         }
+        Ok(())
+    }
+    async fn authorize_mutation(
+        &self,
+        tx: &mut Tx<'_>,
+        headers: &HeaderMap,
+        member: &Signed<Membership>,
+        route: Option<(&str, bool)>,
+    ) -> Result<()> {
+        self.authorize_session(tx, headers, member).await?;
         let locked: bool = sqlx::query_scalar(
             "SELECT locked_down FROM server_owner_control WHERE singleton=TRUE FOR SHARE",
         )
@@ -325,6 +334,37 @@ impl Service {
                 return Err(denied());
             }
         }
+        Ok(())
+    }
+    async fn require_current_policy(
+        &self,
+        tx: &mut Tx<'_>,
+        member: &Membership,
+        permission: cords_protocol::roles::Permission,
+        channel: Option<&str>,
+    ) -> Result<()> {
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(&mut **tx)
+                .await?;
+        if !active {
+            // Temporary pre-enforcement schema only. The candidate is not shipped
+            // until all paths use durable authorization and startup requires it.
+            return Ok(());
+        }
+        let decision = crate::authorization::runtime::load(
+            tx,
+            &member.device_id,
+            &self.0.identity.server_id(),
+            &encode(self.0.identity.signing_key.verifying_key().to_bytes()),
+            now()?,
+            channel,
+        )
+        .await?;
+        if decision.subject.account_id != member.account_id {
+            return Err(denied());
+        }
+        decision.require(permission)?;
         Ok(())
     }
     fn sign<T: Statement>(&self, value: T) -> Result<Signed<T>> {
@@ -1776,6 +1816,16 @@ async fn upload_event(
     }
     let mut tx = s.0.store.pool().begin().await?;
     let scope = format!("event:{route}:{}", member.value.device_id);
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::SendMessages,
+        Some(&route),
+    )
+    .await?;
+    // Keep ownership -> account -> policy -> channel lock order. The mutation
+    // helper repeats session validation before its legacy channel/retirement gate.
     s.authorize_mutation(&mut tx, &headers, &member, Some((&route, false)))
         .await?;
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
@@ -1800,19 +1850,29 @@ async fn history(
 ) -> Result<Json<Vec<RouteEvent>>> {
     let member = s.authenticate(&headers, "channel.read").await?;
     s.route_access(&route, &member.value, false).await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::ReadMessages,
+        Some(&route),
+    )
+    .await?;
     let rows=sqlx::query("SELECT e.sequence,e.envelope,e.received_at FROM route_events e JOIN channels c ON c.id=e.route_id WHERE e.route_id=$1 AND e.sequence>$3 AND (c.confidentiality_mode='public' OR EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$2 AND m.active AND m.delivery_active AND e.sequence>m.joined_sequence)) ORDER BY e.sequence LIMIT 8")
-        .bind(route).bind(&member.value.device_id).bind(int(query.after)?).fetch_all(s.0.store.pool()).await?;
-    Ok(Json(
-        rows.iter()
-            .map(|row| {
-                Ok(RouteEvent {
-                    envelope: parse(row.try_get("envelope")?)?,
-                    server_sequence: uint(row.try_get("sequence")?)?,
-                    server_received_at: uint(row.try_get("received_at")?)?,
-                })
+        .bind(route).bind(&member.value.device_id).bind(int(query.after)?).fetch_all(&mut *tx).await?;
+    let events = rows
+        .iter()
+        .map(|row| {
+            Ok(RouteEvent {
+                envelope: parse(row.try_get("envelope")?)?,
+                server_sequence: uint(row.try_get("sequence")?)?,
+                server_received_at: uint(row.try_get("received_at")?)?,
             })
-            .collect::<Result<_>>()?,
-    ))
+        })
+        .collect::<Result<_>>()?;
+    tx.commit().await?;
+    Ok(Json(events))
 }
 
 async fn websocket(

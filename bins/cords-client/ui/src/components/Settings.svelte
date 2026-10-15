@@ -12,6 +12,7 @@
   import Modal from './Modal.svelte';
   import Avatar from './Avatar.svelte';
   import ImageEditor from './ImageEditor.svelte';
+  import { tick } from 'svelte';
   import type { Preferences, Identity, ServerListing, Status } from '../model';
 
   export let value: Preferences;
@@ -52,19 +53,27 @@
     | 'Security'
     | 'Advanced';
   const groups: { title: string; pages: Page[] }[] = [
-    { title: 'Account', pages: ['My Account', 'Identity & devices', 'Recovery'] },
+    { title: 'Account', pages: ['My Account', 'Identity & devices'] },
     { title: 'App & connections', pages: ['Jewel', 'Server trust', 'Local history'] },
     {
       title: 'Preferences',
-      pages: ['Appearance', 'Accessibility', 'Notifications', 'Privacy', 'Blocked Users'],
+      pages: ['Appearance', 'Accessibility', 'Privacy'],
     },
     {
       title: 'Connections & access',
-      pages: ['Connections', 'Devices', 'Sessions', 'Security', 'Advanced'],
+      pages: ['Sessions', 'Security', 'Advanced'],
     },
   ];
+  export let initialPage: Page = 'Identity & devices';
   let draft = structuredClone(value);
-  let page: Page = 'Identity & devices';
+  let lastSaved = structuredClone(value);
+  let baseline = JSON.stringify(value);
+  let page: Page = initialPage;
+  let discardPrompt = false;
+  let discardElement: HTMLElement;
+  let returnFocus: HTMLElement | null = null;
+  $: dirty = JSON.stringify(draft) !== baseline;
+  $: if (dirty) saved = false;
   let filter = '';
   let error = '';
   let saved = false;
@@ -78,6 +87,24 @@
   let confirmation = '';
   let passwordNotice = '';
   let passwordWarning: string[] = [];
+
+  async function requestClose() {
+    if (busy) return;
+    if (!dirty) return close();
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    discardPrompt = true;
+    await tick();
+    discardElement?.focus();
+  }
+  function keepEditing() {
+    discardPrompt = false;
+    returnFocus?.focus();
+  }
+  function resetDraft() {
+    draft = structuredClone(lastSaved);
+    saved = false;
+    error = '';
+  }
 
   async function updatePassword(allowWeak = false) {
     if (busy) return;
@@ -128,11 +155,15 @@
   }
 
   async function persist() {
+    if (busy || !dirty) return;
     busy = true;
     error = '';
     saved = false;
     try {
-      await save(draft);
+      const submitted = structuredClone(draft);
+      await save(submitted);
+      lastSaved = submitted;
+      baseline = JSON.stringify(submitted);
       saved = true;
     } catch (caught) {
       error = String(caught);
@@ -140,10 +171,9 @@
       busy = false;
     }
   }
-  const pending = 'Not implemented yet';
 </script>
 
-<Modal title="Cords settings" {close} wide>
+<Modal title="Cords settings" close={() => void requestClose()} dismissible={!busy} wide>
   <div class="settings-layout donor-settings">
     <aside class="settings-nav donor-settings-nav">
       <div class="profile-heading">
@@ -179,12 +209,29 @@
     </aside>
     <section class="settings-body donor-settings-body">
       <div class="settings-topbar"><strong>{page}</strong></div>
+      {#if discardPrompt}
+        <section
+          class="unsaved-notice"
+          aria-label="Unsaved preferences"
+          tabindex="-1"
+          bind:this={discardElement}
+        >
+          <h2>Keep your changes?</h2>
+          <p>Your local preferences have not been saved.</p>
+          <div class="actions">
+            <button on:click={keepEditing}>Keep editing</button><button
+              class="danger"
+              on:click={close}>Discard and close</button
+            >
+          </div>
+        </section>
+      {/if}
       {#if error}<p role="alert" class="error">{error}</p>{/if}
 
       {#if page === 'My Account'}
         <header class="settings-page-header">
           <h1>My account</h1>
-          <p>Public account presentation and local profile controls.</p>
+          <p>Local profile preview and account preferences.</p>
         </header>
         <div class="account-profile-card">
           <div class="account-banner-art"></div>
@@ -223,8 +270,8 @@
         </div>
         <label
           >Click behavior<select bind:value={draft.jewelAction}
-            ><option value="dms">Open direct messages</option><option value="settings"
-              >Open settings</option
+            ><option value="dms" disabled>Direct messages (unavailable)</option><option
+              value="settings">Open settings</option
             ><option value="none">Decorative</option></select
           ></label
         >
@@ -247,9 +294,6 @@
                 >The WebView never receives account-root private material.</small
               >
             </div>
-            <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-              >Unlock account authority</button
-            >
           </div>
         </section>
         <section>
@@ -269,9 +313,6 @@
                 on:click={revoke}>Revoke…</button
               >{/if}
           </div>
-          <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-            >Enroll another device</button
-          >
         </section>
         <div class="account-banner">
           <Info size={19} /><span
@@ -292,13 +333,7 @@
             >
           </div>
         </div>
-        <div class="settings-action-row">
-          <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-            >Import recovery bundle</button
-          ><button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-            >Create recovery bundle</button
-          >
-        </div>
+        <div class="settings-action-row"></div>
         <div class="account-banner">
           <Info size={19} /><span
             >Server sign-in cannot restore the account root. Account recovery also does not
@@ -321,9 +356,7 @@
           </div>
           <code>{status?.server_id || 'No pin'}</code>
         </div>
-        <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-          >Review trust reset</button
-        >
+
         <section class="settings-card">
           <h2>Tracked servers</h2>
           <p>
@@ -420,11 +453,6 @@
           {:else}<p>No archived server bookmarks.</p>{/each}
           <button on:click={() => (page = 'Server trust')}>Manage saved servers</button>
         </section>
-        <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-          >Configure retention</button
-        ><button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-          >Export local history</button
-        >
       {:else if page === 'Appearance'}
         <header class="settings-page-header">
           <h1>Appearance</h1>
@@ -445,18 +473,6 @@
           ><span>Compact message mode<small>Reduce message spacing and avatar size.</small></span
           ><input type="checkbox" bind:checked={draft.compact} /></label
         >
-        <label
-          >Interface density<select
-            class="dev-unimplemented"
-            disabled
-            aria-disabled="true"
-            title={pending}><option>Comfortable</option></select
-          ></label
-        ><label
-          >Font size<select class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-            ><option>14 px</option></select
-          ></label
-        >
       {:else if page === 'Accessibility'}
         <header class="settings-page-header">
           <h1>Accessibility</h1>
@@ -468,33 +484,12 @@
             bind:checked={draft.reducedMotion}
           /></label
         >
-        <button
-          class="dev-unimplemented settings-row-button"
-          disabled
-          aria-disabled="true"
-          title={pending}>High contrast controls</button
-        ><button
-          class="dev-unimplemented settings-row-button"
-          disabled
-          aria-disabled="true"
-          title={pending}>Always underline links</button
-        ><button
-          class="dev-unimplemented settings-row-button"
-          disabled
-          aria-disabled="true"
-          title={pending}>High visibility focus indicator</button
-        >
       {:else if page === 'Notifications'}
         <header class="settings-page-header">
           <h1>Notifications</h1>
           <p>Choose which local events should get your attention.</p>
         </header>
-        {#each ['Desktop notifications', 'Direct messages', 'Mentions', 'Server activity', 'Notification sounds'] as item (item)}<button
-            class="dev-unimplemented settings-row-button"
-            disabled
-            aria-disabled="true"
-            title={pending}>{item}</button
-          >{/each}
+        {#each ['Desktop notifications', 'Direct messages', 'Mentions', 'Server activity', 'Notification sounds'] as item (item)}{/each}
       {:else if page === 'Privacy'}
         <header class="settings-page-header">
           <h1>Privacy</h1>
@@ -524,12 +519,7 @@
             ></span
           ><input type="checkbox" bind:checked={draft.hideNicknameOnLock} /></label
         >
-        {#each ['Who can direct message you', 'Contact requests', 'Sensitive media', 'Activity status', 'Link previews'] as item (item)}<button
-            class="dev-unimplemented settings-row-button"
-            disabled
-            aria-disabled="true"
-            title={pending}>{item}</button
-          >{/each}
+        {#each ['Who can direct message you', 'Contact requests', 'Sensitive media', 'Activity status', 'Link previews'] as item (item)}{/each}
       {:else if page === 'Blocked Users'}
         <header class="settings-page-header">
           <h1>Blocked users</h1>
@@ -539,9 +529,6 @@
           <strong>No authoritative block list</strong>
           <p>The current core does not expose blocking state.</p>
         </div>
-        <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-          >Block an account</button
-        >
       {:else if page === 'Connections'}
         <header class="settings-page-header">
           <h1>Connections</h1>
@@ -554,9 +541,6 @@
               >Optional external evidence; never a native Cords or conversation key.</small
             >
           </div>
-          <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-            >Connect</button
-          >
         </div>
         <div class="connection-card">
           <ExternalLink size={23} />
@@ -565,9 +549,6 @@
               >Future optional profile evidence.</small
             >
           </div>
-          <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-            >Connect</button
-          >
         </div>
       {:else if page === 'Devices'}
         <header class="settings-page-header">
@@ -581,9 +562,6 @@
             ><b>{identity?.revoked ? 'Revoked' : 'Current'}</b>
           </div>
         </div>
-        <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-          >Review other devices</button
-        >
       {:else if page === 'Sessions'}
         <header class="settings-page-header">
           <h1>Sessions</h1>
@@ -600,9 +578,6 @@
             ><b>{identity?.membership?.status ?? 'Offline'}</b>
           </div>
         </div>
-        <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-          >Sign out this server session</button
-        >
       {:else if page === 'Security'}
         <header class="settings-page-header">
           <h1>Security</h1>
@@ -735,12 +710,6 @@
             {:else}<p role="status">No known server notices remain pending.</p>{/each}
           {/if}
         </section>
-        <button
-          class="dev-unimplemented settings-row-button"
-          disabled
-          aria-disabled="true"
-          title={pending}>Verification reminders</button
-        >
       {:else}
         <header class="settings-page-header">
           <h1>Advanced</h1>
@@ -753,20 +722,17 @@
             public view models and displayed messages only.
           </p>
         </div>
-        <button
-          class="dev-unimplemented advanced-export"
-          disabled
-          aria-disabled="true"
-          title={pending}><ExternalLink size={16} />Export scrubbed diagnostics</button
-        >
       {/if}
 
       {#if ['My Account', 'Jewel', 'Appearance', 'Accessibility', 'Privacy', 'Security'].includes(page)}<footer
           class="settings-actions"
         >
-          <button class="primary" disabled={busy || !status} on:click={persist}
+          <button class="primary" disabled={busy || !status || !dirty} on:click={persist}
             >{busy ? 'Saving…' : 'Save local preferences'}</button
-          >{#if saved}<span role="status">Saved on this installation</span>{/if}
+          ><button disabled={busy || !dirty} on:click={resetDraft}>Discard changes</button>
+          {#if dirty}<span role="status">Unsaved changes</span>{:else if saved}<span role="status"
+              >Saved on this installation</span
+            >{/if}
         </footer>{/if}
     </section>
   </div>

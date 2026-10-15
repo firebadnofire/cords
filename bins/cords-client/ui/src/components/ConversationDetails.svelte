@@ -2,6 +2,7 @@
   import { Fingerprint, HardDrive, KeyRound, LockKeyhole, Server, Users, X } from '@lucide/svelte';
   import { memberName, memberPicture, type Contact, type Channel, type Status } from '../model';
   import RemoteAvatar from './RemoteAvatar.svelte';
+  import CopyButton from './CopyButton.svelte';
   export let contacts: Contact[] = [];
   $: candidates = contacts.filter(
     (contact) =>
@@ -49,11 +50,12 @@
   <section class="detail-section">
     <h3><Fingerprint size={16} /> Server identity</h3>
     <code>{status.server_id || 'No trusted server'}</code>
+    <CopyButton value={status.server_id} label="Copy server identity" />
   </section>
   {#if channel && channel.confidentiality_mode !== 'public' && !channel.locally_archived}<section
       class="detail-section"
     >
-      <h3><Users size={16} /> Channel members</h3>
+      <h3><Users size={16} /> Encrypted channel devices</h3>
       <p>
         Each installation joins separately. A new member must join this server and publish a
         KeyPackage first.
@@ -82,8 +84,8 @@
           }}
         >
           <label
-            >Add a member<select bind:value={device} required>
-              <option value="" disabled>Choose a server member</option>
+            >Add a device<select bind:value={device} required>
+              <option value="" disabled>Choose an authorized device</option>
               {#each candidates as contact (contact.authorization.value.device_id)}<option
                   value={contact.authorization.value.device_id}
                   >{memberName(contact, 'Unnamed member')} · {contact.authorization.value.device_id.slice(
@@ -103,8 +105,8 @@
         </form>{/if}
     </section>{/if}
   <section class="detail-section">
-    <h3><KeyRound size={16} /> Join encrypted channels</h3>
-    <button disabled={!status.server_id || busy} on:click={publish}>Publish a KeyPackage</button
+    <h3><KeyRound size={16} /> Prepare encrypted channels</h3>
+    <button disabled={!status.server_id || busy} on:click={publish}>Prepare this device</button
     ><small
       >Publish your device key, then ask the channel creator to add you using Channel members above.
       Newly added devices receive future messages, not earlier history.</small
@@ -113,8 +115,5 @@
   <section class="detail-section">
     <h3><HardDrive size={16} /> History &amp; retention</h3>
     <p>Displayed history is local. Server retention policy is not exposed by the current API.</p>
-    <button class="dev-unimplemented" disabled aria-disabled="true" title="Not implemented yet"
-      >Configure retention</button
-    >
   </section>
 </aside>

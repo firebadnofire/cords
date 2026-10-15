@@ -76,8 +76,10 @@
   let recoveryCode = '';
   let connected = false;
   let busy = false;
-  let refreshing = false;
+  let refreshing: symbol | null = null;
+  let presentationVersion = 0;
   let details = true;
+  let settingsInitial: 'Identity & devices' | 'Server trust' = 'Identity & devices';
   let drafts: Record<string, string> = {};
 
   $: selected = selectedChannel(channels, route);
@@ -91,10 +93,13 @@
     legacyVault = result.legacy_vault;
   }
   async function finishUnlock(opened: Status, accountId: string) {
+    invalidatePresentation();
+    const version = presentationVersion;
     status = opened;
     activeAccount = accountId || opened.account_id;
     selectedAccount = activeAccount;
     const view = await invoke<View>('conversation_view', { route: null });
+    if (version !== presentationVersion) return;
     prefs = preferences(view.preferences);
     identity = view.identity;
     origin = opened.origin;
@@ -118,6 +123,7 @@
     } else overlay = 'connect';
   }
   function clearSensitiveUi() {
+    invalidatePresentation();
     status = null;
     identity = null;
     prefs = defaults();
@@ -146,6 +152,7 @@
     confirm = null;
   }
   async function returnToPicker(actionName: 'lock' | 'switch' | 'sign_out') {
+    invalidatePresentation();
     const previous = await invoke<string | null>('session_control', { action: actionName });
     clearSensitiveUi();
     activeAccount = '';
@@ -177,8 +184,12 @@
     await finishUnlock(opened, opened.account_id);
   }
 
+  class PresentationChanged extends Error {}
   async function action<T>(kind: string, fields: Record<string, unknown> = {}): Promise<T> {
-    return invoke<T>('conversation_action', { action: { kind, ...fields } });
+    const version = presentationVersion;
+    const result = await invoke<T>('conversation_action', { action: { kind, ...fields } });
+    if (version !== presentationVersion) throw new PresentationChanged();
+    return result;
   }
   function openArchives() {
     void run(async () => {
@@ -189,15 +200,30 @@
     });
   }
   async function refresh() {
-    if (!status || refreshing) return;
-    refreshing = true;
+    if (!status || refreshing || busy) return;
+    const ticket = Symbol('conversation refresh');
+    refreshing = ticket;
+    const requested = {
+      version: presentationVersion,
+      account: status.account_id,
+      server: status.server_id,
+      route,
+    };
+    const current = () =>
+      requested.version === presentationVersion &&
+      requested.account === status?.account_id &&
+      requested.server === status?.server_id &&
+      requested.route === route;
     try {
-      const view = await invoke<View>('conversation_view', { route: route || null });
+      const view = await invoke<View>('conversation_view', { route: requested.route || null });
+      if (!current() || view.status.account_id !== requested.account) return;
       const oldGeneration = status?.ownership_generation;
       const oldServer = status?.server_id;
       status = view.status;
       if (oldGeneration !== status.ownership_generation || oldServer !== status.server_id) {
-        servers = await action<ServerListing[]>('servers');
+        const nextServers = await action<ServerListing[]>('servers');
+        if (requested.version !== presentationVersion) return;
+        servers = nextServers;
       }
       identity = view.identity;
       messages = view.messages;
@@ -206,6 +232,7 @@
       connected = view.connected;
       connectionError = view.error ?? '';
     } catch (caught) {
+      if (!current()) return;
       const message = String(caught);
       if (/unlock/i.test(message)) {
         clearSensitiveUi();
@@ -213,17 +240,23 @@
         await listAccounts();
       } else error = message;
     } finally {
-      refreshing = false;
+      if (refreshing === ticket) refreshing = null;
     }
+  }
+  function invalidatePresentation() {
+    presentationVersion += 1;
+    refreshing = null;
   }
   async function run(operation: () => Promise<void>) {
     if (busy) return;
+    invalidatePresentation();
+    const version = presentationVersion;
     busy = true;
     error = '';
     try {
       await operation();
-      await refresh();
     } catch (caught) {
+      if (version !== presentationVersion || caught instanceof PresentationChanged) return;
       const message = String(caught);
       if (/CORDS_APPROVAL_PENDING|CORDS_JOIN_REJECTED/.test(message)) {
         error = '';
@@ -239,6 +272,7 @@
       } else error = message;
     } finally {
       busy = false;
+      if (version === presentationVersion) await refresh();
     }
   }
   async function connect() {
@@ -389,6 +423,7 @@
       await action('join', { route: id });
       drafts[route] = body;
       route = id;
+      messages = [];
       body = drafts[id] ?? '';
       section = 'server';
       channels = await action<Channel[]>('channels');
@@ -499,10 +534,6 @@
         {servers}
         preferences={prefs}
         {section}
-        select={(next) => {
-          section = next;
-          query = '';
-        }}
         connect={() => (overlay = 'connect')}
         settings={() => (overlay = 'settings')}
         selectServer={(serverId) => void selectServer(serverId)}
@@ -655,6 +686,7 @@
     </div>
 
     {#if overlay === 'settings'}<Settings
+        initialPage={settingsInitial}
         value={prefs}
         {identity}
         {status}
@@ -681,6 +713,10 @@
           action<void>('accept_successor', { designation_hash: designationHash })}
       />{/if}
     {#if overlay === 'admin'}<Admin
+        openServerTrust={() => {
+          settingsInitial = 'Server trust';
+          overlay = 'settings';
+        }}
         {status}
         {identity}
         {channels}

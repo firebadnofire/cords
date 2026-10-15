@@ -32,7 +32,7 @@
       ><input
         value={query}
         on:input={(event) => setQuery(event.currentTarget.value)}
-        placeholder="Search messages"
+        placeholder="Search displayed messages"
         aria-label="Search displayed messages"
       /><Search size={17} /></label
     >

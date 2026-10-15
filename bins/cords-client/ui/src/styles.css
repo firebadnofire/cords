@@ -1,5 +1,16 @@
 :root {
-  --dev-unimplemented: #b7ff4a;
+  --dev-unimplemented: #aeb5bf;
+  --accent: #477da3;
+  --accent-text: #ffffff;
+  --focus: #82c4fa;
+  --success: #8bd7b4;
+  --warning: #edc879;
+  --danger: #ffabb2;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
   font-family:
     Inter,
     ui-sans-serif,
@@ -68,6 +79,7 @@
 .picker-avatar {
   width: 112px;
   height: 112px;
+  position: relative;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -81,6 +93,8 @@
   border-radius: 0;
 }
 .picker-avatar img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -157,8 +171,8 @@
    these selectors intentionally preserve its proportions and information density. */
 .dev-unimplemented,
 .dev-unimplemented:disabled {
-  color: var(--dev-unimplemented) !important;
-  opacity: 1;
+  color: var(--muted, #aeb5bf);
+  opacity: 0.65;
 }
 .dev-unimplemented svg {
   color: currentColor;
@@ -1043,11 +1057,11 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
-  outline: 2px solid #82c4fa;
+  outline: 2px solid var(--focus, #82c4fa);
   outline-offset: 3px;
 }
 button.primary {
-  background: #356d95;
+  background: var(--accent, #356d95);
   color: #fff;
   border-color: #508db8;
 }
@@ -1675,13 +1689,13 @@ dialog.wide {
   max-width: none;
   padding: 0;
   overflow: hidden;
-  background: #34363d;
+  background: var(--bg-panel);
 }
 dialog.wide > .modal-heading {
   height: 46px;
   padding: 0 14px;
-  background: #24262b;
-  border-bottom: 1px solid #474a52;
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--border);
 }
 dialog.wide > .settings-layout {
   height: calc(100% - 46px);
@@ -1693,9 +1707,9 @@ dialog.wide > .settings-layout {
 .donor-settings-nav {
   min-height: 0;
   overflow-y: auto;
-  background: #292b31;
+  background: var(--bg-sidebar);
   padding: 16px 11px;
-  border-right: 1px solid #484b53;
+  border-right: 1px solid var(--border);
 }
 .profile-heading,
 .admin-server-heading {
@@ -1713,7 +1727,7 @@ dialog.wide > .settings-layout {
 }
 .profile-heading small,
 .admin-server-heading small {
-  color: #99a1ab;
+  color: var(--muted);
   font-size: 10px;
 }
 .settings-search {
@@ -1728,7 +1742,7 @@ dialog.wide > .settings-layout {
 }
 .settings-menu-group h3 {
   margin: 0 8px 5px;
-  color: #8f97a2;
+  color: var(--muted);
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.55px;
@@ -1738,24 +1752,24 @@ dialog.wide > .settings-layout {
   border: 0;
   background: transparent;
   text-align: left;
-  color: #afb6bf;
+  color: var(--muted);
   padding: 8px 9px;
   margin: 1px 0;
   font-size: 11px;
 }
 .settings-menu-group button.active,
 .settings-menu-group button:hover {
-  background: #44474f;
+  background: var(--hover);
   color: white;
 }
 .settings-sidebar-note {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #89929d;
+  color: var(--muted);
   font-size: 9px;
   padding: 12px 8px;
-  border-top: 1px solid #41444b;
+  border-top: 1px solid var(--border);
   margin-top: 12px;
 }
 .donor-settings-body,
@@ -1776,8 +1790,8 @@ dialog.wide > .settings-layout {
   height: 43px;
   display: flex;
   align-items: center;
-  background: #34363df7;
-  border-bottom: 1px solid #484b53;
+  background: var(--bg-panel) f7;
+  border-bottom: 1px solid var(--border);
   margin: 0 -36px 25px;
   padding: 0 36px;
   font-size: 11px;
@@ -1791,7 +1805,7 @@ dialog.wide > .settings-layout {
 }
 .settings-page-header p,
 .donor-settings-body p {
-  color: #aeb5bf;
+  color: var(--muted);
   line-height: 1.5;
 }
 .donor-settings-body > section {
@@ -1828,7 +1842,7 @@ dialog.wide > .settings-layout {
 }
 .account-profile-main span,
 .account-profile-main small {
-  color: #aeb5bf;
+  color: var(--muted);
   font-size: 11px;
 }
 .profile-preview-row {
@@ -1916,7 +1930,7 @@ dialog.wide > .settings-layout {
   border-radius: 5px;
 }
 .theme-dark {
-  background: linear-gradient(135deg, #202227 35%, #34363d 35%);
+  background: linear-gradient(135deg, #202227 35%, var(--bg-panel) 35%);
 }
 .theme-midnight {
   background: linear-gradient(135deg, #111820 35%, #202b37 35%);
@@ -1929,7 +1943,7 @@ dialog.wide > .settings-layout {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  border-bottom: 1px solid #484b53;
+  border-bottom: 1px solid var(--border);
   padding: 14px 0;
 }
 .toggle-row > span {
@@ -1975,7 +1989,7 @@ dialog.wide > .settings-layout {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: #34363d;
+  background: var(--bg-panel);
   border-top: 1px solid #4a4d54;
   margin: 28px -36px -20px;
   padding: 13px 36px;
@@ -2066,7 +2080,7 @@ dialog.wide > .settings-layout {
 .connection-card small,
 .session-list small,
 .security-score span {
-  color: #aeb5bf;
+  color: var(--muted);
   font-size: 10px;
 }
 .session-list b {
@@ -2096,7 +2110,7 @@ dialog.wide > .settings-layout {
   font-size: 10px;
 }
 .admin-scroll {
-  background: #34363d;
+  background: var(--bg-panel);
 }
 .admin-page {
   width: min(960px, calc(100% - 64px));
@@ -2115,7 +2129,7 @@ dialog.wide > .settings-layout {
 }
 .admin-page-header p {
   margin: 0;
-  color: #aeb5bf;
+  color: var(--muted);
   line-height: 1.5;
 }
 .admin-primary {
@@ -2155,7 +2169,7 @@ dialog.wide > .settings-layout {
 }
 .admin-hero-card span,
 .admin-hero-card small {
-  color: #aeb5bf;
+  color: var(--muted);
 }
 .admin-form-grid {
   display: grid;
@@ -2200,7 +2214,7 @@ dialog.wide > .settings-layout {
   flex: 1;
   margin: 0;
   border: 1px solid #555860;
-  background: #292b31;
+  background: var(--bg-sidebar);
   border-radius: 5px;
   padding: 0 9px;
 }
@@ -2271,7 +2285,7 @@ dialog.wide > .settings-layout {
 }
 .member-identity small,
 .member-status {
-  color: #aeb5bf;
+  color: var(--muted);
   font-size: 10px;
 }
 .member-detail-card {
@@ -2421,7 +2435,7 @@ dialog.wide > .settings-layout {
   display: flex;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid #484b53;
+  border-bottom: 1px solid var(--border);
   padding: 8px 0;
 }
 .override-row span {
@@ -2509,7 +2523,7 @@ dialog.wide > .settings-layout {
   gap: 3px;
 }
 .integration-card span {
-  color: #aeb5bf;
+  color: var(--muted);
   font-size: 10px;
 }
 .owner-card {
@@ -2555,7 +2569,7 @@ dialog.wide > .settings-layout {
   gap: 3px;
 }
 .danger-zone small {
-  color: #aeb5bf;
+  color: var(--muted);
 }
 @media (max-width: 800px) {
   dialog.wide {
@@ -2593,5 +2607,77 @@ dialog.wide > .settings-layout {
   }
   .admin-stat-grid {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Shared presentation controls. Values remain selectable and menus stay bounded. */
+.copy-control {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  max-width: 100%;
+}
+.copy-control button {
+  font-size: inherit;
+}
+.read-only-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) 0;
+}
+.read-only-field code,
+.read-only-field > span {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.field-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.field-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.unsaved-notice {
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  padding: var(--space-4);
+  margin: var(--space-3) 0;
+}
+.unsaved-notice h2 {
+  margin-top: 0;
+}
+.settings-menu-group button {
+  font-size: 0.875rem;
+}
+.settings-menu-group h3,
+.settings-sidebar-note,
+.profile-heading small,
+.admin-server-heading small {
+  font-size: 0.75rem;
+}
+.context-menu {
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+}
+.app-shell[data-theme='light'] {
+  --danger: #a32135;
+  --warning: #765500;
+  --success: #176840;
+  --focus: #215f8f;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

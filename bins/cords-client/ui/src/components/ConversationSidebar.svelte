@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronDown, Globe, Hash, LockKeyhole, Plus } from '@lucide/svelte';
-  import { availability, type Channel, type Identity, type Status } from '../model';
+  import { type Channel, type Identity, type Status } from '../model';
 
   export let status: Status;
   export let identity: Identity | null;
@@ -16,7 +16,6 @@
   export let leaveServer: () => void;
   export let archiveServer: () => void;
   let filter = '';
-  const directMessages = availability(false);
 </script>
 
 <div class="channel-navigation">
@@ -46,18 +45,6 @@
           <button role="menuitem" disabled={!status.server_id || busy} on:click={archiveServer}
             >Archive server…</button
           >
-          <button
-            class="dev-unimplemented divided"
-            disabled
-            aria-disabled="true"
-            title="Not implemented yet">Invite people</button
-          >
-          <button
-            class:dev-unimplemented={directMessages === 'development'}
-            disabled
-            aria-disabled="true"
-            title="Not implemented yet">Notification settings</button
-          >
         </div>
       </details>
     {/if}
@@ -69,9 +56,6 @@
         <MessageSquareTextIcon />
         <strong>No direct messages yet</strong>
         <small>The current client core does not expose two-account MLS conversations.</small>
-        <button class="dev-unimplemented" disabled aria-disabled="true" title="Not implemented yet"
-          >New direct message</button
-        >
       </div>
     {:else}
       <div class="server-origin"><LockKeyhole size={14} /><span>{status.origin}</span></div>

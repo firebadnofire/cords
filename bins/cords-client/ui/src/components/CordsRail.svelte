@@ -1,14 +1,13 @@
 <script lang="ts">
-  import { MessageSquareText, Plus, Settings2 } from '@lucide/svelte';
+  import { Plus, Settings2 } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
   import { tick } from 'svelte';
-  import { dmEntry, type Preferences, type ServerListing, type Status } from '../model';
+  import { type Preferences, type ServerListing, type Status } from '../model';
 
   export let status: Status | null;
   export let servers: ServerListing[];
   export let preferences: Preferences;
   export let section: 'server' | 'dms';
-  export let select: (section: 'server' | 'dms') => void;
   export let connect: () => void;
   export let settings: () => void;
   export let selectServer: (serverId: string) => void;
@@ -56,9 +55,14 @@
   }}
 />
 
-<nav class="server-rail" aria-label="Servers and direct messages">
-  {#if preferences.jewelAction === 'none'}
-    <div class="cords-brand" title="Cords Jewel">
+<nav class="server-rail" aria-label="Servers">
+  {#if preferences.jewelAction !== 'settings'}
+    <div
+      class="cords-brand"
+      title={preferences.jewelAction === 'dms'
+        ? 'Cords Jewel · direct messages are unavailable'
+        : 'Cords Jewel'}
+    >
       <Avatar
         value={preferences.jewel}
         text={preferences.jewelText}
@@ -67,12 +71,7 @@
       />
     </div>
   {:else}
-    <button
-      class:active={preferences.jewelAction === 'dms' && section === 'dms'}
-      class="cords-brand"
-      aria-label={preferences.jewelAction === 'dms' ? 'Open direct messages' : 'Open settings'}
-      on:click={() => (preferences.jewelAction === 'dms' ? select('dms') : settings())}
-    >
+    <button class="cords-brand" aria-label="Open settings" on:click={settings}>
       <Avatar
         value={preferences.jewel}
         text={preferences.jewelText}
@@ -80,17 +79,6 @@
         size={46}
       />
     </button>
-  {/if}
-
-  {#if dmEntry(preferences.jewelAction) === 'separate'}
-    <div class="rail-divider"></div>
-    <button
-      class="server-button dm-rail-button"
-      class:selected={section === 'dms'}
-      title="Direct messages"
-      aria-label="Direct messages"
-      on:click={() => select('dms')}><MessageSquareText size={22} /></button
-    >
   {/if}
 
   <div class="rail-divider"></div>

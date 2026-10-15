@@ -47,7 +47,6 @@ describe('server membership interface', () => {
         ],
         preferences: defaults(),
         section: 'server',
-        select: vi.fn(),
         connect: vi.fn(),
         settings: vi.fn(),
         selectServer: select,
@@ -160,6 +159,15 @@ describe('server membership interface', () => {
         decideMembership: vi.fn(),
       },
     });
+    expect(target.querySelector('input, textarea, select')).toBeNull();
+    expect(target.textContent).not.toContain('Save changes');
+    expect(target.textContent).not.toContain('Change icon');
+    expect(target.querySelector('[aria-disabled="true"]')).toBeNull();
+    const destinations = Array.from(target.querySelectorAll('.settings-menu-group button')).map(
+      (button) => button.textContent,
+    );
+    expect(destinations).not.toContain('Invites');
+    expect(destinations).not.toContain('Moderation');
     Array.from(target.querySelectorAll<HTMLButtonElement>('.settings-menu-group button'))
       .find((button) => button.textContent === 'Members')!
       .click();

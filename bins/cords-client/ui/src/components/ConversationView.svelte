@@ -1,6 +1,7 @@
 <script lang="ts">
   import { LockKeyhole, Send } from '@lucide/svelte';
   import RemoteAvatar from './RemoteAvatar.svelte';
+  import CopyButton from './CopyButton.svelte';
   import {
     memberName,
     memberPicture,
@@ -106,31 +107,8 @@
               <details class="message-actions">
                 <summary aria-label="Message actions">•••</summary>
                 <div class="context-menu inline-menu">
-                  <button on:click={() => navigator.clipboard.writeText(message.body)}
-                    >Copy text</button
-                  ><button on:click={() => navigator.clipboard.writeText(message.message_id)}
-                    >Copy message ID</button
-                  ><button
-                    class="dev-unimplemented divided"
-                    disabled
-                    aria-disabled="true"
-                    title="Not implemented yet">Reply</button
-                  ><button
-                    class="dev-unimplemented"
-                    disabled
-                    aria-disabled="true"
-                    title="Not implemented yet">Edit message</button
-                  ><button
-                    class="dev-unimplemented"
-                    disabled
-                    aria-disabled="true"
-                    title="Not implemented yet">Delete message</button
-                  ><button
-                    class="dev-unimplemented danger"
-                    disabled
-                    aria-disabled="true"
-                    title="Not implemented yet">Report</button
-                  >
+                  <CopyButton value={message.body} label="Copy text" />
+                  <CopyButton value={message.message_id} label="Copy message ID" />
                 </div>
               </details>
             </div>
@@ -145,13 +123,6 @@
     {/if}
   </div>
   <form class="cords-composer" autocomplete="off" on:submit|preventDefault={send}>
-    <button
-      type="button"
-      class="composer-tool dev-unimplemented"
-      disabled
-      aria-disabled="true"
-      title="Not implemented yet">+</button
-    >
     <label for="message-draft" class="sr-only">Message</label>
     <input
       id="message-draft"

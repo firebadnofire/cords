@@ -296,6 +296,12 @@ Short authentication strings may be used for interactive comparison but must be 
 
 ## Signed statements and domain separation
 
+Accepted ADR 0010 adds account-level public-profile revisions signed by authorized
+devices. This authorizes presentation changes only, not device enrollment, root
+custody, server roles, or MLS access. Parent-bound signed profile history preserves
+concurrent edits; servers cannot manufacture profile merges. Root private keys
+are not required for routine profile changes.
+
 Every Cords-specific signed object must have an unambiguous versioned signing representation and a role-specific domain-separation prefix or equivalent construction.
 
 Signatures must not be computed over ad hoc JSON text. A parser must not be able to reinterpret a valid signed object from one protocol role as another valid object with different semantics.

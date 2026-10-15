@@ -1,5 +1,31 @@
 # Members, RBAC, moderation and notifications
 
+## Consolidated desktop rework amendment (2026-10-15)
+
+The approved UI rework includes all outstanding milestones below, not just their
+frontend. Execute: audit/shared UI foundation; complete authorization/MLS gates;
+shared media foundation; canonical account profiles/avatar publication;
+directory/roles/moderation with immediate UI integration; server presentation;
+account-wide synchronization/local notifications; shell/visual refinement.
+Independent UI units may proceed while backend gates are incomplete. Gate backend,
+UI integration and packaged/visual evidence independently. Preserve existing work.
+
+`UI-DESIGN.md` governs UI behavior. ADR 0010 governs canonical account profiles
+and shared media; the existing avatar plan retains codec/fidelity acceptance.
+Update these existing contracts rather than introducing competing implementations.
+Use authenticated revision-aware server presentation storage, independently of
+encrypted attachments. Synchronize every active joined server for the unlocked
+account, with independent connections/cursors/errors, four concurrent fetches,
+sixteen WebSockets plus fair overflow polling, and 1-60 second jittered backoff.
+Lock/switch/shutdown cancels workers and submissions; never unlock accounts in
+background. Notifications use authenticated content, not WebSocket metadata.
+
+Track actual work and evidence in [the UI checkpoint report](../reports/ui-rework-20261015.md)
+and the design ledger. Existing backend acceptance evidence remains authoritative
+only for its tested scope. No deployment or release publication is authorized.
+
+## Existing security milestones (requirements retained)
+
 Approved implementation contract, 2026-10-15. Preserve Rust client-core/Tauri/Svelte,
 account/device/MLS separation, current working-tree changes and existing role rules.
 Each checkpoint follows plan -> implement -> validate -> record evidence. Failed

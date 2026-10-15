@@ -4,7 +4,6 @@
     Hash,
     LockKeyhole,
     MoreHorizontal,
-    Plus,
     Search,
     Server,
     Settings2,
@@ -12,7 +11,7 @@
   } from '@lucide/svelte';
   import Modal from './Modal.svelte';
   import ConfidentialitySelect from './ConfidentialitySelect.svelte';
-  import AdminUnavailable from './AdminUnavailable.svelte';
+  import ReadOnlyField from './ReadOnlyField.svelte';
   import RemoteAvatar from './RemoteAvatar.svelte';
   import RoleManagement from './RoleManagement.svelte';
   import MemberRoles from './MemberRoles.svelte';
@@ -83,8 +82,8 @@
     | 'Advanced'
     | 'Ownership';
   const groups: { title: string; pages: Page[] }[] = [
-    { title: 'Server', pages: ['Overview', 'Members', 'Roles', 'Channels', 'Invites'] },
-    { title: 'Community', pages: ['Moderation', 'Audit Log', 'Notifications', 'Integrations'] },
+    { title: 'Server', pages: ['Overview', 'Members', 'Roles', 'Channels'] },
+    { title: 'Community', pages: ['Audit Log'] },
     { title: 'System', pages: ['Advanced', 'Ownership'] },
   ];
   let page: Page = 'Overview';
@@ -96,7 +95,7 @@
   let selectedChannel = channels[0]?.channel_id ?? '';
   let burnedApprovalDevice = '';
   $: manager = identity?.membership?.capabilities.includes('server.manage') ?? false;
-  const pending = 'Not implemented yet';
+  export let openServerTrust: (() => void) | undefined = undefined;
   async function createChannel() {
     busy = true;
     error = '';
@@ -135,7 +134,7 @@
             >{/each}
         </section>{/each}
       <div class="settings-sidebar-note">
-        <Settings2 size={14} />Real state or explicit development gaps
+        <Settings2 size={14} />Server-authorized settings
       </div>
     </aside>
     <main class="settings-body admin-scroll">
@@ -145,54 +144,30 @@
           <header class="admin-page-header">
             <div>
               <h1>Server overview</h1>
-              <p>Public presentation and server-wide defaults.</p>
+              <p>Connection identity and admission settings.</p>
             </div>
-            <button
-              class="admin-primary dev-unimplemented"
-              disabled
-              aria-disabled="true"
-              title={pending}>Save changes</button
-            >
           </header>
-          <div class="admin-hero-card">
-            <div class="admin-server-icon">
-              {new URL(status.origin).hostname.slice(0, 1).toUpperCase()}
-            </div>
-            <div>
-              <strong>{new URL(status.origin).hostname}</strong><span>{status.origin}</span><small
-                >{channels.length} accessible channels · {contacts.length} public device contacts</small
-              >
-            </div>
-            <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-              >Change icon</button
-            >
-          </div>
           <div class="admin-form-grid">
-            <label>Server name<input readonly value={new URL(status.origin).hostname} /></label
-            ><label>Server identity<input readonly value={status.server_id} /></label><label
-              >Description<textarea
-                class="dev-unimplemented"
-                disabled
-                aria-disabled="true"
-                title={pending}
-                placeholder="Not exposed by the server API"
-              ></textarea></label
-            ><label
-              >Join policy<select disabled aria-disabled="true"
-                ><option>{status.join_policy.join(', ') || 'Unknown'}</option></select
-              ></label
-            >
+            <ReadOnlyField label="HTTPS origin" value={status.origin} copyable technical />
+            <ReadOnlyField label="Server identity" value={status.server_id} copyable technical />
+            <ReadOnlyField
+              label="Join policy"
+              value={status.join_policy
+                .map((policy) =>
+                  policy === 'moderator_approval'
+                    ? 'Moderator approval'
+                    : policy === 'public'
+                      ? 'Public'
+                      : policy,
+                )
+                .join(', ')}
+            />
+            <ReadOnlyField label="Accessible channels" value={String(channels.length)} />
           </div>
-          <div class="admin-banner-preview development-surface">
-            <div>
-              <span>SERVER BANNER</span><strong
-                >Presentation surface ready for authoritative metadata.</strong
-              >
-            </div>
-            <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-              >Change banner</button
-            >
-          </div>
+          <p class="muted">
+            This server does not yet provide editable presentation metadata. Its hostname is part of
+            the connection address, not a public display name.
+          </p>
         {:else if page === 'Members'}
           <header class="admin-page-header">
             <div>
@@ -202,12 +177,6 @@
                 membership directory.
               </p>
             </div>
-            <button
-              class="admin-primary dev-unimplemented"
-              disabled
-              aria-disabled="true"
-              title={pending}>Invite member</button
-            >
           </header>
           {#if manager}
             <section class="settings-card">
@@ -289,10 +258,6 @@
                 placeholder="Search account or device"
                 bind:value={query}
               /></label
-            ><select class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-              ><option>All roles</option></select
-            ><select class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-              ><option>Sort members</option></select
             >
           </div>
           <div class="member-table">
@@ -330,9 +295,7 @@
                   selectedContact.authorization.value.created_at * 1000,
                 ).toLocaleString()}
               </p>
-              <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-                >Manage server membership</button
-              >
+
               {#if manager}
                 {#key `${status.server_id}/${selectedContact.authorization.value.account_id}`}
                   <MemberRoles
@@ -361,9 +324,6 @@
               <section>
                 <h3>
                   <ChevronDown size={12} />TEXT CHANNELS
-                  <button class="dev-unimplemented" disabled aria-disabled="true" title={pending}
-                    ><Plus size={14} /></button
-                  >
                 </h3>
                 {#each channels as item (item.channel_id)}<button
                     class:active={channel?.channel_id === item.channel_id}
@@ -375,12 +335,6 @@
                     ><Hash size={16} /><span>{item.name}</span><MoreHorizontal size={15} /></button
                   >{/each}
               </section>
-              <button
-                class="create-category dev-unimplemented"
-                disabled
-                aria-disabled="true"
-                title={pending}><Plus size={15} />Create category</button
-              >
             </div>
             <div class="channel-editor">
               {#if channel}<h2>#{channel.name}</h2>
@@ -390,14 +344,6 @@
                       readonly
                       value={channel.confidentiality_mode ?? 'encrypted'}
                     /></label
-                  ><label
-                    >Topic<textarea
-                      class="dev-unimplemented"
-                      disabled
-                      aria-disabled="true"
-                      title={pending}
-                      placeholder="Not exposed"
-                    ></textarea></label
                   >
                 </div>
                 <p>
@@ -472,7 +418,24 @@
         {:else if page === 'Audit Log'}
           {#key status.server_id}<RoleAudit load={loadRoleAudit} />{/key}
         {:else}
-          <AdminUnavailable {page} {status} {identity} />
+          <header class="admin-page-header">
+            <div>
+              <h1>{page}</h1>
+              <p>Server identity and lifecycle information.</p>
+            </div>
+          </header>
+          <div class="admin-form-grid">
+            <ReadOnlyField label="HTTPS origin" value={status.origin} copyable technical />
+            <ReadOnlyField label="Server identity" value={status.server_id} copyable technical />
+            <ReadOnlyField label="Ownership state" value={status.ownership_state} />
+          </div>
+          <p>
+            Ownership is independent of roles. Server management capabilities do not establish owner
+            identity.
+          </p>
+          {#if openServerTrust}<button on:click={openServerTrust}
+              >Open server trust and succession</button
+            >{/if}
         {/if}
       </div>
     </main>

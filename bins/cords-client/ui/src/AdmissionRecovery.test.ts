@@ -48,6 +48,7 @@ describe('admission and recovery presentation', () => {
             legacy_vault: false,
           };
         if (command === 'unlock_account') return { ...status };
+        if (command === 'session_control') return 'account';
         if (command === 'conversation_view')
           return {
             status: { ...status },
@@ -241,4 +242,44 @@ describe('admission and recovery presentation', () => {
       app.target.remove();
     }
   });
+  it.each(['success', 'failure'] as const)(
+    'discards a late refresh %s after switching to the locked account picker',
+    async (outcome) => {
+      const app = await open(false);
+      try {
+        let complete!: (value: unknown) => void;
+        let fail!: (reason: unknown) => void;
+        const pending = new Promise((resolve, reject) => {
+          complete = resolve;
+          fail = reject;
+        });
+        invokeMock.mockImplementationOnce(() => pending);
+        await vi.advanceTimersByTimeAsync(1000);
+        await settle();
+        expect(invokeMock.mock.calls.at(-1)?.[0]).toBe('conversation_view');
+        app.target.querySelector<HTMLButtonElement>('[aria-label="Account menu"]')!.click();
+        await settle();
+        Array.from(app.target.querySelectorAll<HTMLButtonElement>('.profile-menu button'))
+          .find((button) => button.textContent?.includes('Switch Account'))!
+          .click();
+        await settle();
+        expect(app.target.querySelector('.account-tile')).not.toBeNull();
+        if (outcome === 'success')
+          complete({
+            status: { account_id: 'account', server_id: 'server' },
+            identity: {},
+            messages: [{ message_id: 'late', body: 'Late private content' }],
+            connected: true,
+          });
+        else fail(new Error('Late private error'));
+        await settle();
+        expect(app.target.querySelector('.app-shell')).toBeNull();
+        expect(app.target.querySelector('.account-tile')).not.toBeNull();
+        expect(app.target.textContent).not.toContain('Late private');
+      } finally {
+        await unmount(app.component);
+        app.target.remove();
+      }
+    },
+  );
 });

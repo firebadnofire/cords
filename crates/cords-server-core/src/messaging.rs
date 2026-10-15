@@ -1056,14 +1056,23 @@ async fn members(
     headers: HeaderMap,
     Query(page): Query<MembershipPage>,
 ) -> Result<Json<Vec<Contact>>> {
-    s.authenticate(&headers, "channel.read").await?;
+    let member = s.authenticate(&headers, "channel.read").await?;
     if page.after.len() > 128 {
         return Err(bad());
     }
-    let values:Vec<String>=sqlx::query_scalar("SELECT d.contact FROM device_contacts d JOIN memberships m ON m.device_id=d.device_id WHERE m.active AND d.device_id>$1 ORDER BY d.device_id LIMIT 16").bind(page.after).fetch_all(s.0.store.pool()).await?;
-    Ok(Json(
-        values.iter().map(|v| parse(v)).collect::<Result<_>>()?,
-    ))
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::ViewServer,
+        None,
+    )
+    .await?;
+    let values:Vec<String>=sqlx::query_scalar("SELECT d.contact FROM device_contacts d JOIN memberships m ON m.device_id=d.device_id WHERE m.active AND d.device_id>$1 ORDER BY d.device_id LIMIT 16").bind(page.after).fetch_all(&mut *tx).await?;
+    let result = values.iter().map(|v| parse(v)).collect::<Result<_>>()?;
+    tx.commit().await?;
+    Ok(Json(result))
 }
 #[derive(Default, Deserialize)]
 struct MembershipPage {
@@ -1204,6 +1213,14 @@ async fn upload_package(
     )?;
     let mut tx = s.0.store.pool().begin().await?;
     let scope = format!("keypackage:{device}");
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::PublishKeyPackage,
+        None,
+    )
+    .await?;
     s.authorize_mutation(&mut tx, &headers, &member, None)
         .await?;
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
@@ -1240,8 +1257,22 @@ async fn packages(
     headers: HeaderMap,
     Path(account): Path<String>,
 ) -> Result<Json<Vec<String>>> {
-    s.authenticate(&headers, "channel.read").await?;
-    Ok(Json(sqlx::query_scalar("SELECT k.package FROM key_packages k JOIN device_contacts d ON d.device_id=k.device_id JOIN memberships m ON m.device_id=d.device_id WHERE d.account_id=$1 AND m.active AND NOT k.consumed AND k.reserved_by IS NULL LIMIT 32").bind(account).fetch_all(s.0.store.pool()).await?))
+    let member = s.authenticate(&headers, "channel.read").await?;
+    if account.len() > 128 {
+        return Err(bad());
+    }
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::ViewServer,
+        None,
+    )
+    .await?;
+    let result = sqlx::query_scalar("SELECT k.package FROM key_packages k JOIN device_contacts d ON d.device_id=k.device_id JOIN memberships m ON m.device_id=d.device_id WHERE d.account_id=$1 AND m.active AND NOT k.consumed AND k.reserved_by IS NULL LIMIT 32").bind(account).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(result))
 }
 
 async fn create_channel(
@@ -1290,12 +1321,17 @@ async fn create_channel(
 }
 async fn channel_view(s: &Service, route: &str) -> Result<Channel> {
     let mut tx = s.0.store.pool().begin().await?;
-    let mut view = channel_view_in(&mut tx, route).await?;
+    let view = signed_channel_view(s, &mut tx, route).await?;
+    tx.commit().await?;
+    Ok(view)
+}
+async fn signed_channel_view(s: &Service, tx: &mut Tx<'_>, route: &str) -> Result<Channel> {
+    let mut view = channel_view_in(tx, route).await?;
     let row = sqlx::query(
         "SELECT created_at,retired,succession,predecessor_succession FROM channels WHERE id=$1",
     )
     .bind(route)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     view.identity = Some(s.sign(ChannelIdentity {
         version: 1,
@@ -1330,7 +1366,6 @@ async fn channel_view(s: &Service, route: &str) -> Result<Channel> {
         succession,
         predecessor_succession,
     })?));
-    tx.commit().await?;
     Ok(view)
 }
 
@@ -1501,13 +1536,48 @@ async fn channel_view_in(tx: &mut Tx<'_>, route: &str) -> Result<Channel> {
 }
 async fn channels(State(s): State<Service>, headers: HeaderMap) -> Result<Json<Vec<Channel>>> {
     let member = s.authenticate(&headers, "channel.read").await?;
-    let rows = sqlx::query("SELECT c.id,c.name,c.creator,c.epoch,EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$1 AND m.active AND m.delivery_active) AS joined FROM channels c ORDER BY c.id LIMIT 1000")
-        .bind(&member.value.device_id).fetch_all(s.0.store.pool()).await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::ViewServer,
+        None,
+    )
+    .await?;
+    let rows = sqlx::query("SELECT c.id,EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$1 AND m.active AND m.delivery_active) AS joined FROM channels c ORDER BY c.id LIMIT 1000")
+        .bind(&member.value.device_id).fetch_all(&mut *tx).await?;
     let mut result = Vec::new();
     for row in rows {
         let route: String = row.try_get("id")?;
-        let mut view = channel_view(&s, &route).await?;
-        if !row.try_get::<bool, _>("joined")?
+        match s
+            .require_current_policy(
+                &mut tx,
+                &member.value,
+                cords_protocol::roles::Permission::ViewChannel,
+                Some(&route),
+            )
+            .await
+        {
+            Ok(()) => (),
+            Err(error) if error.0 == StatusCode::FORBIDDEN => continue,
+            Err(error) => return Err(error),
+        }
+        let readable = match s
+            .require_current_policy(
+                &mut tx,
+                &member.value,
+                cords_protocol::roles::Permission::ReadMessages,
+                Some(&route),
+            )
+            .await
+        {
+            Ok(()) => true,
+            Err(error) if error.0 == StatusCode::FORBIDDEN => false,
+            Err(error) => return Err(error),
+        };
+        let mut view = signed_channel_view(&s, &mut tx, &route).await?;
+        if (!readable || !row.try_get::<bool, _>("joined")?)
             && view.confidentiality_mode == ConfidentialityMode::Encrypted
         {
             view.members.clear();
@@ -1515,6 +1585,7 @@ async fn channels(State(s): State<Service>, headers: HeaderMap) -> Result<Json<V
         }
         result.push(view);
     }
+    tx.commit().await?;
     Ok(Json(result))
 }
 #[derive(Deserialize)]
@@ -1529,28 +1600,40 @@ async fn channel(
 ) -> Result<Json<Channel>> {
     let member = s.authenticate(&headers, "channel.read").await?;
     s.route_access(&route, &member.value, false).await?;
-    if let Some(epoch) = query.epoch {
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::ReadMessages,
+        Some(&route),
+    )
+    .await?;
+    let current = signed_channel_view(&s, &mut tx, &route).await?;
+    let result = if let Some(epoch) = query.epoch {
         let view: Option<String> =
             sqlx::query_scalar("SELECT view FROM channel_epochs WHERE channel_id=$1 AND epoch=$2")
                 .bind(&route)
                 .bind(int(epoch)?)
-                .fetch_optional(s.0.store.pool())
+                .fetch_optional(&mut *tx)
                 .await?;
         if let Some(view) = view {
             let mut historical: Channel = parse(&view)?;
-            let current = channel_view(&s, &route).await?;
             historical.identity = current.identity;
             historical.transition = current.transition;
             historical.confidentiality_mode = current.confidentiality_mode;
-            return Ok(Json(historical));
+            historical
+        } else {
+            if current.epoch != epoch {
+                return Err(conflict());
+            }
+            current
         }
-        let current = channel_view(&s, &route).await?;
-        if current.epoch != epoch {
-            return Err(conflict());
-        }
-        return Ok(Json(current));
-    }
-    Ok(Json(channel_view(&s, &route).await?))
+    } else {
+        current
+    };
+    tx.commit().await?;
+    Ok(Json(result))
 }
 
 async fn roster(
@@ -1744,19 +1827,30 @@ async fn welcome(
 ) -> Result<Json<serde_json::Value>> {
     let member = s.authenticate(&headers, "channel.read").await?;
     s.route_access(&route, &member.value, false).await?;
-    if channel_view(&s, &route).await?.confidentiality_mode != ConfidentialityMode::Encrypted {
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::ReadMessages,
+        Some(&route),
+    )
+    .await?;
+    if channel_view_in(&mut tx, &route).await?.confidentiality_mode
+        != ConfidentialityMode::Encrypted
+    {
         return Err(bad());
     }
     let row =
         sqlx::query("SELECT sequence,welcome FROM welcomes WHERE channel_id=$1 AND device_id=$2")
             .bind(route)
             .bind(&member.value.device_id)
-            .fetch_optional(s.0.store.pool())
+            .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(denied)?;
-    Ok(Json(
-        serde_json::json!({"sequence":row.try_get::<i64,_>("sequence")?,"welcome":row.try_get::<String,_>("welcome")?}),
-    ))
+    let result = serde_json::json!({"sequence":row.try_get::<i64,_>("sequence")?,"welcome":row.try_get::<String,_>("welcome")?});
+    tx.commit().await?;
+    Ok(Json(result))
 }
 async fn upload_event(
     State(s): State<Service>,
@@ -1908,6 +2002,11 @@ async fn socket_loop(
     token: String,
     mut receiver: broadcast::Receiver<(String, u64)>,
 ) {
+    let mut headers = HeaderMap::new();
+    let Ok(authorization) = format!("Bearer {token}").parse() else {
+        return;
+    };
+    headers.insert("authorization", authorization);
     let mut interval = tokio::time::interval(Duration::from_secs(15));
     let mut last_pong = Instant::now();
     loop {
@@ -1915,9 +2014,11 @@ async fn socket_loop(
             notice=receiver.recv()=>{
                 let Ok((route,sequence))=notice else {break;};
                 let Ok(member)=s.authenticate_token(&token,"channel.read").await else {break;};
-                if s.route_access(&route,&member.value,false).await.is_err() {continue;}
-                let Ok(bytes)=notification(&route,sequence) else {break;};
-                if socket.send(WsMessage::Binary(bytes.into())).await.is_err(){break;}
+                match socket_notice(&s, &mut socket, &headers, &member, &route, sequence).await {
+                    Ok(()) => (),
+                    Err(error) if error.0 == StatusCode::FORBIDDEN => (),
+                    Err(_) => break,
+                }
             }
             incoming=socket.recv()=>{match incoming {Some(Ok(WsMessage::Pong(_)))=>{last_pong = Instant::now();},Some(Ok(WsMessage::Ping(_)))=>{},_=>break}}
             _=interval.tick()=>{
@@ -1926,6 +2027,42 @@ async fn socket_loop(
         }
     }
     let _ = socket.send(WsMessage::Close(None)).await;
+}
+
+async fn socket_notice(
+    s: &Service,
+    socket: &mut WebSocket,
+    headers: &HeaderMap,
+    member: &Signed<Membership>,
+    route: &str,
+    sequence: u64,
+) -> Result<()> {
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, headers, member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::ReadMessages,
+        Some(route),
+    )
+    .await?;
+    let accessible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channels c WHERE c.id=$1 AND (c.confidentiality_mode='public' OR EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$2 AND m.active AND m.delivery_active)))")
+        .bind(route).bind(&member.value.device_id).fetch_one(&mut *tx).await?;
+    if !accessible {
+        return Err(denied());
+    }
+    let bytes = notification(route, sequence)?;
+    // Serialize delivery against account/policy revocation. Bound the write so
+    // an unresponsive peer cannot retain authorization locks indefinitely.
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        socket.send(WsMessage::Binary(bytes.into())),
+    )
+    .await
+    .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "CORDS_DELIVERY_TIMEOUT"))?
+    .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "CORDS_DELIVERY_CLOSED"))?;
+    tx.commit().await?;
+    Ok(())
 }
 
 mod departure;

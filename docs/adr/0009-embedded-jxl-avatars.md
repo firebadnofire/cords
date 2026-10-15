@@ -6,6 +6,11 @@
 
 ## Decision
 
+The 2026-10-15 amendment in [ADR 0010](0010-canonical-account-profiles.md)
+supersedes device-scoped public-profile ordering with a canonical account-level
+causal revision graph. Media fidelity and resource requirements below remain in
+force. The shared codec/player also serves separately authorized server imagery.
+
 Implement the [approved amended plan](../plans/embedded-jxl-avatars.md) in gated
 functional units. Embedded JXL is the local-upload result. The user's 2026-10-14
 amendment removes URL profile pictures entirely, including entry, publication and

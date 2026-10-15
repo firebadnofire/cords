@@ -158,7 +158,7 @@ export const defaults = (): Preferences => ({
   reducedMotion: false,
   jewelText: 'C',
   jewelColor: '#477da3',
-  jewelAction: 'dms',
+  jewelAction: 'settings',
   avatar: blankPicture(),
   jewel: blankPicture(),
   genericize: false,
@@ -205,7 +205,7 @@ export function preferences(value: unknown): Preferences {
       typeof p.jewelColor === 'string' && /^#[0-9a-f]{6}$/i.test(p.jewelColor)
         ? p.jewelColor
         : '#477da3',
-    jewelAction: p.jewelAction === 'none' || p.jewelAction === 'settings' ? p.jewelAction : 'dms',
+    jewelAction: p.jewelAction === 'none' || p.jewelAction === 'dms' ? p.jewelAction : 'settings',
     avatar: picture(p.avatar),
     jewel: picture(p.jewel),
     genericize: p.genericize === true,

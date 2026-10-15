@@ -2,6 +2,323 @@
 use super::*;
 use cords_protocol::roles::{Permission, Role, RoleChange, RoleChangeRequest};
 
+async fn remove_default_permission(
+    service: &Service,
+    owner: &Session,
+    permission: Permission,
+) -> Result<()> {
+    let catalog = roles::catalog(State(service.clone()), headers(owner)?)
+        .await?
+        .0
+        .value;
+    let mut role = catalog
+        .roles
+        .into_iter()
+        .find(|role| role.id == cords_protocol::roles::DEFAULT_ROLE)
+        .context("default role")?;
+    assert!(role.permissions.remove(&permission));
+    change(
+        service,
+        owner,
+        request(
+            i64::try_from(catalog.revision)?,
+            RoleChange::PutRole { role },
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn contact_and_key_package_operations_observe_current_policy() -> Result<()> {
+    let (service, _directory) = fixture().await?;
+    let (owner_id, owner_contact) = identity()?;
+    let owner =
+        grant_fixture_owner(&service, join(&service, &owner_id, owner_contact).await?).await?;
+    let member_id = Identity::generate(now()?)?;
+    let crypto = ConversationCrypto::new(member_id.authorization.value.device_id.clone())?;
+    let member = join(
+        &service,
+        &member_id,
+        member_id.contact(&crypto.public_key())?,
+    )
+    .await?;
+    activate_candidate(&service).await?;
+    let package = KeyPackageUpload {
+        key_package: encode(crypto.key_package()?),
+        idempotency_key: id(),
+    };
+    let published = upload_package(
+        State(service.clone()),
+        headers(&member)?,
+        Json(package.clone()),
+    )
+    .await?
+    .0;
+    assert_eq!(published, hash(decode(&package.key_package)?));
+    assert_eq!(
+        packages(
+            State(service.clone()),
+            headers(&member)?,
+            Path(member.membership.value.account_id.clone())
+        )
+        .await?
+        .0
+        .len(),
+        1
+    );
+    assert_eq!(
+        members(
+            State(service.clone()),
+            headers(&member)?,
+            Query(MembershipPage::default())
+        )
+        .await?
+        .0
+        .len(),
+        2
+    );
+    remove_default_permission(&service, &owner, Permission::PublishKeyPackage).await?;
+    // An old credential and a known successful idempotency key cannot bypass a
+    // permission revoked after publication. No additional package is persisted.
+    assert_eq!(
+        upload_package(State(service.clone()), headers(&member)?, Json(package))
+            .await
+            .err()
+            .context("publication denial")?
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    remove_default_permission(&service, &owner, Permission::ViewServer).await?;
+    assert_eq!(
+        members(
+            State(service.clone()),
+            headers(&member)?,
+            Query(MembershipPage::default())
+        )
+        .await
+        .err()
+        .context("contact denial")?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        packages(
+            State(service.clone()),
+            headers(&member)?,
+            Path(owner.membership.value.account_id.clone())
+        )
+        .await
+        .err()
+        .context("package disclosure denial")?
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM key_packages")
+        .fetch_one(service.0.store.pool())
+        .await?;
+    assert_eq!(count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL and real TLS WebSocket"]
+async fn live_tls_notifications_recheck_channel_policy() -> Result<()> {
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use tokio_rustls::{TlsConnector, rustls};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest as _};
+
+    let (service, _directory) = fixture().await?;
+    let (owner_id, owner_contact) = identity()?;
+    let owner =
+        grant_fixture_owner(&service, join(&service, &owner_id, owner_contact).await?).await?;
+    let (member_id, member_contact) = identity()?;
+    let member = join(&service, &member_id, member_contact).await?;
+    let mut routes = Vec::new();
+    for name in ["access removed", "access retained"] {
+        routes.push(
+            create_channel(
+                State(service.clone()),
+                headers(&owner)?,
+                Json(ChannelCreate {
+                    confidentiality_mode: ConfidentialityMode::Public,
+                    name: name.into(),
+                    idempotency_key: id(),
+                }),
+            )
+            .await?
+            .0,
+        );
+    }
+    activate_candidate(&service).await?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(certificate.cert.der().clone())?;
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let stream =
+        tokio::net::TcpStream::connect(tls.origin.strip_prefix("https://").context("TLS origin")?)
+            .await?;
+    let stream = TlsConnector::from(Arc::new(config))
+        .connect(
+            rustls::pki_types::ServerName::try_from("localhost")?,
+            stream,
+        )
+        .await?;
+    let mut request = format!(
+        "{}/api/v1/events",
+        tls.origin.replacen("https://", "wss://", 1)
+    )
+    .into_client_request()?;
+    request
+        .headers_mut()
+        .insert("authorization", format!("Bearer {}", member.token).parse()?);
+    request
+        .headers_mut()
+        .insert("sec-websocket-protocol", WS_PROTOCOL.parse()?);
+    let (mut socket, _) = tokio_tungstenite::client_async(request, stream).await?;
+    // The second allowed route is an ordering barrier: a denied route must not
+    // emit a notice, while the same established connection remains useful.
+    for (denied_route, expected_route, sequence) in [(false, &routes[0], 1), (true, &routes[1], 3)]
+    {
+        if denied_route {
+            deny_channel(&service, &routes[0], Permission::ReadMessages).await?;
+            service.0.notifications.send((routes[0].clone(), 2))?;
+        }
+        service
+            .0
+            .notifications
+            .send((expected_route.clone(), sequence))?;
+        let received = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match socket.next().await {
+                    Some(Ok(Message::Binary(bytes))) => return Ok::<_, anyhow::Error>(bytes),
+                    Some(Ok(Message::Ping(_))) => socket.flush().await?,
+                    other => anyhow::bail!("expected authenticated notice, got {other:?}"),
+                }
+            }
+        })
+        .await??;
+        assert_eq!(
+            received.as_ref(),
+            notification(expected_route, sequence)?.as_slice()
+        );
+    }
+    socket.close(None).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn discovery_channel_snapshots_and_welcomes_observe_current_policy() -> Result<()> {
+    let (service, _directory) = fixture().await?;
+    let (owner_id, owner_contact) = identity()?;
+    let owner =
+        grant_fixture_owner(&service, join(&service, &owner_id, owner_contact).await?).await?;
+    let (member_id, member_contact) = identity()?;
+    let member = join(&service, &member_id, member_contact).await?;
+    let route = create_channel(
+        State(service.clone()),
+        headers(&owner)?,
+        Json(ChannelCreate {
+            confidentiality_mode: ConfidentialityMode::Encrypted,
+            name: "policy discovery".into(),
+            idempotency_key: id(),
+        }),
+    )
+    .await?
+    .0;
+    sqlx::query("INSERT INTO channel_members(channel_id,device_id) VALUES($1,$2)")
+        .bind(&route)
+        .bind(&member_id.authorization.value.device_id)
+        .execute(service.0.store.pool())
+        .await?;
+    sqlx::query("INSERT INTO welcomes(channel_id,device_id,sequence,welcome) VALUES($1,$2,0,'opaque welcome')")
+        .bind(&route).bind(&member_id.authorization.value.device_id)
+        .execute(service.0.store.pool()).await?;
+    let mut tx = service.0.store.pool().begin().await?;
+    lifecycle::snapshot_epoch(&mut tx, &route).await?;
+    tx.commit().await?;
+    activate_candidate(&service).await?;
+
+    assert_eq!(
+        channels(State(service.clone()), headers(&member)?)
+            .await?
+            .0
+            .len(),
+        1
+    );
+    assert!(
+        welcome(
+            State(service.clone()),
+            headers(&member)?,
+            Path(route.clone())
+        )
+        .await
+        .is_ok()
+    );
+    deny_channel(&service, &route, Permission::ReadMessages).await?;
+    let discovered = channels(State(service.clone()), headers(&member)?).await?.0;
+    assert_eq!(
+        discovered.len(),
+        1,
+        "view permission retains channel metadata"
+    );
+    assert!(
+        discovered[0].members.is_empty(),
+        "read-denied discovery must conceal the MLS roster"
+    );
+    assert!(discovered[0].binding.is_none());
+    for epoch in [None, Some(0)] {
+        let denied = channel(
+            State(service.clone()),
+            headers(&member)?,
+            Path(route.clone()),
+            Query(ChannelQuery { epoch }),
+        )
+        .await;
+        assert_eq!(
+            denied
+                .err()
+                .context("read-denied channel state disclosed")?
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    let denied = welcome(
+        State(service.clone()),
+        headers(&member)?,
+        Path(route.clone()),
+    )
+    .await;
+    assert_eq!(
+        denied.err().context("read-denied Welcome disclosed")?.0,
+        StatusCode::FORBIDDEN
+    );
+    deny_channel(&service, &route, Permission::ViewChannel).await?;
+    assert!(
+        channels(State(service.clone()), headers(&member)?)
+            .await?
+            .0
+            .is_empty()
+    );
+    assert_eq!(
+        channels(State(service.clone()), headers(&owner)?)
+            .await?
+            .0
+            .len(),
+        1,
+        "independent owner management remains visible"
+    );
+    Ok(())
+}
+
 async fn activate_candidate(service: &Service) -> Result<()> {
     let mut tx = service.0.store.pool().begin().await?;
     sqlx::raw_sql(include_str!(

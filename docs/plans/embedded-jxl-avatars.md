@@ -1,6 +1,11 @@
 # Embedded static and animated JPEG XL avatars
 
 Status: implementation in progress; no feature acceptance gate is complete.
+The accepted [account-profile amendment](../adr/0010-canonical-account-profiles.md)
+supersedes device-scoped public-profile revisions below. Implement the shared media
+foundation first, then signed canonical account profiles and separately authorized
+server imagery. The consolidated execution sequence lives in
+[the existing milestone](member-rbac-milestone.md), not a parallel rework plan.
 Current evidence and remaining codec work: [2026-10-14 implementation report](../reports/embedded-jxl-avatars-20261014.md).
 Picker shape correction and current missing publication/rendering path:
 [2026-10-14 follow-up](../reports/avatar-picker-shape-20261014.md).

@@ -2,7 +2,7 @@
 import { mount, tick, unmount } from 'svelte';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import Settings from './Settings.svelte';
-import { defaults } from '../model';
+import { defaults, type Status } from '../model';
 
 beforeAll(() => {
   // jsdom lacks native dialog presentation; test the Settings behavior independently.
@@ -11,16 +11,18 @@ beforeAll(() => {
   };
 });
 
-async function setup() {
+async function setup(status: Status | null = null) {
   const target = document.createElement('div');
   const changePassword = vi.fn().mockResolvedValue(undefined);
   const openArchives = vi.fn();
+  const save = vi.fn().mockResolvedValue(undefined);
+  const close = vi.fn();
   const component = mount(Settings, {
     target,
     props: {
       value: defaults(),
       identity: null,
-      status: null,
+      status,
       servers: [
         {
           server_id: 'old',
@@ -31,8 +33,8 @@ async function setup() {
           active: false,
         },
       ],
-      close: vi.fn(),
-      save: vi.fn(),
+      close,
+      save,
       revoke: vi.fn(),
       lockNow: vi.fn(),
       removeServer: vi.fn(),
@@ -69,10 +71,53 @@ async function setup() {
     for (let i = 0; i < 20; i++) await Promise.resolve();
     await tick();
   }
-  return { target, component, changePassword, openArchives, page, fields, submit };
+  return { target, component, changePassword, openArchives, save, close, page, fields, submit };
 }
 
 describe('account settings', () => {
+  it('preserves unsaved edits on Escape and closes only after explicit discard', async () => {
+    const ui = await setup();
+    await ui.page('Appearance');
+    await ui.page('Midnight');
+    ui.target.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await tick();
+    expect(ui.close).not.toHaveBeenCalled();
+    expect(ui.target.textContent).toContain('Keep your changes?');
+    await ui.page('Keep editing');
+    expect(ui.target.textContent).not.toContain('Keep your changes?');
+    expect(ui.target.textContent).toContain('Unsaved changes');
+    ui.target.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await tick();
+    await ui.page('Discard and close');
+    expect(ui.close).toHaveBeenCalledOnce();
+    expect(ui.save).not.toHaveBeenCalled();
+    await unmount(ui.component);
+  });
+
+  it('retains a failed preference save and enables retry without false success', async () => {
+    const ui = await setup({ server_id: 'server' } as Status);
+    await ui.page('Appearance');
+    const saveButton = () =>
+      [...ui.target.querySelectorAll('button')].find(
+        (button) => button.textContent?.trim() === 'Save local preferences',
+      )!;
+    expect(saveButton().disabled).toBe(true);
+    await ui.page('Midnight');
+    ui.save.mockRejectedValueOnce(new Error('Local storage unavailable'));
+    await ui.page('Save local preferences');
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await tick();
+    expect(ui.target.textContent).toContain('Local storage unavailable');
+    expect(ui.target.textContent).toContain('Unsaved changes');
+    expect(ui.target.textContent).not.toContain('Saved on this installation');
+    await ui.page('Save local preferences');
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await tick();
+    expect(ui.save).toHaveBeenLastCalledWith(expect.objectContaining({ theme: 'midnight' }));
+    expect(ui.target.textContent).toContain('Saved on this installation');
+    expect(saveButton().disabled).toBe(true);
+    await unmount(ui.component);
+  });
   it('opens partial archives from Local history and distinguishes server bookmarks', async () => {
     const ui = await setup();
     await ui.page('Local history');

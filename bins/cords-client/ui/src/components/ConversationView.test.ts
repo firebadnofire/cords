@@ -1,10 +1,47 @@
 // @vitest-environment jsdom
 import { mount, unmount } from 'svelte';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defaults, type Channel, type Status } from '../model';
 import ConversationView from './ConversationView.svelte';
 
 describe('conversation composer', () => {
+  it('connects from the empty workspace without an unusable composer', async () => {
+    const target = document.createElement('div');
+    const openConnection = vi.fn();
+    const component = mount(ConversationView, {
+      target,
+      props: {
+        section: 'server',
+        channel: undefined,
+        messages: [],
+        status: {
+          account_id: 'account',
+          device_id: 'device',
+          origin: '',
+          server_id: '',
+          ownership_state: '',
+          ownership_generation: 0,
+          burned: false,
+          admission_state: '',
+          join_policy: [],
+          cursors: {},
+        },
+        preferences: defaults(),
+        query: '',
+        body: '',
+        busy: false,
+        revoked: false,
+        setBody: vi.fn(),
+        send: vi.fn(),
+        openConnection,
+      },
+    });
+    expect(target.querySelector('.cords-composer')).toBeNull();
+    expect(target.textContent).not.toContain('cords.invalid');
+    target.querySelector<HTMLButtonElement>('.welcome-connect')!.click();
+    expect(openConnection).toHaveBeenCalledOnce();
+    await unmount(component);
+  });
   it('opts out of saved input history', async () => {
     const target = document.createElement('div');
     document.body.append(target);

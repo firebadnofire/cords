@@ -493,7 +493,8 @@ Maintain a small implementation ledger in the relevant PR/checkpoint or in this 
 
 | Surface | Design status | Functional status | Evidence / outstanding issue |
 | --- | --- | --- | --- |
-| Chat shell / right sidebar | Specified here | Needs runtime audit | Replace default details rail with members |
+| Chat shell / right sidebar | Shell refinement implemented | Frontend and browser reviewed | Info is opt-in; native modal drawers at narrow widths; account directory still blocks default members |
+| Shell type / themes / empty states | Implemented | Frontend and browser reviewed | Relative type, 125% text, dark/light surfaces, valid connection action, no inactive composer |
 | Public member directory | Specified here | Needs runtime audit | Must be account-centric, not device contacts |
 | Profile popouts | Specified here | Needs runtime audit | Shared account presentation and actions |
 | Member administration | Specified here | Needs runtime audit | Requests, devices, moderation, roles |
@@ -505,10 +506,12 @@ Maintain a small implementation ledger in the relevant PR/checkpoint or in this 
 | Local settings drafts | Implemented | Frontend validated | Dirty/discard, pending save and failed-save retention; packaged review outstanding |
 
 Checkpoint evidence and the source action inventory are maintained in
-`docs/reports/ui-rework-20261015.md`. After the shared-control unit, frontend check,
-lint, build, formatting and 85 tests pass. Three isolated PostgreSQL tests cover
-partial current-policy endpoint enforcement. This does not establish RBAC activation,
-media, or packaged desktop completion.
+`docs/reports/ui-rework-20261015.md`. The shell continuation passes frontend check,
+lint, build, formatting and 91 tests. Browser fixtures cover desktop, laptop,
+minimum window, light theme, larger text, and keyboard behavior. The preceding
+backend unit passed 52 isolated PostgreSQL server tests, including five focused
+current-policy tests. These remain separate from RBAC activation, media, and
+packaged Windows/Linux/macOS acceptance.
 
 “Needs runtime audit” is intentional. Do not mark a feature complete solely because a component exists or the design document describes it.
 
@@ -525,5 +528,12 @@ Record changes as short dated entries describing **decision**, **reason**, and *
   animated JXL processing/playback with separately authorized server imagery. Sync
   all active joined servers for the unlocked account. Track backend, UI and actual
   packaged visual evidence as independent gates.
+- **2026-10-15 — Visible shell refinement:** Use Cords blue with distinct neutral
+  surfaces, relative typography, quieter conversation intros, and useful local
+  empty states. Info starts closed and requires a channel. Until the admitted-account
+  directory passes its backend gate, leave that right surface closed rather than
+  presenting device contacts as public members. At narrow widths, native modal
+  drawers preserve channel navigation and Info with Escape, bounded scrolling,
+  keyboard focus containment, and restoration.
 
 **This file is a maintained product contract, not a substitute for functional tests or the security architecture.**

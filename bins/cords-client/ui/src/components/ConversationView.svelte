@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LockKeyhole, Send } from '@lucide/svelte';
+  import { ArrowRight, Hash, LockKeyhole, Send, Server } from '@lucide/svelte';
   import RemoteAvatar from './RemoteAvatar.svelte';
   import CopyButton from './CopyButton.svelte';
   import {
@@ -29,6 +29,7 @@
   export let revoked: boolean;
   export let setBody: (value: string) => void;
   export let send: () => void;
+  export let openConnection: () => void = () => undefined;
   const messageWindow = 500;
   let visibleLimit = messageWindow;
   $: filtered = messages.filter((message) =>
@@ -37,10 +38,17 @@
       .includes(query.toLowerCase()),
   );
   $: visible = filtered.slice(-visibleLimit);
+  $: restriction = revoked
+    ? 'This device is revoked. Sending is unavailable.'
+    : channel?.locally_archived
+      ? 'This retired channel is a read-only local archive.'
+      : channel?.requires_public_acknowledgement
+        ? 'Review and acknowledge the public channel notice before sending.'
+        : '';
 </script>
 
 <main class="cords-conversation">
-  <div class="cords-timeline" aria-label="Conversation messages">
+  <div class="cords-timeline" class:workspace-empty={!channel} aria-label="Conversation messages">
     {#if section === 'dms'}
       <div class="conversation-intro">
         <span class="intro-icon"><LockKeyhole size={25} /></span>
@@ -52,29 +60,58 @@
         </div>
       </div>
     {:else if !channel}
-      <div class="conversation-intro">
-        <span class="intro-icon">C</span>
-        <h1>Welcome to Cords</h1>
-        <p>Select a channel or connect to your server.</p>
+      <div class="workspace-welcome">
+        <div class="welcome-art" aria-hidden="true">
+          <span class="welcome-orbit"></span><span class="welcome-mark">C<span></span></span>
+        </div>
+        <span class="eyebrow">RIGHT ON THE WIRE</span>
+        <h1>{status.server_id ? 'Find your conversation.' : 'Your people. Your servers.'}</h1>
+        <p>
+          {status.server_id
+            ? 'Choose a channel from the sidebar to pick up the conversation.'
+            : 'A familiar place to talk, with an identity that belongs to you. Connect to a community to get started.'}
+        </p>
+        {#if !status.server_id}
+          <button class="primary welcome-connect" on:click={openConnection}
+            >Connect to a server <ArrowRight size={18} /></button
+          >
+        {/if}
+        <div class="welcome-context">
+          {#if status.server_id}<Hash size={21} />
+            <div>
+              <strong>{new URL(status.origin).hostname}</strong><span
+                >Your server is selected. Channel access depends on your membership.</span
+              >
+            </div>
+          {:else}<Server size={21} />
+            <div>
+              <strong>Independent communities</strong><span
+                >Connect directly using your server’s HTTPS address.</span
+              >
+            </div>{/if}
+        </div>
+        <div class="welcome-privacy">
+          <LockKeyhole size={14} /><span>Your account is unlocked on this device.</span>
+        </div>
       </div>
     {:else}
-      <div class="conversation-intro">
+      <div class="conversation-intro" class:has-messages={messages.length > 0}>
         <span class="intro-icon">#</span>
         <h1>#{channel.name}</h1>
         <p>
           {channel.confidentiality_mode === 'public'
             ? 'True public · signed messages · no end-to-end encryption'
-            : `Encrypted conversation · MLS epoch ${channel.epoch}`}
+            : 'End-to-end encrypted conversation'}
         </p>
         {#if channel.locally_archived}<p>
             Retired channel · partial local archive · read-only
           </p>{/if}
-        <div class="intro-note">
-          {#if channel.confidentiality_mode === 'public'}The server and anyone with access can read,
-            copy, and retain these messages. Sender identities are cryptographically verified. HTTPS
-            protects transport.{:else}New devices receive current and future state, not earlier
-            plaintext.{/if}
-        </div>
+        {#if channel.confidentiality_mode === 'public' || !messages.length}<div class="intro-note">
+            {#if channel.confidentiality_mode === 'public'}The server and anyone with access can
+              read, copy, and retain these messages. Sender identities are cryptographically
+              verified. HTTPS protects transport.{:else}New devices receive current and future
+              state, not earlier plaintext.{/if}
+          </div>{/if}
       </div>
       <div class="timeline-divider"><span>Local history</span></div>
       {#if filtered.length > visibleLimit}
@@ -101,8 +138,15 @@
                 >{message.sender_device_id === status.device_id
                   ? preferences.displayName
                   : name(message.sender_device_id)}</strong
-              ><time datetime={new Date(message.client_timestamp * 1000).toISOString()}
-                >{new Date(message.client_timestamp * 1000).toLocaleString()}</time
+              ><time
+                datetime={new Date(message.client_timestamp * 1000).toISOString()}
+                title={new Date(message.client_timestamp * 1000).toLocaleString()}
+                >{new Date(message.client_timestamp * 1000).toLocaleString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}</time
               >
               <details class="message-actions">
                 <summary aria-label="Message actions">•••</summary>
@@ -122,36 +166,34 @@
       {/each}
     {/if}
   </div>
-  <form class="cords-composer" autocomplete="off" on:submit|preventDefault={send}>
-    <label for="message-draft" class="sr-only">Message</label>
-    <input
-      id="message-draft"
-      autocomplete="off"
-      value={body}
-      on:input={(event) => setBody(event.currentTarget.value)}
-      disabled={!channel ||
-        section === 'dms' ||
-        busy ||
-        revoked ||
-        channel?.locally_archived ||
-        channel?.requires_public_acknowledgement}
-      placeholder={section === 'dms'
-        ? 'Direct messaging is not available'
-        : channel
-          ? `Message #${channel.name}`
-          : 'Select a channel'}
-    />
-    <button
-      type="submit"
-      disabled={!channel ||
-        section === 'dms' ||
-        busy ||
-        revoked ||
-        channel?.locally_archived ||
-        channel?.requires_public_acknowledgement ||
-        !body.trim()}
-      title="Send message"
-      aria-label="Send message"><Send size={19} /></button
-    >
-  </form>
+  {#if channel && section === 'server'}
+    {#if restriction}<p class="composer-restriction" id="composer-restriction" role="status">
+        <LockKeyhole size={15} />{restriction}
+      </p>{/if}
+    <form class="cords-composer" autocomplete="off" on:submit|preventDefault={send}>
+      <label for="message-draft" class="sr-only">Message</label>
+      <input
+        id="message-draft"
+        autocomplete="off"
+        aria-describedby={restriction ? 'composer-restriction' : undefined}
+        value={body}
+        on:input={(event) => setBody(event.currentTarget.value)}
+        disabled={busy ||
+          revoked ||
+          channel?.locally_archived ||
+          channel?.requires_public_acknowledgement}
+        placeholder={`Message #${channel.name}`}
+      />
+      <button
+        type="submit"
+        disabled={busy ||
+          revoked ||
+          channel?.locally_archived ||
+          channel?.requires_public_acknowledgement ||
+          !body.trim()}
+        title="Send message"
+        aria-label="Send message"><Send size={19} /></button
+      >
+    </form>
+  {/if}
 </main>

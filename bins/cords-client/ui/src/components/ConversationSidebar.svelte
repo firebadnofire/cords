@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, Globe, Hash, LockKeyhole, Plus } from '@lucide/svelte';
+  import { ChevronDown, Globe, Hash, LockKeyhole, Plus, Server } from '@lucide/svelte';
   import { type Channel, type Identity, type Status } from '../model';
 
   export let status: Status;
@@ -23,9 +23,11 @@
     <strong
       >{section === 'dms'
         ? 'Direct messages'
-        : new URL(status.origin || 'https://cords.invalid').hostname}</strong
+        : status.server_id && status.origin
+          ? new URL(status.origin).hostname
+          : 'Your servers'}</strong
     >
-    {#if section === 'server'}
+    {#if section === 'server' && status.server_id}
       <details class="surface-menu">
         <summary aria-label="Server menu"><ChevronDown size={17} /></summary>
         <div class="context-menu inline-menu" role="menu">
@@ -56,6 +58,15 @@
         <MessageSquareTextIcon />
         <strong>No direct messages yet</strong>
         <small>The current client core does not expose two-account MLS conversations.</small>
+      </div>
+    {:else if !status.server_id}
+      <div class="sidebar-empty server-empty">
+        <span class="empty-glyph"><Server size={22} /></span>
+        <strong>A place for your communities</strong>
+        <small>Connect to a Cords server to see its channels here.</small>
+        <button class="sidebar-connect" on:click={openConnection}
+          ><Plus size={16} /> Connect to server</button
+        >
       </div>
     {:else}
       <div class="server-origin"><LockKeyhole size={14} /><span>{status.origin}</span></div>
@@ -111,7 +122,13 @@
             />{/if}
         </button>
       {:else}
-        <div class="sidebar-empty compact"><small>No accessible channels.</small></div>
+        <div class="sidebar-empty compact">
+          <strong>{filter ? 'No matching channels' : 'No channels available'}</strong><small
+            >{filter
+              ? 'Try another channel name.'
+              : 'Channels you can access will appear here.'}</small
+          >
+        </div>
       {/each}
     {/if}
     <div class="channel-sidebar-spacer"></div>

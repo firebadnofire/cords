@@ -134,6 +134,18 @@ describe('admission and recovery presentation', () => {
       },
     };
   }
+  it('keeps channel diagnostics and message controls out of an unselected workspace', async () => {
+    const app = await open(false);
+    try {
+      expect(app.target.querySelector('.cords-details')).toBeNull();
+      expect(app.target.querySelector('[aria-label="Conversation details"]')).toBeNull();
+      expect(app.target.querySelector('.cords-composer')).toBeNull();
+      expect(app.target.textContent).toContain('Find your conversation.');
+    } finally {
+      await unmount(app.component);
+      app.target.remove();
+    }
+  });
   it('explains the waiting queue without presenting the raw HTTP failure', async () => {
     const app = await open(true);
     try {

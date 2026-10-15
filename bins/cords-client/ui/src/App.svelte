@@ -13,6 +13,7 @@
   import CordsHeader from './components/CordsHeader.svelte';
   import ConversationView from './components/ConversationView.svelte';
   import ConversationDetails from './components/ConversationDetails.svelte';
+  import SideSurface from './components/SideSurface.svelte';
   import IdentityPanel from './components/IdentityPanel.svelte';
   import {
     defaults,
@@ -78,12 +79,18 @@
   let busy = false;
   let refreshing: symbol | null = null;
   let presentationVersion = 0;
-  let details = true;
+  let details = false;
+  let navigation = false;
   let settingsInitial: 'Identity & devices' | 'Server trust' = 'Identity & devices';
   let drafts: Record<string, string> = {};
 
   $: selected = selectedChannel(channels, route);
   $: manager = canManage(selected, status, identity);
+  $: if (overlay) navigation = false;
+  $: if (!status) {
+    navigation = false;
+    details = false;
+  }
 
   async function listAccounts() {
     const result = await invoke<{ accounts: LocalAccount[]; legacy_vault: boolean }>(
@@ -102,6 +109,8 @@
     if (version !== presentationVersion) return;
     prefs = preferences(view.preferences);
     identity = view.identity;
+    connected = view.connected;
+    connectionError = view.error ?? '';
     origin = opened.origin;
     servers = await action<ServerListing[]>('servers');
     if (opened.burned) {
@@ -526,7 +535,7 @@
   >
     <div class="app-workspacebar">
       <span class="workspace-mark">C</span> Cords
-      <small>{connected ? 'connected' : 'local state'}</small>
+      <small>{connected ? 'Connected' : status.server_id ? 'Offline' : 'Local account'}</small>
     </div>
     <div class="app-layout">
       <CordsRail
@@ -540,15 +549,18 @@
         leaveServer={removeServer}
         {archiveServer}
       />
-      <aside class="left-column">
+      {#snippet channelNavigation(current: Status)}
         <ConversationSidebar
-          {status}
+          status={current}
           {identity}
           {channels}
           {route}
           {section}
           {busy}
-          selectChannel={(id) => void selectChannel(id)}
+          selectChannel={(id) => {
+            navigation = false;
+            void selectChannel(id);
+          }}
           createChannel={() => {
             confidentialityMode = 'encrypted';
             overlay = 'create';
@@ -564,23 +576,45 @@
             })}
         />
         <IdentityPanel
-          {status}
+          status={current}
           {identity}
           preferences={prefs}
-          {connected}
           openSettings={() => (overlay = 'settings')}
           switchAccount={() => void returnToPicker('switch')}
           removeAccount={() => (removingAccount = true)}
         />
-      </aside>
+      {/snippet}
+      <aside class="left-column">{@render channelNavigation(status)}</aside>
+      {#if navigation}<SideSurface
+          title="Channel navigation"
+          navigation
+          close={() => (navigation = false)}
+        >
+          <div class="navigation-drawer">
+            <button
+              class="drawer-close"
+              on:click={() => (navigation = false)}
+              aria-label="Close channel navigation">Close channels ×</button
+            >
+            <div class="left-column">{@render channelNavigation(status)}</div>
+          </div>
+        </SideSurface>{/if}
       <div class="conversation-column">
         <CordsHeader
           {section}
           channel={selected}
           {query}
           detailsVisible={details}
+          navigationVisible={navigation}
+          toggleNavigation={() => {
+            details = false;
+            navigation = !navigation;
+          }}
           setQuery={(value) => (query = value)}
-          toggleDetails={() => (details = !details)}
+          toggleDetails={() => {
+            navigation = false;
+            details = !details;
+          }}
           openSettings={() => (overlay = 'settings')}
         />
         {#if error || connectionError}<div role="alert" class="connection-error">
@@ -652,6 +686,7 @@
           {query}
           {body}
           {busy}
+          openConnection={() => (overlay = 'connect')}
           revoked={identity?.revoked ?? false}
           setBody={(value) => {
             body = value;
@@ -665,24 +700,28 @@
             })}
         />
       </div>
-      {#if details}<ConversationDetails
-          channel={selected}
-          {status}
-          {manager}
-          {contacts}
-          {busy}
+      {#if details && selected}<SideSurface
+          title="Conversation information"
           close={() => (details = false)}
-          {removeDevice}
-          addDevice={(device) =>
-            void run(async () => {
-              await action('add', { route, device });
-              channels = await action<Channel[]>('channels');
-            })}
-          publish={() =>
-            void run(async () => {
-              await action('publish');
-            })}
-        />{/if}
+          ><ConversationDetails
+            channel={selected}
+            {status}
+            {manager}
+            {contacts}
+            {busy}
+            close={() => (details = false)}
+            {removeDevice}
+            addDevice={(device) =>
+              void run(async () => {
+                await action('add', { route, device });
+                channels = await action<Channel[]>('channels');
+              })}
+            publish={() =>
+              void run(async () => {
+                await action('publish');
+              })}
+          /></SideSurface
+        >{/if}
     </div>
 
     {#if overlay === 'settings'}<Settings

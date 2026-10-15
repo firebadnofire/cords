@@ -23,11 +23,11 @@
 
 <aside class="member-sidebar cords-details" aria-label="Conversation details">
   <header>
-    <h2>Conversation details</h2>
+    <h2>Conversation info</h2>
     <button aria-label="Close details" on:click={close}><X size={18} /></button>
   </header>
   <section class="detail-section">
-    <h3><LockKeyhole size={16} /> Confidentiality · permanent</h3>
+    <h3><LockKeyhole size={16} /> Confidentiality</h3>
     <p>
       {#if channel?.confidentiality_mode === 'public'}True public: signed plaintext messages
         protected by HTTPS in transit. The server can read and retain them.{:else}End-to-end
@@ -44,7 +44,7 @@
   </section>
   <section class="detail-section">
     <h3><Server size={16} /> Relay server</h3>
-    <strong>{new URL(status.origin || 'https://cords.invalid').hostname}</strong>
+    <strong>{status.origin ? new URL(status.origin).hostname : 'No server selected'}</strong>
     <p class="detail-origin">{status.origin}</p>
   </section>
   <section class="detail-section">
@@ -104,14 +104,16 @@
           <button disabled={busy || !device}>Add to encrypted channel</button>
         </form>{/if}
     </section>{/if}
-  <section class="detail-section">
-    <h3><KeyRound size={16} /> Prepare encrypted channels</h3>
-    <button disabled={!status.server_id || busy} on:click={publish}>Prepare this device</button
-    ><small
-      >Publish your device key, then ask the channel creator to add you using Channel members above.
-      Newly added devices receive future messages, not earlier history.</small
+  {#if channel?.confidentiality_mode !== 'public' && !channel?.locally_archived}<section
+      class="detail-section"
     >
-  </section>
+      <h3><KeyRound size={16} /> Prepare encrypted channels</h3>
+      <button disabled={!status.server_id || busy} on:click={publish}>Prepare this device</button
+      ><small
+        >Publish your device key, then ask the channel creator to add this device. Newly added
+        devices receive future messages, not earlier history.</small
+      >
+    </section>{/if}
   <section class="detail-section">
     <h3><HardDrive size={16} /> History &amp; retention</h3>
     <p>Displayed history is local. Server retention policy is not exposed by the current API.</p>

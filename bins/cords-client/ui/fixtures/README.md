@@ -1,0 +1,27 @@
+# Shell visual review
+
+Run the existing Vite development server on loopback:
+
+```powershell
+npm run dev -- --host 127.0.0.1
+```
+
+Open `/fixtures/shell.html` to review the production `App.svelte` with synthetic
+IPC responses. Select **Visual fixture (no network)** and enter any nonempty
+fixture password. This unlocks no vault. No network, cryptographic verification,
+server authority, or persistence is exercised. Unsupported mutations fail explicitly.
+
+Variants:
+
+- `?state=empty`: local workspace; dismiss Connection and trust to review the welcome.
+- `?theme=light`: light theme.
+- `?text=125`: 125% root text size, independent of OS display scaling.
+
+Review at 1180 × 760, 960 × 640, and 620 × 520. Select a channel; open Info;
+exercise Escape and Tab/Shift+Tab; at the minimum size reopen channels from the
+header. Check account-menu arrows, Escape, and focus restoration. Public channels
+retain their confidentiality warning.
+
+This entry is not imported by production `index.html` and Vite's production build
+does not emit it. Actual Tauri, independent-client, permission, and packaged
+Windows/Linux/macOS acceptance remain separate checks.

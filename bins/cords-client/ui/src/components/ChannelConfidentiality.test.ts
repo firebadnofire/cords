@@ -65,6 +65,9 @@ describe('channel confidentiality', () => {
       });
       expect(target.querySelector<HTMLInputElement>('#message-draft')!.disabled).toBe(true);
       expect(target.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+      expect(target.querySelector('[role="status"]')?.textContent).toContain(
+        gate === 'archive' ? 'read-only local archive' : 'acknowledge the public channel notice',
+      );
       expect(target.textContent).toContain('no end-to-end encryption');
       expect(target.textContent?.replace(/\s+/g, ' ')).toContain('read, copy, and retain');
       await unmount(component);

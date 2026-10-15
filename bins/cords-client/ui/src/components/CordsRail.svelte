@@ -15,7 +15,13 @@
   export let archiveServer: (serverId: string) => void;
   let context: { serverId: string; origin: string; x: number; y: number } | null = null;
   let menuElement: HTMLDivElement;
+  let contextTrigger: HTMLElement | null = null;
+  function closeContext(restore = false) {
+    context = null;
+    if (restore && contextTrigger?.isConnected) contextTrigger.focus();
+  }
   async function openContext(event: MouseEvent, server: ServerListing) {
+    contextTrigger = event.currentTarget as HTMLElement;
     const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
     context = {
       serverId: server.server_id,
@@ -29,7 +35,11 @@
   function menuKey(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       event.preventDefault();
-      context = null;
+      closeContext(true);
+      return;
+    }
+    if (event.key === 'Tab') {
+      closeContext(true);
       return;
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
@@ -48,11 +58,12 @@
 
 <svelte:window
   on:pointerdown={(event) => {
-    if (!(event.target as HTMLElement).closest('.server-context-menu')) context = null;
+    if (!(event.target as HTMLElement).closest('.server-context-menu')) closeContext();
   }}
   on:keydown={(event) => {
-    if (event.key === 'Escape') context = null;
+    if (event.key === 'Escape' && context) closeContext(true);
   }}
+  on:resize={() => closeContext()}
 />
 
 <nav class="server-rail" aria-label="Servers">

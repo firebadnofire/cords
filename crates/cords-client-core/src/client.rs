@@ -113,6 +113,25 @@ struct ServerSnapshot {
     reserved_roster: Option<(String, RosterOperation)>,
     crypto: String,
 }
+impl Durable {
+    fn activate_server(&mut self, server: ServerSnapshot) {
+        self.origin = server.origin;
+        self.server_id = server.server_id;
+        self.server_key = server.server_key;
+        self.ownership_state = server.ownership_state;
+        self.ownership_generation = server.ownership_generation;
+        self.admission_state = server.admission_state;
+        self.join_policy = server.join_policy;
+        self.session = server.session;
+        self.cursors = server.cursors;
+        self.contacts = server.contacts;
+        self.pending = server.pending;
+        self.own_events = server.own_events;
+        self.last_upload = server.last_upload;
+        self.reserved_roster = server.reserved_roster;
+        self.crypto = server.crypto;
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArchivedServer {
     pub origin: String,
@@ -184,6 +203,9 @@ pub struct Client {
     crypto: ConversationCrypto,
     http: reqwest::Client,
     tls: Arc<rustls::ClientConfig>,
+    // Background synchronization persists server progress while retaining the
+    // user's foreground selection, including if the process exits mid-sync.
+    background_foreground: Option<Box<ServerSnapshot>>,
     _lock: File,
 }
 impl std::fmt::Debug for Client {
@@ -210,6 +232,9 @@ pub struct Status {
 pub struct SyncResult {
     pub fetched: usize,
     pub messages: Vec<Message>,
+    /// Verified route for each message, in the same order. This is local
+    /// delivery metadata; it does not alter the wire event or encrypted body.
+    pub message_routes: Vec<String>,
 }
 #[derive(Debug)]
 pub enum Notification {
@@ -492,6 +517,7 @@ impl Client {
             crypto,
             http,
             tls,
+            background_foreground: None,
             _lock: lock,
         };
         client.migrate_legacy_cache().await?;
@@ -638,20 +664,7 @@ impl Client {
     }
     fn activate_snapshot(&mut self, server: ServerSnapshot) -> Result<()> {
         self.crypto = ConversationCrypto::restore(&Zeroizing::new(decode(&server.crypto)?))?;
-        self.durable.origin = server.origin;
-        self.durable.server_id = server.server_id;
-        self.durable.server_key = server.server_key;
-        self.durable.ownership_state = server.ownership_state;
-        self.durable.ownership_generation = server.ownership_generation;
-        self.durable.admission_state = server.admission_state;
-        self.durable.join_policy = server.join_policy;
-        self.durable.session = server.session;
-        self.durable.cursors = server.cursors;
-        self.durable.contacts = server.contacts;
-        self.durable.pending = server.pending;
-        self.durable.own_events = server.own_events;
-        self.durable.last_upload = server.last_upload;
-        self.durable.reserved_roster = server.reserved_roster;
+        self.durable.activate_server(server);
         Ok(())
     }
     fn clear_active_server(&mut self) -> Result<()> {
@@ -835,7 +848,16 @@ impl Client {
                 .servers
                 .insert(self.durable.server_id.clone(), self.active_snapshot()?);
         }
-        let plain = Zeroizing::new(serde_json::to_vec(&self.durable)?);
+        let serialized = if let Some(foreground) = &self.background_foreground {
+            let working = self.active_snapshot()?;
+            self.durable.activate_server((**foreground).clone());
+            let serialized = serde_json::to_vec(&self.durable);
+            self.durable.activate_server(working);
+            serialized
+        } else {
+            serde_json::to_vec(&self.durable)
+        };
+        let plain = Zeroizing::new(serialized?);
         let sealed = protection::seal(
             &self.key,
             format!("{}/state/v1", self.installation).as_bytes(),
@@ -876,6 +898,7 @@ impl Client {
             &sealed,
         )?)?;
         self.crypto = ConversationCrypto::restore(&Zeroizing::new(decode(&self.durable.crypto)?))?;
+        self.background_foreground = None;
         Ok(())
     }
     async fn response<T: DeserializeOwned>(mut response: reqwest::Response) -> Result<T> {
@@ -2309,6 +2332,12 @@ impl Client {
             .map(|local| local.channel.clone())
             .collect()
     }
+    /// Presentation label from a locally verified channel bound to this server.
+    #[must_use]
+    pub fn cached_channel_name(&self, server: &str, route: &str) -> Option<String> {
+        let channel = &self.durable.channel_identities.get(route)?.channel;
+        (channel.identity.as_ref()?.value.server_id == server).then(|| channel.name.clone())
+    }
     /// List pending requests visible to a server manager.
     /// # Errors
     /// Returns an error when the session lacks server management permission or transport fails.
@@ -2920,6 +2949,7 @@ impl Client {
             return Ok(SyncResult {
                 fetched: 0,
                 messages: Vec::new(),
+                message_routes: Vec::new(),
             });
         }
         let mut fetched = 0;
@@ -3032,7 +3062,11 @@ impl Client {
                 fetched += 1;
             }
         }
-        Ok(SyncResult { fetched, messages })
+        Ok(SyncResult {
+            fetched,
+            message_routes: vec![route.to_owned(); messages.len()],
+            messages,
+        })
     }
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
@@ -3054,11 +3088,13 @@ impl Client {
         let mut result = SyncResult {
             fetched: 0,
             messages: Vec::new(),
+            message_routes: Vec::new(),
         };
         for route in routes {
             let next = self.sync_route(&route).await?;
             result.fetched += next.fetched;
             result.messages.extend(next.messages);
+            result.message_routes.extend(next.message_routes);
             let channel = self.fetch_channel(&route).await?;
             if channel.locally_archived
                 || channel.confidentiality_mode == ConfidentialityMode::Public
@@ -3089,6 +3125,62 @@ impl Client {
             }
         }
         Ok(result)
+    }
+    /// Synchronize one tracked server without changing the foreground selection.
+    /// Work is bounded so an unavailable server cannot indefinitely starve peers.
+    /// Every durable write retains the original selection, including crash recovery.
+    /// # Errors
+    /// Rejects archived/unknown servers, concurrent scopes, protocol errors and
+    /// timeouts. Failed work is reloaded from authenticated durable storage.
+    pub async fn synchronize_server(&mut self, server_id: &str) -> Result<SyncResult> {
+        ensure!(!self.durable.burned, "identity has been burned");
+        ensure!(
+            self.background_foreground.is_none(),
+            "server synchronization scope is already active"
+        );
+        if self.durable.server_id == server_id {
+            let result = tokio::time::timeout(Duration::from_secs(30), self.synchronize())
+                .await
+                .context("Server synchronization exceeded 30 seconds")
+                .and_then(std::convert::identity);
+            if result.is_err() {
+                self.reload()
+                    .await
+                    .context("Could not recover after synchronization failure")?;
+            }
+            return result;
+        }
+        let target = self
+            .durable
+            .servers
+            .get(server_id)
+            .cloned()
+            .context("server not tracked")?;
+        let foreground = self.active_snapshot()?;
+        self.activate_snapshot(target)?;
+        self.background_foreground = Some(Box::new(foreground));
+        let outcome = tokio::time::timeout(Duration::from_secs(30), self.synchronize())
+            .await
+            .context("Server synchronization exceeded 30 seconds")
+            .and_then(std::convert::identity);
+        if outcome.is_err() {
+            // A cancelled HTTP or SQLite future may have made partial durable
+            // progress. Reload before exposing this account to another operation.
+            let recovery = self.reload().await;
+            self.background_foreground = None;
+            recovery.context("Could not recover after background synchronization failure")?;
+        } else {
+            self.durable
+                .servers
+                .insert(server_id.to_owned(), self.active_snapshot()?);
+            let foreground = self
+                .background_foreground
+                .take()
+                .context("missing foreground selection")?;
+            self.activate_snapshot(*foreground)?;
+            self.persist(&[], &[]).await?;
+        }
+        outcome
     }
     async fn cached_message(&self, route: &str, message: &str) -> Result<Message> {
         self.cached_message_for_server(&self.durable.server_id, route, message)
@@ -3351,6 +3443,41 @@ mod tests {
         client
             .persist(&[("same-route".into(), 1, message)], &[])
             .await
+    }
+    #[tokio::test]
+    async fn background_sync_failure_and_interrupted_writes_preserve_foreground() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        seed_server(&mut client, "foreground", "foreground history").await?;
+        seed_server(&mut client, "background", "background history").await?;
+        client.select_server("foreground").await?;
+        assert!(client.synchronize_server("background").await.is_err());
+        assert_eq!(client.status().server_id, "foreground");
+        assert!(client.synchronize_server("unknown").await.is_err());
+        assert_eq!(client.status().server_id, "foreground");
+        let foreground = client.active_snapshot()?;
+        let background = client.durable.servers["background"].clone();
+        client.activate_snapshot(background)?;
+        client.background_foreground = Some(Box::new(foreground));
+        // Simulate a durable write before the background operation completes.
+        client.persist(&[], &[]).await?;
+        client.reload().await?;
+        assert!(client.background_foreground.is_none());
+        assert_eq!(client.status().server_id, "foreground");
+        let foreground = client.active_snapshot()?;
+        let background = client.durable.servers["background"].clone();
+        client.activate_snapshot(background)?;
+        client.background_foreground = Some(Box::new(foreground));
+        client.persist(&[], &[]).await?;
+        client.shutdown().await;
+        let client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        assert_eq!(client.status().server_id, "foreground");
+        assert_eq!(
+            client.history("same-route").await?[0].body,
+            "foreground history"
+        );
+        assert_eq!(client.servers().len(), 2);
+        Ok(())
     }
     #[tokio::test]
     async fn legacy_cache_is_rekeyed_under_the_original_pin_before_server_switching() -> Result<()>

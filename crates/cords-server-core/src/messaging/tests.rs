@@ -730,6 +730,20 @@ async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and
     owner.trust(&tls2.origin).await?;
     owner.claim_ownership(&code2).await?;
     assert_eq!(owner.servers().len(), 2);
+    let foreground = owner.status().server_id;
+    let background = member
+        .send(&route, "background encrypted acceptance marker")
+        .await?;
+    let synchronized = owner.synchronize_server(&pin1).await?;
+    assert!(
+        synchronized
+            .messages
+            .iter()
+            .any(|item| item.message_id == background)
+    );
+    assert_eq!(owner.status().server_id, foreground);
+    owner.reload().await?;
+    assert_eq!(owner.status().server_id, foreground);
     owner.select_server(&pin1).await?;
     owner.authenticate().await?;
     assert_eq!(
@@ -739,7 +753,7 @@ async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and
             .last()
             .context("missing original cache")?
             .body,
-        "network-only encrypted acceptance marker"
+        "background encrypted acceptance marker"
     );
     assert!(member.remove_server(&pin1, false).await?.remote_confirmed);
     assert!(member.servers().is_empty());
@@ -1707,6 +1721,14 @@ async fn seed_desktop_profile_pictures(
 ) -> Result<()> {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use cords_protocol::profiles::{AccountProfile, ProfileAvatar};
+    // Cold Wasmtime compilation is outside the HTTP request budget. Warm the
+    // exact pinned decoder before this manual fixture publishes its first image.
+    tokio::task::spawn_blocking(|| {
+        cords_avatar_codec::validate(include_bytes!(
+            "../../../cords-avatar-codec/tests/fixtures/looping-a.jxl"
+        ))
+    })
+    .await??;
     for (client, name, shape, bytes) in [
         (
             owner,

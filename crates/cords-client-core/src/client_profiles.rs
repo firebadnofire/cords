@@ -187,6 +187,21 @@ impl Client {
         }
     }
 
+    /// Read canonical presentation metadata already verified in this vault.
+    /// This performs no network request and does not choose a conflicting field.
+    /// # Errors
+    /// Rejects an invalid account fingerprint or inconsistent cached profile graph.
+    pub fn cached_account_profile_state(&self, account: &str) -> Result<ProfileState> {
+        ensure!(decode(account)?.len() == 32, "Invalid account fingerprint");
+        Ok(self
+            .durable
+            .account_profiles
+            .get(account)
+            .cloned()
+            .unwrap_or_default()
+            .state()?)
+    }
+
     async fn local_profile_view(
         &self,
         account: &str,

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "bins/cords-client/qt/rust",
   "crates/cords-avatar-codec",
   "crates/cords-avatar-source",
   "bins/cords-dev",

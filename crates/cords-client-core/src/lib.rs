@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod client;
+pub mod notifications;
 
 use cords_protocol::{PROTOCOL_V1, ServerOrigin, SignedServerMetadataV1};
 use serde::Serialize;

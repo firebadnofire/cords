@@ -1,6 +1,7 @@
 //! Restricted validation of the exact bundled libjxl WASM. No WASI, filesystem,
 //! network, clock or randomness imports. Only bounded memory growth is permitted.
 use anyhow::{Result, bail, ensure};
+pub mod playback;
 use std::{
     sync::OnceLock,
     time::{Duration, Instant},

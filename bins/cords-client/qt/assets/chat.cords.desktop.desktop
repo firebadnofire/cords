@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Cords
+Comment=Right on the wire
+Exec=Cords
+Icon=chat.cords.desktop
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupWMClass=chat.cords.desktop

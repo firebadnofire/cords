@@ -525,19 +525,24 @@ A screen or checkpoint is not complete until the applicable scenario works with 
 
 | Surface | Contract | Actual implementation | Evidence / next blocker |
 | --- | --- | --- | --- |
-| Qt shell and Cords style | Specified | **Not audited** | Native executable, four-region layout, screen captures |
-| Server/channel rail | Specified | **Not audited** | Real navigation, unread/mute, size/density |
-| Conversation/composer | Specified | **Not audited** | Core message flow, focus and scroll tests |
-| Public member sidebar | Specified | **Not audited** | Admitted account API, role grouping |
-| Canonical profile/popouts | Specified | **Not audited** | Signed account profile + native avatar |
-| Members/requests/devices | Specified | **Not audited** | Account-first administration |
-| Roles and channel policy | Specified | **Not audited** | RBAC enforcement + UI integration |
-| Moderation and lifecycle | Specified | **Not audited** | Direct API denial, deletion, MLS transitions |
-| Server presentation/media | Specified | **Not audited** | Authorized edits + native JXL rendering |
-| Background sync/notifications | Specified | **Not audited** | Multiple servers + OS delivery |
-| Accessibility and platform packaging | Specified | **Not audited** | Win/Linux/macOS packaged evidence |
+| Qt shell and Cords style | Specified | **Partial native implementation** | MSVC/Qt 6.10.3 executable; real-service Windows captures at 1180x760, 680x520 and 150% scaling |
+| Server/channel rail | Specified | **Partial** | Core trust/selection, channel lifecycle and persisted notification mute wired; categories and unread remain incomplete |
+| Conversation/composer | Specified | **Partial** | Independent TLS/PostgreSQL send/receive/restart passes; bounded history loading/anchors remain |
+| Public member sidebar | Specified | **Partial** | Real admitted directory aggregates accounts; automatic refresh, avatars and role grouping remain |
+| Canonical profile/popouts | Specified | **Partial** | Signed name edit and propagation, native animated JXL verified; image editor and conflict resolution remain |
+| Members/requests/devices | Specified | **Partial** | Typed core commands and QML views; complete interaction/denial acceptance remains |
+| Roles and channel policy | Specified | **Partial** | Preparatory signed catalog/assignment API ported; active RBAC stays separately gated at schema 14 |
+| Moderation and lifecycle | Specified | **Partial** | Supported departure/archive/burn and channel succession wired; moderation/deletion APIs remain gaps |
+| Server presentation/media | Specified | **Incomplete** | Native JXL renderer tested independently; server asset publication/editing remains unavailable |
+| Background sync/notifications | Specified | **Partial** | Real TLS classification, hidden previews, mute persistence and Rust click targets pass; OS presentation unavailable/suppressed in this run, unavailable-third-server and other OS adapters remain |
+| Accessibility and platform packaging | Specified | **Partial Windows evidence** | Installed-tree startup without SDK PATH/source migrations; native priority lock controller test passes; Linux/macOS runtime pending |
 
-“Not audited” is deliberate. Code presence, previous plans, and screenshots do not prove end-to-end feature completion.
+Evidence is dated 2026-10-16; the detailed ledger is
+`docs/plans/qt-desktop-migration.md`. “Partial” does not satisfy the completion
+gate. Windows event tests inject a native session-lock event against a stalled
+TLS peer; actual workstation lock/suspend and clean-machine deployment remain
+separate checks. Tauri remains temporarily for parity comparison and has not
+passed its removal gate.
 
 ### 12.2 Design decision log
 

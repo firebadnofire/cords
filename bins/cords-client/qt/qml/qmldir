@@ -1,0 +1,9 @@
+module Cords.Controls
+singleton Theme 1.0 Theme.qml
+CordsButton 1.0 CordsButton.qml
+CordsField 1.0 CordsField.qml
+CordsCheck 1.0 CordsCheck.qml
+CordsLabel 1.0 CordsLabel.qml
+CordsAvatar 1.0 CordsAvatar.qml
+CordsDialog 1.0 CordsDialog.qml
+ConfirmDialog 1.0 ConfirmDialog.qml

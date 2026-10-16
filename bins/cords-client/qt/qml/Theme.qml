@@ -5,6 +5,7 @@ QtObject {
     property string appearance: "dark"
     property bool compact: false
     property bool reducedMotion: false
+    property bool disableAnimations: false
     readonly property bool light: appearance === "light"
     readonly property color window: light ? "#edf0f3" : appearance === "midnight" ? "#0c1016" : "#1a202a"
     readonly property color rail: light ? "#d6dce3" : "#111720"

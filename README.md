@@ -8,7 +8,9 @@ New server operators should start with the [Cords server operator guide](docs/op
 covers OCI deployment with Docker or Podman and direct installation from the unpacked server
 tarball.
 
-The CLI and minimal Tauri conversation UI use the same Rust client core. See the
+The CLI and native Qt Quick/QML desktop use the same Rust client core. The desktop
+migration remains in progress; see its [acceptance ledger](docs/plans/qt-desktop-migration.md).
+See the
 [encrypted milestone guide](docs/encrypted-milestone.md) and
 [validation report](docs/reports/encrypted-milestone.md) for reproducible commands,
 real `.54` evidence and remaining gates. Attachments, calls, DMs, full enrollment
@@ -16,7 +18,8 @@ and recovery remain deferred; this is not a production release claim.
 
 ## Repository
 
-- `bins/cords-client`: Tauri v2 desktop client and Svelte/TypeScript UI.
+- `bins/cords-client/qt`: native Qt 6 Quick/QML desktop and typed Rust bridge.
+- `bins/cords-client/ui` and `src-tauri`: temporary legacy reference pending parity/removal.
 - `bins/cords-server`: Axum server executable and configuration.
 - `crates/cords-protocol`: public schemas and deterministic signed encoding.
 - `bins/cords-dev`: development CLI around the real client core.
@@ -71,12 +74,14 @@ for backup and migration details.
 
 ## Run the desktop client
 
-Install Node.js 24 and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), then:
+Install Rust 1.97.1, Qt 6.10.3, CMake, Python 3 and the native C++ toolchain.
+The platform [build scripts](build-scripts/README.md) build/test/package the new UI.
+For example on Linux:
 
 ```sh
-cd bins/cords-client/ui
-npm ci
-npm run tauri:dev
+export CORDS_QT_PREFIX="$HOME/Qt/6.10.3/gcc_64"
+bash build-scripts/linux-client-tar.sh
+# Extract dist/cords-client-linux-<arch>-<version>.tar.gz, then run bin/Cords.
 ```
 
 The packaged desktop client also accepts `--list-accounts` and
@@ -118,11 +123,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo deny check
-cd bins/cords-client/ui
-npm run format:check
-npm run check
-npm run lint
-npm test
+# Desktop builders also run QML lint and CTest with the selected Qt SDK.
 ```
 
 ## Releases and containers
@@ -134,7 +135,8 @@ authorization and authenticated artifact provenance are validated. The current
 release workflow is an activation stop, not a passing release gate.
 
 The selected release targets remain Linux client/server, native macOS DMG/PKG/server,
-Windows cross-builds and multi-architecture OCI images. The proposed external
+native Windows builds and multi-architecture OCI images. A Qt/MSVC Linux cross-build
+is not yet validated. The proposed external
 executor verifies mandatory tests and exact authorized source identity before
 GPG `.asc` file signing, Cosign signing in Forgejo/GHCR, and verified GitHub mirroring.
 Publication credentials belong outside ordinary Actions secret scope. See the
@@ -156,6 +158,6 @@ image, without publishing anything.
 ## Validation boundary
 
 Unit tests and Compose readiness alone do not prove encrypted messaging. The
-real-server acceptance runner supplies that evidence. A Tauri build does not
+real-server acceptance runner supplies that evidence. A native Qt build does not
 substitute for native interaction testing, and neither establishes cross-platform
 signing, a published release, or complete production identity UX.

@@ -7,6 +7,9 @@ COPY assets/avatar-codec ./assets/avatar-codec
 COPY bins/cords-server ./bins/cords-server
 COPY bins/cords-dev ./bins/cords-dev
 COPY bins/cords-client/src-tauri ./bins/cords-client/src-tauri
+# Cargo loads every workspace manifest even when building only the server.
+# This Rust member has no Qt SDK dependency; native Qt deployment stays separate.
+COPY bins/cords-client/qt/rust ./bins/cords-client/qt/rust
 COPY migrations ./migrations
 RUN cargo build --locked --release --bin cords-server
 

@@ -98,72 +98,82 @@ jobs:
         if: always()
         run: docker compose down --volumes
 
-  client-platform-check:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            platform: linux-x86_64
-            image: ghcr.io/catthehacker/ubuntu:act-22.04
-    name: Client check (${{ matrix.platform }})
-    runs-on: ${{ matrix.runner }}
+  qt-linux:
+    name: Native Qt desktop (Linux x86_64)
+    runs-on: ubuntu-22.04
     container:
-      image: ${{ matrix.image }}
+      image: ghcr.io/catthehacker/ubuntu:act-22.04
     steps:
       - uses: https://pubcode.archuser.org/actions/checkout@v4
-      - uses: https://pubcode.archuser.org/actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: bins/cords-client/ui/package-lock.json
-      - name: Install Linux Tauri prerequisites
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-      - name: Install Rust toolchain
+      - name: Install native Qt build dependencies
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file libegl1 libgl1-mesa-dev libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxkbcommon-x11-0 pkg-config python3-venv
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
-            export PATH="${HOME}/.cargo/bin:${PATH}"
           fi
+          export PATH="${HOME}/.cargo/bin:${PATH}"
           rustup toolchain install 1.97.1 --profile minimal
-          toolchain_bin="$(dirname "$(rustup which --toolchain 1.97.1 rustc)")"
-          echo "${toolchain_bin}" >> "${GITHUB_PATH}"
-          "${toolchain_bin}/rustc" --version
-          "${toolchain_bin}/cargo" --version
-      - working-directory: bins/cords-client/ui
-        run: npm ci
-      - run: cargo check -p cords-client
+          echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
+          python3 -m venv .qt-tools
+          .qt-tools/bin/python -m pip install aqtinstall==3.3.0 cmake==3.31.6
+          .qt-tools/bin/python -m aqt install-qt linux desktop 6.10.3 linux_gcc_64 -O "$PWD/.qt-sdk" --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+      - name: Build, test and package Qt desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.qt-tools/bin:${HOME}/.cargo/bin:${PATH}"
+          export CORDS_QT_PREFIX="$PWD/.qt-sdk/6.10.3/gcc_64"
+          export CARGO_BUILD_JOBS=4
+          bash build-scripts/linux-client-tar.sh
 
-  windows-cross-check:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            architecture: x86_64
-            target: x86_64-pc-windows-msvc
-    name: Windows cross-check (${{ matrix.architecture }})
-    runs-on: ${{ matrix.runner }}
-    container:
-      image: node:24-bookworm
+  qt-windows:
+    # Native host required; the former Linux cargo-xwin job cannot deploy Qt.
+    # Runner availability is an infrastructure gate, never a successful skip.
+    name: Native Qt desktop (Windows x86_64)
+    runs-on: windows-latest
     steps:
       - uses: https://pubcode.archuser.org/actions/checkout@v4
-      - name: Install cross-compilation toolchain
+      - name: Install pinned Qt build tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustup toolchain install 1.97.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed' }
+          python -m venv .qt-tools
+          if ($LASTEXITCODE -ne 0) { throw 'Python environment creation failed' }
+          & ./.qt-tools/Scripts/python.exe -m pip install aqtinstall==3.3.0 cmake==3.31.6
+          if ($LASTEXITCODE -ne 0) { throw 'Qt build tool installation failed' }
+          & ./.qt-tools/Scripts/python.exe -m aqt install-qt windows desktop 6.10.3 win64_msvc2022_64 -O "$PWD/.qt-sdk" --archives qtbase qtdeclarative qtsvg qttools qttranslations
+          if ($LASTEXITCODE -ne 0) { throw 'Qt SDK installation failed' }
+      - name: Build, test and package Qt desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:CORDS_PYTHON = "$PWD/.qt-tools/Scripts/python.exe"
+          $env:CARGO_BUILD_JOBS = '4'
+          & ./build-scripts/windows-client.ps1 -QtPrefix "$PWD/.qt-sdk/6.10.3/msvc2022_64" -CMake "$PWD/.qt-tools/Scripts/cmake.exe"
+
+  qt-macos:
+    name: Native Qt desktop (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: https://pubcode.archuser.org/actions/checkout@v4
+      - name: Install pinned Qt build tools
         shell: bash
         run: |
           set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git lld llvm pkg-config xz-utils zip
-          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-          rustup target add "${{ matrix.target }}"
-          cargo install cargo-xwin --locked --version 0.23.1
-      - name: Build frontend and check Windows client
+          rustup toolchain install 1.97.1 --profile minimal
+          python3 -m venv .qt-tools
+          .qt-tools/bin/python -m pip install aqtinstall==3.3.0 cmake==3.31.6
+          .qt-tools/bin/python -m aqt install-qt mac desktop 6.10.3 clang_64 -O "$PWD/.qt-sdk" --archives qtbase qtdeclarative qtsvg qttools qttranslations
+      - name: Build, test and package Qt desktop
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-          bash build-scripts/linux-windows-client-crosscomp.sh --target "${{ matrix.architecture }}"
+          export PATH="$PWD/.qt-tools/bin:${PATH}"
+          export CORDS_QT_PREFIX="$PWD/.qt-sdk/6.10.3/macos"
+          export CARGO_BUILD_JOBS=4
+          bash build-scripts/mac-client-pkg.sh

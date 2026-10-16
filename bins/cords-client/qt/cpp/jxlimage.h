@@ -6,11 +6,12 @@
 #include <QtQml/qqmlregistration.h>
 #include <memory>
 
-struct JxlDecodeState;
+class JxlPlayback;
 class JxlImage : public QQuickPaintedItem {
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(QString source READ source WRITE setSource NOTIFY sourceChanged)
+    Q_PROPERTY(QString account READ account WRITE setAccount NOTIFY accountChanged)
     Q_PROPERTY(bool playing READ playing WRITE setPlaying NOTIFY playingChanged)
     Q_PROPERTY(bool square READ square WRITE setSquare NOTIFY squareChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
@@ -24,6 +25,8 @@ public:
     ~JxlImage() override;
     QString source() const { return m_source; }
     void setSource(const QString &source);
+    QString account() const { return m_account; }
+    void setAccount(const QString &account);
     bool playing() const { return m_playing; }
     void setPlaying(bool playing);
     bool square() const { return m_square; }
@@ -32,9 +35,9 @@ public:
     bool ready() const { return !m_image.isNull(); }
     int frameNumber() const { return m_frame; }
     void paint(QPainter *painter) override;
-    void pump();
 signals:
     void sourceChanged();
+    void accountChanged();
     void playingChanged();
     void squareChanged();
     void errorChanged();
@@ -42,18 +45,17 @@ signals:
     void frameChanged();
     void cropChanged();
 private:
+    friend class JxlPlayback;
+    friend class MediaTest;
     void requestFrame();
-    void decode();
-    void suspend();
+    void detach();
+    void reset();
     bool eligible() const;
-    QString m_source, m_error;
-    bool m_playing = true, m_square = false, m_pending = false, m_queued = false, m_finished = false;
-    int m_generation = 0, m_frame = 0;
-    quint32 m_cycles = 0;
+    QString m_source, m_account, m_error;
+    bool m_playing = true, m_square = false;
+    int m_frame = 0;
     QImage m_image;
-    QTimer m_timer, m_visibility;
-    QElapsedTimer m_clock;
-    long double m_due = 0;
+    QTimer m_visibility;
     qreal m_centerX = 0.5, m_centerY = 0.5, m_zoom = 1;
-    std::shared_ptr<JxlDecodeState> m_decoder;
+    std::shared_ptr<JxlPlayback> m_playback;
 };

@@ -1,6 +1,7 @@
 #include "jxlimage.h"
 #include "cords-qt-bridge/src/lib.rs.h"
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QFutureWatcher>
 #include <QBuffer>
 #include <QImageReader>
@@ -14,61 +15,179 @@
 #include <optional>
 
 namespace {
-// Two bounded 128 MiB sandbox heaps plus host reservations and native transient
-// canvases stay below 512 MiB. Completed cycles yield their slot in FIFO order.
+// Two bounded 128 MiB sandbox heaps. Entries and the FIFO are bounded by
+// distinct account/image pairs, rather than the number of avatar views.
 QSemaphore decoderSlots(2);
-QList<QPointer<JxlImage>> waiting;
+QList<std::weak_ptr<JxlPlayback>> entries, waiting;
 QTimer *scheduler = nullptr;
-int textureOwners = 0;
 struct FrameResult {
     QImage image;
     QString error;
     quint32 ticks = 0, numerator = 1, denominator = 1, loops = 1;
     bool last = true;
 };
-}
 struct JxlDecodeState {
     std::optional<rust::Box<cords::NativeImage>> image;
     ~JxlDecodeState() { image.reset(); decoderSlots.release(); }
 };
+}
+
+// GUI-thread ownership; jobs retain only their sandbox, never a view or this
+// object. Weak registry/FIFO entries cannot keep an account's images alive.
+class JxlPlayback : public QObject, public std::enable_shared_from_this<JxlPlayback> {
+public:
+    QString key, source, error;
+    QList<QPointer<JxlImage>> views;
+    QImage image;
+    int serial = 0, generation = 0;
+    quint32 cycles = 0;
+    bool pending = false, queued = false, finished = false;
+    QTimer timer, visibility;
+    QElapsedTimer clock;
+    long double due = 0;
+    std::shared_ptr<JxlDecodeState> decoder;
+
+    JxlPlayback(const QString &identity, const QString &data) : key(identity), source(data) {
+        timer.setSingleShot(true);
+        connect(&timer, &QTimer::timeout, this, [this] { refresh(); });
+        visibility.setInterval(250);
+        connect(&visibility, &QTimer::timeout, this, [this] { refresh(); });
+        visibility.start();
+    }
+    bool needed() const {
+        for (const auto &view : views)
+            if (view && view->eligible() && (!view->ready() || (view->playing() && !finished))) return true;
+        return false;
+    }
+    void distribute() {
+        // Signal handlers may destroy/rebind delegates. Iterate a stable list
+        // and check membership before touching each view.
+        const auto targets = views;
+        for (const auto &view : targets) {
+            if (!view || view->m_playback.get() != this || !view->eligible()) continue;
+            if (!error.isEmpty() && view->m_error != error) {
+                view->m_error = error; emit view->errorChanged();
+            }
+            if (!view || view->m_playback.get() != this) continue;
+            if (!image.isNull() && (!view->ready() || view->playing()) && view->m_frame != serial) {
+                view->m_image = image; view->m_frame = serial;
+                view->update(); emit view->frameChanged();
+                if (view && view->m_playback.get() == this) emit view->readyChanged();
+            }
+        }
+    }
+    void suspend() {
+        if (pending || decoder || queued || timer.isActive()) {
+            ++generation; timer.stop(); decoder.reset(); pending = false; queued = false;
+            waiting.removeIf([this](const auto &entry) { const auto value = entry.lock(); return !value || value.get() == this; });
+        }
+    }
+    void refresh() {
+        views.removeIf([](const auto &view) { return view.isNull(); });
+        distribute();
+        if (!needed() || !error.isEmpty()) { suspend(); return; }
+        if (timer.isActive() || pending || queued) return;
+        if (decoder) { decode(); return; }
+        queued = true; waiting.append(weak_from_this());
+    }
+    void pump() {
+        queued = false;
+        if (!needed() || !error.isEmpty()) return;
+        if (!decoderSlots.tryAcquire()) { refresh(); return; }
+        decoder = std::make_shared<JxlDecodeState>();
+        due = 0; clock.invalidate(); decode();
+    }
+    void decode() {
+        pending = true;
+        const auto revision = generation;
+        const auto sandbox = decoder;
+        const auto data = source;
+        const auto weak = weak_from_this();
+        auto *watcher = new QFutureWatcher<FrameResult>(this);
+        connect(watcher, &QFutureWatcher<FrameResult>::finished, this, [weak, watcher, revision] {
+            const auto self = weak.lock();
+            const auto frame = watcher->result(); watcher->deleteLater();
+            if (!self || revision != self->generation) return;
+            self->pending = false;
+            if (!frame.error.isEmpty()) {
+                self->error = frame.error; self->decoder.reset(); self->distribute(); return;
+            }
+            self->image = frame.image; ++self->serial;
+            self->distribute();
+            if (!self->clock.isValid()) self->clock.start();
+            self->due += static_cast<long double>(frame.ticks) * frame.denominator * 1000.0L / frame.numerator;
+            const auto delay = static_cast<int>(std::clamp(self->due - self->clock.elapsed(), 0.0L, 120000.0L));
+            if (frame.last) {
+                ++self->cycles; self->decoder.reset();
+                if (frame.loops != 0 && self->cycles >= frame.loops) self->finished = true;
+            }
+            if (!self->needed()) { self->suspend(); return; }
+            self->timer.start(delay);
+        });
+        watcher->setFuture(QtConcurrent::run([decoder = sandbox, source = data]() -> FrameResult {
+            FrameResult result;
+            try {
+                if (source.startsWith("data:image/png;base64,")) {
+                    if (source.size() >= 900000) throw std::runtime_error("Cached PNG exceeds size limit");
+                    auto bytes = QByteArray::fromBase64(source.mid(22).toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
+                    QBuffer input(&bytes); input.open(QIODevice::ReadOnly);
+                    QImageReader reader(&input, "png");
+                    const auto size = reader.size();
+                    if (size.isEmpty() || size.width() > 1024 || size.height() > 1024) throw std::runtime_error("Invalid cached PNG dimensions");
+                    result.image = reader.read().scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    if (result.image.isNull()) throw std::runtime_error("Cached PNG decode failed");
+                    return result;
+                }
+                if (!decoder->image) {
+                    const auto bytes = source.toUtf8();
+                    decoder->image.emplace(cords::open_image(rust::Str(bytes.constData(), static_cast<size_t>(bytes.size()))));
+                }
+                const auto frame = (*decoder->image)->next_frame();
+                const auto format = frame.bits == 16 ? QImage::Format_RGBA64 : QImage::Format_RGBA8888;
+                const QImage canvas(frame.pixels.data(), static_cast<int>(frame.width), static_cast<int>(frame.height), format);
+                // The Qt texture is bounded to 256x256. Its copy outlives the Rust
+                // frame, whose full-resolution buffer is released immediately.
+                result.image = canvas.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                if (result.image.constBits() == frame.pixels.data()) result.image = result.image.copy();
+                result.ticks = frame.duration_ticks; result.numerator = frame.ticks_numerator;
+                result.denominator = frame.ticks_denominator; result.loops = frame.loops; result.last = frame.last;
+            } catch (const std::exception &error) { result.error = QString::fromUtf8(error.what()); }
+            return result;
+        }));
+    }
+};
 
 JxlImage::JxlImage(QQuickItem *parent) : QQuickPaintedItem(parent) {
-    ++textureOwners;
     setAntialiasing(true);
-    m_timer.setSingleShot(true);
-    connect(&m_timer, &QTimer::timeout, this, &JxlImage::requestFrame);
     connect(this, &JxlImage::cropChanged, this, [this] { update(); });
-    connect(this, &QQuickItem::visibleChanged, this, [this] { if (eligible()) requestFrame(); else suspend(); });
+    connect(this, &QQuickItem::visibleChanged, this, &JxlImage::requestFrame);
     const auto observeWindow = [this](QQuickWindow *window) {
         if (window) {
-            connect(window, &QWindow::visibilityChanged, this, [this] { if (eligible()) requestFrame(); else suspend(); });
-            connect(window, &QWindow::visibleChanged, this, [this] { if (eligible()) requestFrame(); else suspend(); });
+            connect(window, &QWindow::visibilityChanged, this, &JxlImage::requestFrame);
+            connect(window, &QWindow::visibleChanged, this, &JxlImage::requestFrame);
         }
-        if (eligible()) requestFrame(); else suspend();
+        requestFrame();
     };
     connect(this, &QQuickItem::windowChanged, this, observeWindow);
     observeWindow(window());
     m_visibility.setInterval(250);
-    connect(&m_visibility, &QTimer::timeout, this, [this] {
-        if (eligible()) requestFrame();
-        else if (m_decoder || m_pending || m_queued) suspend();
-    });
+    connect(&m_visibility, &QTimer::timeout, this, &JxlImage::requestFrame);
     m_visibility.start();
     if (!scheduler) {
         scheduler = new QTimer(QCoreApplication::instance());
         scheduler->setInterval(30);
         QObject::connect(scheduler, &QTimer::timeout, QCoreApplication::instance(), [] {
             while (!waiting.isEmpty()) {
-                auto image = waiting.first();
-                if (!image) { waiting.removeFirst(); continue; }
+                auto playback = waiting.first().lock();
+                if (!playback) { waiting.removeFirst(); continue; }
                 if (decoderSlots.available() == 0) break;
-                waiting.removeFirst(); image->pump();
+                waiting.removeFirst(); playback->pump();
             }
         });
         scheduler->start();
     }
 }
-JxlImage::~JxlImage() { suspend(); --textureOwners; }
+JxlImage::~JxlImage() { detach(); }
 bool JxlImage::eligible() const {
     if (!isVisible() || !window() || !window()->isVisible() || window()->visibility() == QWindow::Minimized
         || width() <= 0 || height() <= 0 || m_source.isEmpty()) return false;
@@ -77,88 +196,53 @@ bool JxlImage::eligible() const {
     }
     return QRectF(0, 0, window()->width(), window()->height()).intersects(mapRectToScene(boundingRect()));
 }
+void JxlImage::detach() {
+    auto playback = std::move(m_playback);
+    if (playback) { playback->views.removeAll(this); playback->refresh(); }
+    m_visibility.start();
+}
+void JxlImage::reset() {
+    detach(); m_image = {}; m_error.clear(); m_frame = 0;
+    emit readyChanged(); emit errorChanged(); emit frameChanged(); update();
+}
 void JxlImage::setSource(const QString &source) {
     if (m_source == source) return;
-    suspend(); m_source = source; m_image = {}; m_error.clear(); m_finished = false; m_cycles = 0; m_frame = 0;
-    if (textureOwners > 64 && !source.isEmpty()) m_error = tr("Visible media limit reached");
-    emit sourceChanged(); emit readyChanged(); emit errorChanged(); emit frameChanged(); update();
-    requestFrame();
+    reset(); m_source = source; emit sourceChanged(); requestFrame();
+}
+void JxlImage::setAccount(const QString &account) {
+    if (m_account == account) return;
+    reset(); m_account = account; emit accountChanged(); requestFrame();
 }
 void JxlImage::setPlaying(bool value) {
     if (m_playing == value) return;
-    m_playing = value; emit playingChanged();
-    if (value) { m_finished = false; requestFrame(); } else suspend();
+    m_playing = value; emit playingChanged(); requestFrame();
 }
 void JxlImage::setSquare(bool value) { if (m_square != value) { m_square = value; emit squareChanged(); update(); } }
-void JxlImage::suspend() {
-    ++m_generation; m_timer.stop(); m_decoder.reset(); m_pending = false; m_queued = false;
-    waiting.removeAll(this);
-}
 void JxlImage::requestFrame() {
-    if (!eligible() || m_timer.isActive() || m_pending || m_queued || m_finished || (!m_playing && ready()) || !m_error.isEmpty()) return;
-    if (m_decoder) { decode(); return; }
-    if (waiting.size() >= 64) { m_error = tr("Visible media limit reached"); emit errorChanged(); return; }
-    m_queued = true; waiting.append(this);
-}
-void JxlImage::pump() {
-    m_queued = false;
-    if (!eligible() || m_pending || m_finished || (!m_playing && ready())) return;
-    if (!decoderSlots.tryAcquire()) { requestFrame(); return; }
-    m_decoder = std::make_shared<JxlDecodeState>();
-    m_due = 0; m_clock.invalidate(); decode();
-}
-void JxlImage::decode() {
-    m_pending = true;
-    const auto generation = m_generation;
-    const auto decoder = m_decoder;
-    const auto source = m_source;
-    auto *watcher = new QFutureWatcher<FrameResult>(this);
-    connect(watcher, &QFutureWatcher<FrameResult>::finished, this, [this, watcher, generation] {
-        const auto frame = watcher->result(); watcher->deleteLater();
-        if (generation != m_generation) return;
-        m_pending = false;
-        if (!frame.error.isEmpty()) { m_error = frame.error; m_decoder.reset(); emit errorChanged(); return; }
-        m_image = frame.image; ++m_frame; emit frameChanged(); emit readyChanged(); update();
-        if (!m_clock.isValid()) m_clock.start();
-        m_due += static_cast<long double>(frame.ticks) * frame.denominator * 1000.0L / frame.numerator;
-        const auto delay = static_cast<int>(std::clamp(m_due - m_clock.elapsed(), 0.0L, 120000.0L));
-        if (frame.last) {
-            ++m_cycles; m_decoder.reset();
-            if (frame.loops != 0 && m_cycles >= frame.loops) m_finished = true;
+    if (!m_playback && eligible() && m_error.isEmpty()) {
+        entries.removeIf([](const auto &entry) { return entry.expired(); });
+        // Anonymous standalone images never share on a presentation label.
+        const auto key = m_account + ':' + QString::fromLatin1(QCryptographicHash::hash(m_source.toUtf8(), QCryptographicHash::Sha256).toHex());
+        if (!m_account.isEmpty()) {
+            for (const auto &entry : entries) {
+                auto playback = entry.lock();
+                if (playback && playback->key == key) { m_playback = std::move(playback); break; }
+            }
         }
-        if (!m_playing) { m_decoder.reset(); return; }
-        if (!m_finished) m_timer.start(delay);
-    });
-    watcher->setFuture(QtConcurrent::run([decoder, source]() -> FrameResult {
-        FrameResult result;
-        try {
-            if (source.startsWith("data:image/png;base64,")) {
-                if (source.size() >= 900000) throw std::runtime_error("Cached PNG exceeds size limit");
-                auto bytes = QByteArray::fromBase64(source.mid(22).toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
-                QBuffer input(&bytes); input.open(QIODevice::ReadOnly);
-                QImageReader reader(&input, "png");
-                const auto size = reader.size();
-                if (size.isEmpty() || size.width() > 1024 || size.height() > 1024) throw std::runtime_error("Invalid cached PNG dimensions");
-                result.image = reader.read().scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                if (result.image.isNull()) throw std::runtime_error("Cached PNG decode failed");
-                return result;
+        if (!m_playback) {
+            if (entries.size() >= 64) {
+                m_error = tr("Visible media limit reached"); emit errorChanged(); return;
             }
-            if (!decoder->image) {
-                const auto bytes = source.toUtf8();
-                decoder->image.emplace(cords::open_image(rust::Str(bytes.constData(), static_cast<size_t>(bytes.size()))));
-            }
-            const auto frame = (*decoder->image)->next_frame();
-            const auto format = frame.bits == 16 ? QImage::Format_RGBA64 : QImage::Format_RGBA8888;
-            const QImage canvas(frame.pixels.data(), static_cast<int>(frame.width), static_cast<int>(frame.height), format);
-            // The Qt texture is bounded to 256x256. Its copy outlives the Rust
-            // frame, whose full-resolution buffer is released immediately.
-            result.image = canvas.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            if (result.image.constBits() == frame.pixels.data()) result.image = result.image.copy();
-            result.ticks = frame.duration_ticks; result.numerator = frame.ticks_numerator;
-            result.denominator = frame.ticks_denominator; result.loops = frame.loops; result.last = frame.last;
-        } catch (const std::exception &error) { result.error = QString::fromUtf8(error.what()); }
-        return result;
-    }));
+            m_playback = std::make_shared<JxlPlayback>(key, m_source); entries.append(m_playback);
+        }
+        m_playback->views.append(this);
+        // Once attached, visibility polling also belongs to the shared entry.
+        m_visibility.stop();
+    }
+    if (m_playback) {
+        const auto playback = m_playback;
+        playback->refresh();
+    }
 }
 void JxlImage::paint(QPainter *painter) {
     if (m_image.isNull()) return;

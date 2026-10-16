@@ -1,0 +1,37 @@
+2026-10-16 15:37:49,166 - aqt.helper - DEBUG - helper 39372 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/Updates.xml.sha256
+2026-10-16 15:37:50,990 - aqt.helper - DEBUG - helper 23448 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/Updates.xml.sha256
+2026-10-16 15:45:53,546 - aqt.main - INFO - installer 23404 aqtinstall(aqt) v3.3.0 on Python 3.13.3 [CPython MSC v.1943 64 bit (AMD64)]
+2026-10-16 15:45:53,546 - aqt.helper - DEBUG - helper 23404 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/Updates.xml.sha256
+2026-10-16 15:45:55,567 - aqt.helper - DEBUG - helper 23404 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/extensions/qtwebengine/6103/msvc2022_64/Updates.xml.sha256
+2026-10-16 15:45:57,110 - aqt.archives - INFO - archives 23404 Found extension qtwebengine
+2026-10-16 15:45:57,110 - aqt.helper - DEBUG - helper 23404 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/extensions/qtpdf/6103/msvc2022_64/Updates.xml.sha256
+2026-10-16 15:45:58,683 - aqt.archives - INFO - archives 23404 Found extension qtpdf
+2026-10-16 15:45:59,484 - aqt.helper - DEBUG - helper 46740 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z.sha256
+2026-10-16 15:45:59,491 - aqt.helper - DEBUG - helper 47748 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtsvg-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z.sha256
+2026-10-16 15:45:59,492 - aqt.helper - DEBUG - helper 32212 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtdeclarative-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z.sha256
+2026-10-16 15:45:59,494 - aqt.helper - DEBUG - helper 45260 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qttools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z.sha256
+2026-10-16 15:46:00,302 - aqt.helper - INFO - helper 47748 Downloading qtsvg...
+2026-10-16 15:46:00,302 - aqt.installer - DEBUG - installer 47748 Download URL: https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtsvg-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:00,311 - aqt.helper - INFO - helper 32212 Downloading qtdeclarative...
+2026-10-16 15:46:00,311 - aqt.installer - DEBUG - installer 32212 Download URL: https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtdeclarative-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:00,324 - aqt.helper - INFO - helper 45260 Downloading qttools...
+2026-10-16 15:46:00,325 - aqt.installer - DEBUG - installer 45260 Download URL: https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qttools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:01,043 - aqt.helper - DEBUG - helper 45260 Asked to redirect(302) to: https://qt.mirror.constant.com/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qttools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:01,043 - aqt.helper - INFO - helper 45260 Redirected: qt.mirror.constant.com
+2026-10-16 15:46:01,053 - aqt.helper - DEBUG - helper 47748 Asked to redirect(302) to: https://qt.mirror.constant.com/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtsvg-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:01,054 - aqt.helper - DEBUG - helper 32212 Asked to redirect(302) to: https://qt.mirror.constant.com/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtdeclarative-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:01,054 - aqt.helper - INFO - helper 47748 Redirected: qt.mirror.constant.com
+2026-10-16 15:46:01,054 - aqt.helper - INFO - helper 32212 Redirected: qt.mirror.constant.com
+2026-10-16 15:46:01,247 - aqt.helper - INFO - helper 46740 Downloading qtbase...
+2026-10-16 15:46:01,248 - aqt.installer - DEBUG - installer 46740 Download URL: https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:02,075 - aqt.helper - DEBUG - helper 46740 Asked to redirect(302) to: https://qt.mirror.constant.com/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:02,076 - aqt.helper - INFO - helper 46740 Redirected: qt.mirror.constant.com
+2026-10-16 15:46:03,208 - aqt.installer - INFO - installer 47748 Finished installation of qtsvg-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z in 3.71804770
+2026-10-16 15:46:03,217 - aqt.helper - DEBUG - helper 47748 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qttranslations-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z.sha256
+2026-10-16 15:46:04,026 - aqt.helper - INFO - helper 47748 Downloading qttranslations...
+2026-10-16 15:46:04,027 - aqt.installer - DEBUG - installer 47748 Download URL: https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qttranslations-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:04,907 - aqt.helper - DEBUG - helper 47748 Asked to redirect(302) to: https://qt.mirror.constant.com/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.win64_msvc2022_64/6.10.3-0-202603310407qttranslations-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-16 15:46:04,907 - aqt.helper - INFO - helper 47748 Redirected: qt.mirror.constant.com
+2026-10-16 15:46:07,970 - aqt.installer - INFO - installer 47748 Finished installation of qttranslations-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z in 4.75502950
+2026-10-16 15:46:09,586 - aqt.installer - INFO - installer 45260 Finished installation of qttools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z in 10.09338360
+2026-10-16 15:46:16,563 - aqt.installer - INFO - installer 46740 Finished installation of qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z in 17.08122210

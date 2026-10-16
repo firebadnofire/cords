@@ -42,6 +42,8 @@ pub(super) enum Command {
     Burn,
     RetryBurns,
     SelectChannel(String),
+    OlderMessages(String),
+    LatestMessages(String),
     CreateChannel(String, bool),
     ReplaceChannel(String, String, bool),
     RetireChannel(String),
@@ -182,6 +184,9 @@ pub(super) fn empty_snapshot() -> ffi::Snapshot {
         roles_active: false,
         server_muted: false,
         route_muted: false,
+        history_older: false,
+        history_newer: false,
+        history_browsing: false,
         directory_after: String::new(),
         presentation_error: String::new(),
         directory_loaded: false,
@@ -230,6 +235,9 @@ pub(super) struct Worker {
     metadata_retry: Instant,
     profile_attempts: BTreeMap<String, Instant>,
     people: BTreeMap<String, ffi::PersonRow>,
+    history_scope: (String, String, String),
+    history_end: Option<String>,
+    history_limit: u32,
 }
 impl Worker {
     #[allow(clippy::too_many_arguments)] // Explicit lifecycle inputs; no hidden global runtime.
@@ -278,6 +286,9 @@ impl Worker {
             metadata_retry: Instant::now(),
             profile_attempts: BTreeMap::new(),
             people: BTreeMap::new(),
+            history_scope: (String::new(), String::new(), String::new()),
+            history_end: None,
+            history_limit: 100,
         };
         if let Err(error) = worker.refresh().await {
             worker.view.error = format!("{error:#}");
@@ -654,6 +665,9 @@ impl Worker {
         self.view.accounts = accounts;
         self.view.legacy = legacy;
         self.policy = None;
+        self.history_scope = (String::new(), String::new(), String::new());
+        self.history_end = None;
+        self.history_limit = 100;
         self.channel_by_server.clear();
         self.server_health.clear();
         self.sync_cursor = 0;
@@ -840,6 +854,35 @@ impl Worker {
             Command::SelectChannel(route) => {
                 self.view.route = route;
             }
+            Command::OlderMessages(route) => {
+                ensure!(
+                    route == self.view.route,
+                    "Conversation changed; reopen its history"
+                );
+                ensure!(
+                    self.view.history_older,
+                    "No older cached messages are available"
+                );
+                let end_index = if self.view.messages.len() >= 300 {
+                    self.view.messages.len() - 101
+                } else {
+                    self.view
+                        .messages
+                        .len()
+                        .checked_sub(1)
+                        .context("No cached history")?
+                };
+                self.history_end = Some(self.view.messages[end_index].id.clone());
+                self.history_limit = (self.history_limit + 100).min(300);
+            }
+            Command::LatestMessages(route) => {
+                ensure!(
+                    route == self.view.route,
+                    "Conversation changed; reopen its history"
+                );
+                self.history_end = None;
+                self.history_limit = 100;
+            }
             Command::CreateChannel(name, public) => {
                 self.view.route = client.create_channel_with_mode(&name, mode(public)).await?;
             }
@@ -867,6 +910,8 @@ impl Worker {
                     "Channel changed before send; review the current conversation"
                 );
                 client.send(&route, &body).await?;
+                self.history_end = None;
+                self.history_limit = 100;
                 self.view.notice = "Message sent".into();
             }
             Command::Sync => {
@@ -1066,6 +1111,9 @@ impl Worker {
     }
 
     fn reset_server_views(&mut self) {
+        self.history_scope = (String::new(), String::new(), String::new());
+        self.history_end = None;
+        self.history_limit = 100;
         self.view.route.clear();
         self.view.messages.clear();
         self.view.members.clear();
@@ -1499,12 +1547,33 @@ impl Worker {
 
     async fn refresh_messages(&mut self) -> Result<()> {
         let client = self.client.as_ref().context("Account locked")?;
+        let scope = (
+            self.view.account.clone(),
+            self.view.server.clone(),
+            self.view.route.clone(),
+        );
+        if self.history_scope != scope {
+            self.history_scope = scope;
+            self.history_end = None;
+            self.history_limit = 100;
+        }
+        self.view.history_older = false;
+        self.view.history_newer = false;
+        self.view.history_browsing = self.history_end.is_some();
         self.view.messages = if self.view.route.is_empty() {
             Vec::new()
         } else {
-            client
-                .history(&self.view.route)
-                .await?
+            let window = client
+                .history_window(
+                    &self.view.route,
+                    self.history_end.as_deref(),
+                    self.history_limit,
+                )
+                .await?;
+            self.view.history_older = window.has_older;
+            self.view.history_newer = window.has_newer;
+            window
+                .messages
                 .into_iter()
                 .map(|message| {
                     let account = message.sender_account_id;

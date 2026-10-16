@@ -378,14 +378,39 @@ Item {
                         Layout.rightMargin: 14
                         visible: shell.route.length > 0
                     }
-                    CordsButton {
-                        text: shell.desktop.state.routeMuted ? "Unmute this conversation" : "Mute this conversation"
-                        visible: !!shell.route
-                        enabled: !shell.desktop.busy
+                    Flow {
+                        Layout.fillWidth: true
                         Layout.leftMargin: 14
-                        onClicked: shell.desktop.muteRoute(shell.route, !shell.desktop.state.routeMuted)
+                        Layout.rightMargin: 14
+                        visible: !!shell.route
+                        spacing: 8
+                        CordsButton {
+                            text: shell.desktop.state.routeMuted ? "Unmute this conversation" : "Mute this conversation"
+                            enabled: !shell.desktop.busy
+                            onClicked: shell.desktop.muteRoute(shell.route, !shell.desktop.state.routeMuted)
+                        }
+                        CordsButton {
+                            text: "Older messages"
+                            objectName: "olderMessages"
+                            visible: !!shell.desktop.state.historyOlder
+                            enabled: !shell.desktop.busy
+                            onClicked: {
+                                messages.followTail = false;
+                                shell.desktop.olderMessages(shell.route);
+                            }
+                        }
+                        CordsButton {
+                            text: shell.desktop.state.historyNewer ? "Newer messages · Latest" : "Latest"
+                            objectName: "latestMessages"
+                            visible: !!shell.desktop.state.historyBrowsing
+                            enabled: !shell.desktop.busy
+                            onClicked: {
+                                messages.followTail = true;
+                                shell.desktop.latestMessages(shell.route);
+                            }
+                        }
                     }
-                    ListView {
+                    HistoryView {
                         id: messages
                         objectName: "messageList"
                         Layout.fillWidth: true
@@ -396,11 +421,8 @@ Item {
                         spacing: Theme.compact ? 2 : 8
                         leftMargin: 14
                         rightMargin: 14
-                        property bool followTail: true
-                        onMovementStarted: followTail = false
-                        onMovementEnded: followTail = atYEnd
-                        onCountChanged: if (followTail)
-                            Qt.callLater(positionViewAtEnd)
+                        historyScope: [shell.desktop.state.account || "", shell.desktop.state.server || "", shell.route].join("/")
+                        browsing: !!shell.desktop.state.historyBrowsing
                         delegate: ItemDelegate {
                             id: message
                             required property var row
@@ -419,16 +441,18 @@ Item {
                                 RowLayout {
                                     CordsAvatar {
                                         name: message.row.author
+                                        account: message.row.account
                                         source: message.person.image || ""
                                         shape: message.person.shape || "circle"
                                         Layout.preferredWidth: 30
                                         Layout.preferredHeight: 30
-                                        playing: !Theme.reducedMotion && message.visible && message.y + message.height >= messages.contentY && message.y <= messages.contentY + messages.height
+                                        playing: message.visible && message.y + message.height >= messages.contentY && message.y <= messages.contentY + messages.height
                                     }
                                     CordsButton {
                                         text: message.row.author || "Verified sender"
                                         help: "Open account profile"
                                         implicitHeight: 28
+                                        Layout.maximumWidth: Math.max(100, message.width * 0.52)
                                         enabled: !!message.row.account
                                         onClicked: shell.openProfile(message.row.account)
                                     }
@@ -437,6 +461,9 @@ Item {
                                         font.pixelSize: Theme.captionSize
                                         color: Theme.muted
                                         Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        wrapMode: Text.NoWrap
+                                        elide: Text.ElideRight
                                     }
                                 }
                                 TextArea {
@@ -469,7 +496,9 @@ Item {
                                 }
                             }
                         }
-                        ScrollBar.vertical: ScrollBar {}
+                        ScrollBar.vertical: ScrollBar {
+                            onPressedChanged: messages.followTail = !pressed && messages.atYEnd && !messages.browsing
+                        }
                         CordsLabel {
                             anchors.centerIn: parent
                             width: Math.min(300, parent.width - 30)

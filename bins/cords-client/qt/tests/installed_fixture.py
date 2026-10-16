@@ -32,6 +32,7 @@ def main():
     else:
         env['PATH'] = '/usr/bin:/bin'
     env['CORDS_CLIENT_STATE'] = ready['state']
+    env['QT_FORCE_STDERR_LOGGING'] = '1'
     env['CORDS_CLIENT_CA'] = ready['ca']
     listing = subprocess.run([str(executable), '--list-accounts'], env=env,
                              cwd=fixture, capture_output=True, text=True,
@@ -47,14 +48,14 @@ def main():
         result = subprocess.run(
             [str(executable), '--account', account, '--password-stdin',
              '--window-size', size, '--capture', str(capture),
-             '--capture-after', str(args.settle_ms - 500),
+             '--capture-after', str(max(1800, args.settle_ms - max(2000, args.settle_ms // 10))),
              '--quit-after', str(args.settle_ms)],
             input='Test-only Role Vault 9321!\n', env=env, cwd=fixture,
             capture_output=True, text=True, timeout=args.settle_ms / 1000 + 40)
         capture.with_suffix('.log').write_text(result.stdout + result.stderr,
                                                encoding='utf-8')
         if result.returncode or not capture.is_file() or result.stderr.strip():
-            raise RuntimeError(f'{label} startup failed; inspect {capture.with_suffix(".log")}')
+            raise RuntimeError(f'{label} startup failed (exit={result.returncode}, capture={capture.is_file()}); inspect {capture.with_suffix(".log")}')
         print(f'{label}: clean exit, captured {capture}', flush=True)
     print('Inspect the captures. This host test is not clean-machine acceptance.')
 

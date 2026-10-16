@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <platform> <architecture> <release-id> <client-path> <output-directory>" >&2
+  echo "usage: $0 <platform> <architecture> <release-id> <deployed-Qt-directory-or-mac-app> <output-directory>" >&2
   exit 2
 }
 
@@ -55,19 +55,22 @@ mkdir -p "${package_root}"
 
 case "${platform}" in
   linux)
-    install -m 0755 "${client_path}" "${package_root}/Cords.AppImage"
+    [[ -x "${client_path}/bin/Cords" && -f "${client_path}/cords-native-build.json" && -d "${client_path}/share/cords/migrations/sqlite" ]] || {
+      echo 'error: Linux input must be the complete installed Qt tree; a standalone binary or legacy AppImage omits its runtime' >&2
+      exit 1
+    }
+    cp -R "${client_path}/." "${package_root}/"
     ;;
   windows)
-    install -m 0755 "${client_path}" "${package_root}/Cords.exe"
-    mkdir -p "${package_root}/migrations/sqlite"
-    for migration in "${repo_dir}"/migrations/sqlite/*.sql; do
-      [[ -s "${migration}" ]] || { echo "error: missing or empty SQLite migration: ${migration}" >&2; exit 1; }
-      install -m 0644 "${migration}" "${package_root}/migrations/sqlite/"
-    done
+    [[ -s "${client_path}/Cords.exe" && -s "${client_path}/Qt6Core.dll" && -f "${client_path}/cords-native-build.json" && -d "${client_path}/share/cords/migrations/sqlite" ]] || {
+      echo 'error: Windows input must be the complete installed Qt tree, including runtime DLLs, plugins and migrations' >&2
+      exit 1
+    }
+    cp -R "${client_path}/." "${package_root}/"
     ;;
   macos)
-    [[ -d "${client_path}" ]] || {
-      echo "error: macOS client artifact must be an .app directory" >&2
+    [[ -x "${client_path}/Contents/MacOS/Cords" && -d "${client_path}/Contents/Frameworks" && -d "${client_path}/Contents/Resources/cords/migrations/sqlite" ]] || {
+      echo "error: macOS input must be the deployed Qt .app bundle with frameworks and migrations" >&2
       exit 1
     }
     cp -R "${client_path}" "${package_root}/Cords.app"

@@ -181,6 +181,9 @@ pub mod ffi {
         roles_active: bool,
         server_muted: bool,
         route_muted: bool,
+        history_older: bool,
+        history_newer: bool,
+        history_browsing: bool,
         directory_after: String,
         presentation_error: String,
         directory_loaded: bool,
@@ -250,6 +253,8 @@ pub mod ffi {
         fn burn_identity(self: &Desktop) -> Result<()>;
         fn retry_burns(self: &Desktop) -> Result<()>;
         fn select_channel(self: &Desktop, channel: String) -> Result<()>;
+        fn older_messages(self: &Desktop, channel: String) -> Result<()>;
+        fn latest_messages(self: &Desktop, channel: String) -> Result<()>;
         fn create_channel(self: &Desktop, name: String, is_public: bool) -> Result<()>;
         fn replace_channel(
             self: &Desktop,
@@ -596,6 +601,16 @@ impl Desktop {
     /// Returns a worker submission or input validation error.
     pub fn select_channel(&self, channel: String) -> Result<()> {
         self.submit(Command::SelectChannel(channel))
+    }
+    /// # Errors
+    /// Returns a worker submission or stale-conversation error.
+    pub fn older_messages(&self, channel: String) -> Result<()> {
+        self.submit(Command::OlderMessages(channel))
+    }
+    /// # Errors
+    /// Returns a worker submission or stale-conversation error.
+    pub fn latest_messages(&self, channel: String) -> Result<()> {
+        self.submit(Command::LatestMessages(channel))
     }
     /// # Errors
     /// Returns a worker submission or input validation error.

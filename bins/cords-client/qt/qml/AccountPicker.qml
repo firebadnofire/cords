@@ -8,8 +8,23 @@ Pane {
     id: picker
     required property Controller desktop
     property string selectedAccount: ""
+    property string selectedLabel: ""
     property bool creating: false
     property bool migrating: false
+    property bool removalSubmitted: false
+    Connections {
+        target: picker.desktop
+        function onStateChanged() {
+            if (!picker.removalSubmitted || picker.desktop.busy)
+                return;
+            picker.removalSubmitted = false;
+            if (!picker.desktop.state.error) {
+                picker.selectedAccount = "";
+                picker.selectedLabel = "";
+                removal.close();
+            }
+        }
+    }
     background: Rectangle {
         color: Theme.window
     }
@@ -52,6 +67,7 @@ Pane {
                     contentItem: RowLayout {
                         CordsAvatar {
                             name: accountChoice.row.name
+                            account: accountChoice.row.id
                             source: accountChoice.row.avatar
                             shape: accountChoice.row.shape
                             centerX: accountChoice.row.xMilli / 100000
@@ -73,6 +89,7 @@ Pane {
                     primary: picker.selectedAccount === row.id
                     onClicked: {
                         picker.selectedAccount = row.id;
+                        picker.selectedLabel = row.name;
                         password.forceActiveFocus();
                     }
                 }
@@ -160,6 +177,17 @@ Pane {
                 enabled: !picker.desktop.busy
                 onClicked: picker.migrating = true
             }
+            CordsButton {
+                text: "Remove selected account from this device…"
+                destructive: true
+                visible: !picker.creating && !picker.migrating && !!picker.selectedAccount
+                enabled: !picker.desktop.busy
+                Layout.fillWidth: true
+                onClicked: {
+                    password.clear();
+                    removal.open();
+                }
+            }
             CordsLabel {
                 text: picker.desktop.state.error || ""
                 color: Theme.danger
@@ -169,6 +197,17 @@ Pane {
             Item {
                 Layout.preferredHeight: 24
             }
+        }
+    }
+    LocalAccountRemoval {
+        id: removal
+        account: picker.selectedAccount
+        nickname: picker.selectedLabel
+        operationBusy: picker.desktop.busy
+        errorText: picker.desktop.state.error || ""
+        onRemovalRequested: (account, password) => {
+            picker.removalSubmitted = true;
+            picker.desktop.removeAccount(account, password);
         }
     }
 }

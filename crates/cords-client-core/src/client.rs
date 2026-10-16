@@ -1,4 +1,4 @@
-//! Native client orchestration shared by the CLI and Tauri.
+//! Native client orchestration shared by the CLI and desktop frontends.
 use anyhow::{Context as _, Result, bail, ensure};
 use cords_crypto::{
     conversation::{ConversationCrypto, Processed},
@@ -235,6 +235,12 @@ pub struct SyncResult {
     /// Verified route for each message, in the same order. This is local
     /// delivery metadata; it does not alter the wire event or encrypted body.
     pub message_routes: Vec<String>,
+}
+#[derive(Debug)]
+pub struct HistoryWindow {
+    pub messages: Vec<Message>,
+    pub has_older: bool,
+    pub has_newer: bool,
 }
 #[derive(Debug)]
 pub enum Notification {
@@ -3216,6 +3222,53 @@ impl Client {
         self.history_for_server(&self.durable.server_id, route)
             .await
     }
+    /// Read a bounded window ending at an inclusive message ID, or the latest
+    /// cached message when `end` is absent. Ordering matches server delivery,
+    /// with message IDs breaking sequence ties. Only this server/route is read.
+    ///
+    /// # Errors
+    /// Rejects limits outside 1..=300, unavailable anchors, database failures,
+    /// and any message that fails authenticated local-cache decryption.
+    pub async fn history_window(
+        &self,
+        route: &str,
+        end: Option<&str>,
+        limit: u32,
+    ) -> Result<HistoryWindow> {
+        ensure!((1..=300).contains(&limit), "History limit must be 1 to 300");
+        let server = &self.durable.server_id;
+        let (mut ids, has_newer): (Vec<String>, bool) = if let Some(end) = end {
+            let sequence: i64 = sqlx::query_scalar(
+                "SELECT sequence FROM message_cache WHERE server_id=?1 AND route_id=?2 AND message_id=?3",
+            ).bind(server).bind(route).bind(end).fetch_optional(self.store.pool()).await?
+                .context("History anchor is unavailable in this conversation")?;
+            let ids = sqlx::query_scalar(
+                "SELECT message_id FROM message_cache WHERE server_id=?1 AND route_id=?2 AND (sequence,message_id)<=(?3,?4) ORDER BY sequence DESC,message_id DESC LIMIT ?5",
+            ).bind(server).bind(route).bind(sequence).bind(end).bind(limit + 1)
+                .fetch_all(self.store.pool()).await?;
+            let newer = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM message_cache WHERE server_id=?1 AND route_id=?2 AND (sequence,message_id)>(?3,?4))",
+            ).bind(server).bind(route).bind(sequence).bind(end)
+                .fetch_one(self.store.pool()).await?;
+            (ids, newer)
+        } else {
+            (sqlx::query_scalar(
+                "SELECT message_id FROM message_cache WHERE server_id=?1 AND route_id=?2 ORDER BY sequence DESC,message_id DESC LIMIT ?3",
+            ).bind(server).bind(route).bind(limit + 1).fetch_all(self.store.pool()).await?, false)
+        };
+        let has_older = ids.len() > limit as usize;
+        ids.truncate(limit as usize);
+        ids.reverse();
+        let mut messages = Vec::with_capacity(ids.len());
+        for id in ids {
+            messages.push(self.cached_message_for_server(server, route, &id).await?);
+        }
+        Ok(HistoryWindow {
+            messages,
+            has_older,
+            has_newer,
+        })
+    }
     async fn history_for_server(&self, server: &str, route: &str) -> Result<Vec<Message>> {
         let ids: Vec<String> = sqlx::query_scalar(
             "SELECT message_id FROM message_cache WHERE server_id=?1 AND route_id=?2 ORDER BY sequence,message_id",
@@ -3443,6 +3496,86 @@ mod tests {
         client
             .persist(&[("same-route".into(), 1, message)], &[])
             .await
+    }
+    #[tokio::test]
+    async fn history_windows_are_bounded_scoped_ordered_and_authenticated_after_restart()
+    -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut client = Client::open(temp.path(), &migrations(), Some(PASS), None).await?;
+        seed_server(&mut client, "server-a", "A").await?;
+        let message = |id: String, body: &str| Message {
+            schema_version: 1,
+            message_id: id,
+            sender_account_id: client.status().account_id,
+            sender_device_id: client.status().device_id,
+            client_timestamp: 1,
+            event_kind: "message.create".into(),
+            body: body.into(),
+        };
+        let mut batch: Vec<_> = (0..1001)
+            .map(|index| {
+                (
+                    "history".into(),
+                    index / 2,
+                    message(format!("m{index:04}"), "sealed body"),
+                )
+            })
+            .collect();
+        batch.push((
+            "other-route".into(),
+            0,
+            message("foreign-route".into(), "other route"),
+        ));
+        client.persist(&batch, &[]).await?;
+        seed_server(&mut client, "server-b", "B").await?;
+        let mut foreign = batch[0].2.clone();
+        foreign.message_id = "foreign-server".into();
+        client
+            .persist(&[("history".into(), 0, foreign)], &[])
+            .await?;
+        client.select_server("server-a").await?;
+        client.shutdown().await;
+        let client = Client::open_existing(temp.path(), &migrations(), PASS, None).await?;
+        let latest = client.history_window("history", None, 100).await?;
+        assert_eq!(latest.messages.len(), 100);
+        assert_eq!(latest.messages[0].message_id, "m0901");
+        assert_eq!(latest.messages[99].message_id, "m1000");
+        assert!(latest.has_older && !latest.has_newer);
+        let older = client.history_window("history", Some("m0750"), 300).await?;
+        assert_eq!(older.messages.len(), 300);
+        assert_eq!(older.messages[0].message_id, "m0451");
+        assert_eq!(older.messages[299].message_id, "m0750");
+        assert!(older.has_older && older.has_newer);
+        let first = client.history_window("history", Some("m0000"), 300).await?;
+        assert_eq!(first.messages.len(), 1);
+        assert!(!first.has_older && first.has_newer);
+        for anchor in ["foreign-route", "foreign-server", "missing"] {
+            assert!(
+                client
+                    .history_window("history", Some(anchor), 100)
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(client.history_window("history", None, 0).await.is_err());
+        assert!(client.history_window("history", None, 301).await.is_err());
+        sqlx::query("UPDATE message_cache SET sealed=zeroblob(64) WHERE server_id='server-a' AND route_id='history' AND message_id='m0000'")
+            .execute(client.store.pool()).await?;
+        assert_eq!(
+            client
+                .history_window("history", None, 100)
+                .await?
+                .messages
+                .len(),
+            100
+        );
+        assert!(
+            client
+                .history_window("history", Some("m0000"), 100)
+                .await
+                .is_err()
+        );
+        Ok(())
     }
     #[tokio::test]
     async fn background_sync_failure_and_interrupted_writes_preserve_foreground() -> Result<()> {

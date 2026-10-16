@@ -1,167 +1,140 @@
-# Cords build scripts
+# Cords local builders
 
-These scripts build release artifacts from any working directory and place
-file-based output in the repository-level `dist/` directory by default. Set
-`CORDS_DIST_DIR` to use another output directory. Existing artifacts with the
-same exact name are replaced; unrelated files are preserved.
+Desktop builders compile the Qt 6 Quick/QML frontend and Rust bridge. They do
+not run npm or build Tauri. Workflow parity remains in progress; see
+`docs/plans/qt-desktop-migration.md`.
 
-Artifact names use the authoritative workspace version from `Cargo.toml` and
-the detected or selected CPU architecture. Every file artifact receives a
-neighboring `.sha256` file containing a basename-only SHA-256 record.
-
-The scripts do not install host dependencies, publish artifacts, push images,
-sign releases with repository secrets, or perform notarization.
-
-## Scripts
-
-| Script | Host | Output |
+| Script | Host | Output under `dist/` |
 |---|---|---|
-| `windows-client.ps1` | Native Windows x64 or ARM64 | `cords-client-windows-<arch>-<version>.zip` |
-| `linux-windows-client-crosscomp.sh` | Linux x64 or ARM64 | The same portable Windows archive as the native script |
-| `linux-client-tar.sh` | Linux x64 or ARM64 | `cords-client-linux-<arch>-<version>.tar.gz`, containing `Cords.AppImage` |
-| `linux-server-tar.sh` | Linux x64 or ARM64 | `cords-server-linux-<arch>-<version>.tar.gz` |
-| `mac-client-dmg.sh` | macOS Apple Silicon with both Apple targets | `cords-client-macos-universal-<version>.dmg` |
-| `mac-client-pkg.sh` | macOS Intel or Apple Silicon | `cords-client-macos-<arch>-<version>.pkg` |
-| `mac-server-tar.sh` | macOS Intel or Apple Silicon | `cords-server-macos-<arch>-<version>.tar.gz` |
-| `linux-server-oci-img.sh` | Linux with Docker or Podman | A locally loaded `cords-server:<version>` image |
+| `windows-client.ps1` | Native Windows x64/ARM64, MSVC | Portable Qt ZIP |
+| `linux-client-tar.sh` | Native Linux x64/ARM64 | Deployed Qt directory tarball |
+| `mac-client-pkg.sh` | Native macOS Intel/Apple Silicon | Qt application PKG |
+| `mac-client-dmg.sh` | macOS with both Rust targets and universal Qt SDK | Universal Qt DMG |
+| `linux-windows-client-crosscomp.sh` | Linux | Explicit unsupported-toolchain error |
+| `linux-server-tar.sh` | Linux x64/ARM64 | Server tarball |
+| `mac-server-tar.sh` | macOS Intel/Apple Silicon | Server tarball |
+| `linux-server-oci-img.sh` | Linux with Docker/Podman | Locally loaded server image |
 
-There is intentionally no Windows server build script.
+File artifacts include SHA-256 sidecars. Nothing is published. Server builders
+do not require Qt. There is no Windows server builder.
 
-## Common dependencies
+## Desktop prerequisites
 
-- Rust 1.97.1 and Cargo, as selected by `rust-toolchain.toml`
-- The Rust targets used by the selected build
-- Node.js 24 and npm for client builds
-- `tar` and either `sha256sum` or `shasum` for Unix file artifacts
+- Rust 1.97.1 and Cargo, selected by `rust-toolchain.toml`.
+- Qt **6.10.3**, including Core, Gui, Network, Qml, Quick, QuickControls2,
+  Widgets, Concurrent, Test and QuickTest; SDK architecture must match the build.
+- CMake >=3.24, Python 3 and a native C++ compiler (MSVC 2022, GCC or Apple Clang).
+- Native platform dependencies required by Qt. Linux also needs `pkg-config`,
+  OpenGL development libraries and X11/Wayland platform plugin dependencies.
+- Unix packaging needs `tar` and `sha256sum` or `shasum`.
 
-Scripts fail with an actionable message when a required command is absent.
-They never invoke a system package manager.
+Set `CORDS_QT_PREFIX` to the SDK folder containing `bin/qmake` or
+`bin/qmake.exe`. `QT_ROOT_DIR` is also accepted. Builders verify the exact SDK
+version and fail on missing dependencies. Windows offers approved WinGet setup
+as described below; Unix builders do not install system packages. Builders do
+not fall back to the old frontend.
 
-## Windows client
-
-Native Windows development validation requires PowerShell 7 or Windows
-PowerShell with .NET APIs used by the script, Rust's MSVC host toolchain,
-Node.js/npm, and the Windows `tar.exe` utility:
-
-```powershell
-& C:\path\to\cords\build-scripts\windows-client.ps1
-```
-
-Stop this checkout's Vite/Tauri development server with Ctrl+C before building.
-`npm ci` replaces dependencies and Windows cannot replace a running
-`esbuild.exe`; the script detects this conflict before installing. It does not
-terminate development servers automatically. Administrator privileges are not
-needed to resolve this lock.
-
-Temporary staging cleanup retries up to three times for transient Windows file
-locks and reports a persistent failure with the staging path.
-
-For a build on another drive, set these paths before running the script:
+## Windows ZIP
 
 ```powershell
-$env:CARGO_TARGET_DIR = 'D:\cords-build\target'
-$env:CORDS_DIST_DIR = 'D:\cords-build\dist'
-$env:TEMP = 'D:\cords-build\temp'
-$env:TMP = $env:TEMP
-$env:npm_config_cache = 'D:\cords-build\npm-cache'
-New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
-& C:\path\to\cords\build-scripts\windows-client.ps1
+$env:CORDS_QT_PREFIX = 'E:\Qt\6.10.3\msvc2022_64'
+& .\build-scripts\windows-client.ps1
 ```
 
-The result is a portable ZIP containing `Cords.exe`, `README.md`, the license,
-and `migrations/sqlite/`. Keep this resource directory beside the executable:
-release builds resolve migrations from the extracted package, not the source
-checkout. Cords uses the system WebView2 runtime; it does not copy a WebView2
-runtime into the archive. This script builds only the client.
+Use PowerShell, the native MSVC Rust toolchain, Visual Studio 2022 C++ tools and
+redistributables, Python 3 and Windows `tar.exe`. Visual Studio's CMake is
+found when CMake is absent from PATH. Optional `-QtPrefix`, `-CMake` and
+`CORDS_PYTHON` select explicit tools. `VCINSTALLDIR` is discovered through the
+Visual Studio installer when unset.
 
-## Linux-built Windows client
+Missing prerequisites show the installation commands and ask `Y/n`; pressing
+Enter selects Yes. Approval installs the relevant package through WinGet,
+refreshes this process's PATH, rechecks the dependency and continues the build.
+Declining stops the build. Installer failures stop immediately.
 
-The CI-preferred Windows path requires Bash, `cargo-xwin` 0.23.1, Clang,
-`lld-link`, Rust's matching Windows MSVC target, Node.js/npm, and `zip`.
-When a Linux distribution exposes `clang` but not the `clang-cl` driver name,
-the script creates a private temporary `clang-cl` symlink and removes it after
-the build; it does not modify the host toolchain.
-The Linux host architecture must match the Windows target architecture. This
-reflects the current `ring`/MSVC cross-toolchain behavior and prevents a
-non-working cross-CPU build from being advertised.
+For Qt, WinGet supplies `miurahr.aqtinstall`; the approved setup then downloads
+Qt 6.10.3 with the matching MSVC architecture and required archives into
+`$env:LOCALAPPDATA\Cords\Qt`. Subsequent builds detect that SDK automatically.
+If Qt is already installed elsewhere, use `-QtPrefix` to select it.
 
-```sh
-bash build-scripts/linux-windows-client-crosscomp.sh --target x86_64
-bash build-scripts/linux-windows-client-crosscomp.sh --target aarch64
+Use `-NonInteractive` for automation: missing prerequisites then fail with the
+installation commands instead of prompting or installing. CI and redirected-input
+runs also disable installation prompts. Existing complete setups do not prompt.
+
+Extract the complete ZIP and run `Cords.exe`. Preserve Qt DLLs, plugins, QML
+modules and `share/cords/migrations/sqlite` in their packaged layout. WebView2
+is not used. Build success does not establish clean-machine runtime acceptance
+or signed Windows distribution.
+Qt deployment includes the MSVC redistributable installer when Visual Studio
+provides it. A machine without that runtime may require the installer before
+launching; the builder does not install it on the build host.
+
+For output on another drive:
+
+```powershell
+$env:CORDS_QT_BUILD_DIR = 'E:\cords-build\qt'
+$env:CARGO_TARGET_DIR = 'E:\cords-build\cargo'
+$env:CORDS_DIST_DIR = 'E:\cords-build\dist'
+& .\build-scripts\windows-client.ps1
 ```
 
-Use `ubuntu-22.04` for x86_64 and `arm-ubuntu-22.04` for ARM64. The script uses
-genuine MSVC cross-compilation and never requires Wine.
-
-## Linux artifacts
-
-The client script uses the repository's Tauri AppImage build. In addition to
-the common tools it requires `file`, `pkg-config`, `wget`, and development
-packages exposing `webkit2gtk-4.1`, `ayatana-appindicator3-0.1`, and
-`librsvg-2.0` through `pkg-config`.
+## Linux tarball
 
 ```sh
+export CORDS_QT_PREFIX="$HOME/Qt/6.10.3/gcc_64"
 bash build-scripts/linux-client-tar.sh
-bash build-scripts/linux-server-tar.sh
 ```
 
-The server archive contains `cords-server`, PostgreSQL migrations,
-`server.toml.example`, `README.md`, and `LICENSE`. The configuration is a
-template only; operators must replace its example origin, database password,
-and paths as appropriate. No credentials or persistent data are packaged.
+Extract the complete folder and run `bin/Cords`. Qt libraries/plugins and
+migrations are deployed in the archive; it is no longer an AppImage. System
+C library, graphics, font and display-server compatibility depends on the build
+host and target distribution. A Qt/MSVC Linux-to-Windows toolchain is not yet
+validated; use the native Windows script for Windows artifacts.
+X11, Wayland and the headless acceptance backend are included explicitly.
 
-## macOS artifacts
-
-The DMG script builds the release client for both `aarch64-apple-darwin` and
-`x86_64-apple-darwin` through Tauri's `universal-apple-darwin` target. Both Rust
-targets must already be installed. The legacy PKG and the server tar script
-build only the native host architecture.
+## macOS packages
 
 ```sh
-bash build-scripts/mac-client-dmg.sh
+export CORDS_QT_PREFIX="$HOME/Qt/6.10.3/macos"
 bash build-scripts/mac-client-pkg.sh
-bash build-scripts/mac-server-tar.sh
+bash build-scripts/mac-client-dmg.sh
 ```
 
-The universal client requires the normal Tauri macOS prerequisites,
-`codesign`, `lipo`, and `hdiutil`; it verifies both architectures and strict
-bundle signatures in the read-only mounted DMG before checksumming. Tauri removes
-the intermediate `.app` when only the DMG bundle is requested.
-The native PKG
-path additionally requires Apple's `pkgbuild`, `pkgutil`, and Xcode command-line
-tools. It stages the real
-`Cords.app` at `/Applications/Cords.app`, verifies that package payload, and
-creates an unsigned `.pkg` by default. Set `CORDS_PKG_SIGN_IDENTITY` to an
-already configured installer-signing identity to sign the package creation
-step. Tauri defaults to explicit ad hoc app-bundle signing (`signingIdentity: "-"`)
-to seal the executable, Info.plist and bundled migration resources. An explicit
-`APPLE_SIGNING_IDENTITY` selects an installed distribution identity instead. The
-PKG script verifies the built app and fully extracted payload before checksumming.
-Ad hoc sealing, Developer ID signing, installer signing and notarization are
-separate; ad hoc sealing does not establish Apple distribution trust. The scripts
-do not notarize or change Gatekeeper/quarantine policies. Package staging and
-verification do not install into the host's `/Applications` directory.
+Both paths deploy Qt frameworks/plugins and migrations inside `Cords.app`.
+Xcode command-line tools and `codesign` are required. PKG also needs `pkgbuild`
+and `pkgutil`; DMG needs `hdiutil`, `lipo` and both `aarch64-apple-darwin` and
+`x86_64-apple-darwin` Rust targets. The DMG builder verifies both architectures
+in every deployed Mach-O dependency.
 
-## Local server image
+Apps receive ad hoc signatures by default. `APPLE_SIGNING_IDENTITY` selects
+an installed distribution identity. `CORDS_PKG_SIGN_IDENTITY` selects an
+installer identity. Builders verify package contents before checksumming.
+They do not notarize, install into `/Applications`, or change Gatekeeper policy.
+Native macOS execution and distribution acceptance remain separate gates.
 
-The OCI script reuses `deploy/Dockerfile`, which is a multi-stage build with a
-Debian slim runtime, non-root UID/GID 4848, port 4848, the server healthcheck,
-and runtime configuration through the existing config file, command-line, and
-`CORDS_*` environment mechanisms.
+## Controls and validation
+
+Desktop builds default to optimized Rust `release`. Set `CORDS_QT_PROFILE=dev`
+(or Windows `-Profile dev`) for development validation. `CORDS_QT_BUILD_DIR`,
+`CARGO_TARGET_DIR` and `CORDS_DIST_DIR` select output folders. Unix
+`CORDS_BUILD_JOBS` bounds CMake parallelism; Cargo respects `CARGO_BUILD_JOBS`.
+Builders run QML lint and native/QML tests before packaging.
+
+`scripts/build-client-qt.py` is the common build/test/install helper. Native OS
+integration, clean-machine dependencies, signing and publication require
+separate acceptance evidence.
+
+## Server artifacts
 
 ```sh
+bash build-scripts/linux-server-tar.sh
+bash build-scripts/mac-server-tar.sh
 bash build-scripts/linux-server-oci-img.sh
-docker image inspect cords-server:0.1.0
 ```
 
-Docker is preferred when present; otherwise Podman is used. Override the local
-reference with `CORDS_IMAGE_NAME` and `CORDS_IMAGE_TAG`. The script builds and
-loads the image locally and never pushes it. It does not emit a file checksum
-because no image archive is exported.
-
-For the isolated `.54` milestone deployment, set
-`CORDS_MILESTONE_IMAGE=cords-server:0.1.0` in its private `.env` and run
-`docker compose --env-file .env -f deploy/compose.milestone.yaml up --no-build -d --wait`.
-This runs the OCI script's loaded image while preserving the milestone volumes,
-PostgreSQL and Caddy. See `docs/encrypted-milestone.md` for backup, CA trust,
-portable-client initialization and conversation acceptance commands.
+Tarballs include the executable, PostgreSQL migrations, example config, README
+and license. Replace example origins, credentials and paths before use. No
+persistent data is packaged. OCI uses `deploy/Dockerfile`, prefers Docker over
+Podman, loads locally and never pushes. Override its name/tag using
+`CORDS_IMAGE_NAME` and `CORDS_IMAGE_TAG`. Docker copies the Qt Rust workspace
+member for manifest resolution; building the server does not need a Qt SDK.

@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlError>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSettings>
@@ -41,6 +42,8 @@ QString stateDirectory() {
 QString migrationsDirectory() {
     if (qEnvironmentVariableIsSet("CORDS_CLIENT_MIGRATIONS")) return qEnvironmentVariable("CORDS_CLIENT_MIGRATIONS");
     const QDir executable(QCoreApplication::applicationDirPath());
+    const auto portable = executable.absoluteFilePath("share/cords/migrations/sqlite");
+    if (QFileInfo::exists(portable)) return portable;
     const auto packaged = executable.absoluteFilePath("../share/cords/migrations/sqlite");
     if (QFileInfo::exists(packaged)) return packaged;
     const auto bundle = executable.absoluteFilePath("../Resources/cords/migrations/sqlite");
@@ -91,15 +94,18 @@ int main(int argc, char **argv) {
         if (parser.isSet("quit-after")) {
             bool valid = false;
             const auto delay = parser.value("quit-after").toInt(&valid);
-            if (!valid || delay < 100 || delay > 60000) throw std::runtime_error("--quit-after must be 100–60000 milliseconds");
+            if (!valid || delay < 100 || delay > 120000) throw std::runtime_error("--quit-after must be 100 to 120000 milliseconds");
             QTimer::singleShot(delay, &app, &QCoreApplication::quit);
         }
         ActivityFilter filter(controller); app.installEventFilter(&filter);
         QQmlApplicationEngine engine;
+        QObject::connect(&engine, &QQmlEngine::warnings, &app, [](const QList<QQmlError> &warnings) {
+            for (const auto &warning : warnings) std::cerr << "Cords QML: " << warning.toString().toStdString() << '\n';
+        });
         engine.setInitialProperties({{"desktop", QVariant::fromValue(&controller)}});
         QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
         engine.loadFromModule("Cords", "Main");
-        if (engine.rootObjects().isEmpty()) return 1;
+        if (engine.rootObjects().isEmpty()) throw std::runtime_error("Native QML interface could not be created");
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         if (!window) throw std::runtime_error("Native application window is missing");
         PlatformEvents platformEvents(controller, *window);

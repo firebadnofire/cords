@@ -1,35 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=build-scripts/lib/common.sh
 source "${script_dir}/lib/common.sh"
-
+source "${script_dir}/lib/qt-client.sh"
 require_linux
-for command_name in cargo file npm pkg-config tar install find wget; do
-  require_command "${command_name}"
-done
-for module in webkit2gtk-4.1 ayatana-appindicator3-0.1 librsvg-2.0; do
-  pkg-config --exists "${module}" || \
-    die "required Linux Tauri development package is unavailable: ${module}"
-done
-
+for command_name in tar install; do require_command "${command_name}"; done
+qt_client_requirements
 version="$(project_version)"
 architecture="$(host_architecture)"
 prepare_dist
-SOURCE_DATE_EPOCH="$(source_date_epoch)"
-export SOURCE_DATE_EPOCH
-
-log "Building Cords Linux client ${version} for ${architecture}"
-bash "${REPO_ROOT}/scripts/package-appimage.sh"
-appimage="${REPO_ROOT}/target/Cords.AppImage"
-[[ -s "${appimage}" ]] || die "AppImage build did not produce ${appimage}"
-
-log "Packaging Linux client archive"
-bash "${REPO_ROOT}/scripts/package-client-tarball.sh" \
-  linux "${architecture}" "${version}" "${appimage}" "${DIST_DIR}"
+staging_root="$(mktemp -d)"
+trap 'rm -rf -- "${staging_root}"' EXIT
+package_name="cords-client-linux-${architecture}"
+package="${staging_root}/${package_name}"
+build_qt_client "linux-${architecture}" "${package}" --tests
+[[ -x "${package}/bin/Cords" ]] || die 'Qt deployment did not produce bin/Cords'
+for plugin in qxcb qwayland qoffscreen; do
+  [[ -s "${package}/plugins/platforms/lib${plugin}.so" ]] || die "Qt deployment is missing ${plugin}; install the matching Qt platform SDK archive"
+done
+install -m 0644 "${REPO_ROOT}/README.md" "${package}/README.md"
+log 'Packaging native Qt executable, runtime, QML modules and sealed-vault migrations'
 artifact="${DIST_DIR}/cords-client-linux-${architecture}-${version}.tar.gz"
-[[ -s "${artifact}" ]] || die "Linux client archive was not produced: ${artifact}"
-write_sha256 "${artifact}"
-log "Created ${artifact}"
-
+create_tar_gz "${staging_root}" "${package_name}" "${artifact}"
+log "Created ${artifact}; extract the complete directory and run bin/Cords"

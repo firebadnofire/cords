@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -26,6 +27,8 @@ def main():
     parser.add_argument("--profile", choices=("release", "dev"), default="release")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--tests", action="store_true")
+    parser.add_argument("--rust-target")
+    parser.add_argument("--mac-architecture", choices=("arm64", "x86_64"))
     parser.add_argument("--cmake", default=shutil.which("cmake"))
     args = parser.parse_args()
     if not args.cmake or not Path(args.cmake).is_file():
@@ -45,10 +48,20 @@ def main():
     env["PATH"] = str(qt / "bin") + os.pathsep + env["PATH"]
     config = [args.cmake, "-S", ROOT / "bins/cords-client/qt", "-B", build,
         f"-DCMAKE_PREFIX_PATH={qt.as_posix()}", f"-DCORDS_CARGO_TARGET={cargo.as_posix()}",
-        f"-DCORDS_CARGO_PROFILE={args.profile}", "-DCMAKE_BUILD_TYPE=Release",
+        f"-DCORDS_CARGO_PROFILE={args.profile}",
+        f"-DCORDS_RUST_TARGET={args.rust_target or ''}",
         "-DCORDS_ALLOW_SOURCE_MIGRATIONS=OFF"]
     if os.name == "nt":
-        config += ["-G", "Visual Studio 17 2022", "-A", "x64"]
+        architecture = platform.machine().lower()
+        if architecture not in ("amd64", "x86_64", "arm64", "aarch64"):
+            parser.error(f"Unsupported native Windows architecture: {architecture}")
+        config += ["-G", "Visual Studio 17 2022", "-A", "ARM64" if architecture in ("arm64", "aarch64") else "x64"]
+    else:
+        config += ["-DCMAKE_BUILD_TYPE=Release"]
+    if args.mac_architecture:
+        if sys.platform != "darwin":
+            parser.error("--mac-architecture requires macOS")
+        config += [f"-DCMAKE_OSX_ARCHITECTURES={args.mac_architecture}"]
     run(config, env)
     run([args.cmake, "--build", build, "--config", "Release", "--parallel", args.jobs], env)
     if args.tests:

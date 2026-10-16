@@ -10,20 +10,51 @@ CordsDialog {
     property string account: ""
     readonly property var profile: desktop.state.profile || ({})
     readonly property bool loaded: profile.account === account
+    property bool manualPlayback: false
+    property bool playbackPaused: false
     title: "Account profile"
-    onOpened: if (account && !desktop.busy)
-        desktop.loadProfile(account)
+    onOpened: {
+        manualPlayback = false;
+        playbackPaused = false;
+        if (account && !desktop.busy)
+            desktop.loadProfile(account);
+    }
+    onClosed: {
+        manualPlayback = false;
+        playbackPaused = false;
+    }
+    onAccountChanged: {
+        manualPlayback = false;
+        playbackPaused = false;
+    }
+    Connections {
+        target: Theme
+        function onReducedMotionChanged() { popup.manualPlayback = false; }
+        function onDisableAnimationsChanged() { popup.manualPlayback = false; }
+    }
     ColumnLayout {
         width: parent.width
         spacing: 12
         CordsAvatar {
             id: profileAvatar
+            account: popup.account
             name: popup.loaded ? popup.profile.name || popup.account : popup.account
             Layout.preferredWidth: 64
             Layout.preferredHeight: 64
             shape: popup.profile.shape || "circle"
             source: popup.loaded ? popup.profile.image || "" : ""
-            playing: !Theme.reducedMotion && !(popup.desktop.state.preferences || {}).disableAnimations
+            playing: popup.opened && !popup.playbackPaused
+            motionOverride: popup.manualPlayback
+        }
+        CordsButton {
+            readonly property bool running: !popup.playbackPaused && (popup.manualPlayback || (!Theme.reducedMotion && !Theme.disableAnimations))
+            text: running ? "Pause avatar" : "Play avatar"
+            visible: popup.loaded && (popup.profile.image || "").startsWith("data:image/jxl;base64,")
+            enabled: profileAvatar.imageError.length === 0
+            onClicked: {
+                popup.playbackPaused = running;
+                popup.manualPlayback = !running;
+            }
         }
         CordsLabel {
             text: profileAvatar.imageError

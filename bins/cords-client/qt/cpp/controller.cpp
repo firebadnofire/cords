@@ -58,6 +58,9 @@ void Controller::apply(const cords::Snapshot &s) {
         {"rolesActive", s.roles_active}, {"directoryAfter", qs(s.directory_after)}, {"auditAfter", QVariant::fromValue(s.audit_after)},
         {"profile", profile(s.profile)}, {"preferences", preferences(s.preferences)}, {"platformWarning", m_platformWarning},
         {"serverMuted", s.server_muted}, {"routeMuted", s.route_muted}, {"notificationStatus", m_notificationStatus}};
+    m_state.insert("historyOlder", s.history_older);
+    m_state.insert("historyNewer", s.history_newer);
+    m_state.insert("historyBrowsing", s.history_browsing);
     if (s.completed != m_completed) { m_completed = s.completed; m_busy = false; emit busyChanged(); }
     emit stateChanged();
 }
@@ -72,6 +75,7 @@ SIMPLE(loadRequests, load_requests) SIMPLE(revokeDevice, revoke_device) SIMPLE(l
 ONE(trustServer, trust_server) ONE(selectServer, select_server) ONE(claimOwnership, claim_ownership)
 ONE(recoverOwnership, recover_ownership) ONE(designateSuccessor, designate_successor) ONE(acceptSuccessor, accept_successor)
 ONE(archiveServer, archive_server) ONE(selectChannel, select_channel) ONE(retireChannel, retire_channel)
+ONE(olderMessages, older_messages) ONE(latestMessages, latest_messages)
 ONE(acknowledgePublic, acknowledge_public) ONE(joinChannel, join_channel) ONE(loadDirectory, load_directory)
 ONE(approveRequest, approve_request) ONE(rejectRequest, reject_request) ONE(loadAccountRoles, load_account_roles)
 ONE(loadProfile, load_profile) TWO(unlockAccount, unlock_account) TWO(removeAccount, remove_account)

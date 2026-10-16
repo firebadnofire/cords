@@ -69,7 +69,22 @@ container publication and successful Forgejo release publication, so it cannot
 mutate GitHub first. It then mirrors the source revision, the exact signed
 release payload, and the exact container digest to `firebadnofire/cords`.
 
-## Runner assignment
+## Current Qt desktop checks
+
+The active `ci.yml` now invokes the native Qt builders on `ubuntu-22.04`,
+`windows-latest` and `macos-latest`, with Qt 6.10.3, aqtinstall 3.3.0, CMake
+3.31.6 and Rust 1.97.1. Windows requires a native x64 MSVC 2022 C++ host;
+macOS requires Xcode command-line tools. These are host requirements, not a
+claim that all runners are online. The previously offline Windows runner must
+be provisioned before its job can validate anything. No native Windows/macOS
+hosted result has been established by local Windows/Linux checks.
+
+The existing Rust/Svelte job remains temporarily to check the legacy reference
+until native parity and removal. Publication stays disabled. The archived
+release proposals below still describe Tauri-era cross-builds and must not be
+activated without migration and the existing executor/security gates.
+
+## Previous runner assignment
 
 | Runner label       | Native work                                                        | Cross-compiled work                |
 | ------------------ | ------------------------------------------------------------------ | ---------------------------------- |

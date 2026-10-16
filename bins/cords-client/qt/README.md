@@ -30,7 +30,8 @@ substantially slower in unoptimized Rust. Packages default to optimized Rust.
 Development executables require `CORDS_CLIENT_MIGRATIONS` or an installed tree;
 source-tree migration fallback is explicitly disabled in package builds.
 
-The installed Windows/Linux executable is under `bin`; macOS produces
+The installed Windows executable is `Cords.exe` at the package root; Linux uses
+`bin/Cords`, and macOS produces
 `Cords.app`. Qt's deployment helper collects runtime libraries, platform plugins
 and imported QML modules. Inspect the package on a clean target machine: SDK
 availability during a build is not evidence of complete runtime deployment.
@@ -47,7 +48,8 @@ Native window settings live under the selected state root, outside account keys.
 accepts one bounded UTF-8 line from redirected stdin. Never put real passwords
 in argv, environment variables, scripts or files. Account secrets are not returned
 to QML. `--capture`, `--window-size` and `--quit-after` support local native
-layout acceptance. Capture only disposable fixture data.
+layout acceptance. `--capture-after` permits waiting for background metadata and
+cold media initialization before a capture. Capture only disposable fixture data.
 
 ## Validation
 
@@ -61,10 +63,26 @@ cargo clippy -p cords-qt-bridge --all-targets -- -D warnings
 
 `rust/tests/live.rs` is an ignored acceptance test against the existing disposable
 TLS/PostgreSQL desktop fixture, with two independent encrypted account vaults.
+For imagery acceptance, launch that fixture with both
+`CORDS_ROLE_DESKTOP_PROFILE_PICTURES=1` and
+`CORDS_ROLE_DESKTOP_DEFAULTS_ONLY=1`; the latter verifies that this read/send
+scenario leaves role policy untouched when the fixture's `stop` file is written.
+Use a fresh absolute `CORDS_ROLE_DESKTOP_FIXTURE` directory. Its ready file is
+valid only while the fixture process is running; the fixture expires after 30
+minutes. `tests/installed_fixture.py --settle-ms 95000` allows cold development
+media initialization and captures wide, narrow and scaled installed windows.
 It is deliberately not a frontend mock. Native media tests cover timing,
 bounded decoder-slot fairness, hidden/offscreen cleanup and pause/resume.
-Linux/macOS compilation, platform services and runtime acceptance still need
-their native hosts; Windows checks do not establish those results.
+The native Linux builder also passes QML/native tests and an extracted headless
+package launch on an isolated Linux host. Interactive X11/Wayland sessions and
+platform services remain unverified. macOS compilation and runtime acceptance
+still require a native host; Windows checks do not establish those results.
+
+History starts with the latest 100 authenticated cached messages. Older messages
+loads in steps of 100 with a 300-row bound, preserves retained visible message
+IDs, and freezes the upper cursor while new messages arrive. Latest returns to
+the current tail. `rust/tests/history.rs` exercises independent vaults against
+the disposable TLS fixture; QML and native model tests cover viewport retention.
 
 ## Distribution
 
@@ -74,3 +92,10 @@ including source/replacement obligations where applicable. Inventory the modules
 and deployed plugins, not just directly linked libraries. Preserve the application
 AGPL license and bundled codec notices. Signing, notarization, installers, source
 offers and clean-machine platform acceptance remain release gates.
+
+Avatar playback is shared by account and image content across repeated message,
+member and profile appearances. Visible playing copies use the same decoded
+frame; paused/offscreen copies retain a still image. Crop and circle/square
+presentation remain local. Shared entries release their sandbox when no view
+needs decoding and disappear after their last consumer. Motion preferences apply
+to every avatar; the profile popup supports explicit Play/Pause.

@@ -14,6 +14,35 @@
 class ControllerTest : public QObject {
     Q_OBJECT
 private slots:
+    void historyRowsKeepPersistentAnchorsAcrossPrependAndPrune() {
+        Rows rows;
+        const auto page = [](int first, int count) {
+            QList<QVariantMap> result;
+            for (int index = first; index < first + count; ++index)
+                result.append({{"id", QString::number(index)}, {"body", QStringLiteral("Message %1").arg(index)}});
+            return result;
+        };
+        rows.replace(page(200, 100));
+        QPersistentModelIndex anchor(rows.index(25));
+        rows.replace(page(100, 200));
+        QVERIFY(anchor.isValid());
+        QCOMPARE(anchor.row(), 125);
+        QCOMPARE(anchor.data(Qt::UserRole).toMap().value("id").toString(), "225");
+        rows.replace(page(0, 300));
+        QCOMPARE(anchor.row(), 225);
+        rows.replace(page(100, 300));
+        QCOMPARE(anchor.row(), 125);
+        auto changed = page(100, 300);
+        changed[125]["body"] = "Updated presentation";
+        rows.replace(changed);
+        QVERIFY(anchor.isValid());
+        QCOMPARE(anchor.data(Qt::UserRole).toMap().value("body").toString(), "Updated presentation");
+        QCOMPARE(rows.indexOf("225"), 125);
+        rows.replace(page(400, 100));
+        QVERIFY(!anchor.isValid());
+        rows.replace({});
+        QCOMPARE(rows.rowCount(), 0);
+    }
     void pendingNetworkLockClearsViewAndReopensVault() {
         QTemporaryDir state;
         QVERIFY(state.isValid());

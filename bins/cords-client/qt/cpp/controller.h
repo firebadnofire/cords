@@ -51,6 +51,8 @@ public:
     Q_INVOKABLE void burnIdentity();
     Q_INVOKABLE void retryBurns();
     Q_INVOKABLE void selectChannel(QString channel);
+    Q_INVOKABLE void olderMessages(QString channel);
+    Q_INVOKABLE void latestMessages(QString channel);
     Q_INVOKABLE void createChannel(QString name, bool isPublic);
     Q_INVOKABLE void replaceChannel(QString channel, QString name, bool isPublic);
     Q_INVOKABLE void retireChannel(QString channel);

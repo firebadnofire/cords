@@ -240,6 +240,16 @@ ScrollView {
             font.pixelSize: Theme.headingSize
             Layout.topMargin: 12
         }
+        CordsLabel {
+            text: "To remove a local vault, lock the account, select it in the account picker, and choose Remove from this device. Keep a verified recovery copy first."
+            Layout.fillWidth: true
+            color: Theme.secondary
+        }
+        CordsButton {
+            text: "Lock and open account picker"
+            enabled: !page.desktop.busy
+            onClicked: page.desktop.lockAccount(false)
+        }
         CordsField {
             text: page.desktop.state.device || ""
             readOnly: true

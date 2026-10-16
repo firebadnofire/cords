@@ -55,11 +55,12 @@ Pane {
                     spacing: 8
                     CordsAvatar {
                         name: member.row.name
+                        account: member.row.id
                         source: member.person.image || ""
                         shape: member.person.shape || "circle"
                         Layout.preferredWidth: 28
                         Layout.preferredHeight: 28
-                        playing: !Theme.reducedMotion && member.visible && member.y + member.height >= memberList.contentY && member.y <= memberList.contentY + memberList.height
+                        playing: member.visible && member.y + member.height >= memberList.contentY && member.y <= memberList.contentY + memberList.height
                     }
                     CordsLabel {
                         text: member.row.name

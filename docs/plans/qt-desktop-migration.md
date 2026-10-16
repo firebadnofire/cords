@@ -24,7 +24,7 @@ dependent work. Do not delete unrelated changes or change account/wire formats.
 | Account registry, creation, unlock, legacy migration, password change, removal | Rust `accounts.rs`; Tauri adapter adds picker privacy and native watchdog | Keep core and vault paths; typed account commands |
 | Server trust, possession authentication, ownership, departure/burn | Rust `Client`; Tauri `Action` adapter | Direct typed operations, no QML secrets |
 | Channels, immutable confidentiality, succession, archives, roster/MLS | Rust `Client`; functional Svelte workflows | Typed commands and channel models |
-| Message retrieval, encryption, send, route sync | Rust `Client`; cached history, no history pagination API | Qt list model; preserve IDs and history |
+| Message retrieval, encryption, send, route sync | Rust `Client`; authenticated cached history with bounded indexed windows | Qt list model; preserve IDs and visible message anchors |
 | Admitted account directory, requests, devices | Verified Rust API and existing Svelte member panel | Account rows separate from privileged devices |
 | Canonical profile history, conflicts, images | Dirty-tree core/protocol/server implementation; ADR 0010 acceptance still gated | Preserve signed graph and expected heads |
 | Roles, assignments, role audit | Signed preparatory catalog API; enforced-RBAC work is separately checkpoint-gated | Never imply roles activate unshipped enforcement |
@@ -83,24 +83,115 @@ on this Windows host. No repository-root VISION.md is present.
 - Installed Windows startup/layout passes at wide, narrow and 150% scaling
   without Qt SDK on PATH or source migration overrides. This is not a clean
   machine runtime/redist or signed release acceptance.
+- Automatic metadata refresh now fetches one verified directory page or canonical
+  account profile per tick, within the existing 30-second synchronization budget.
+  Directory refresh stages the loaded page range before replacing public rows;
+  profile retries and failures are visible. Shared compressed avatar sources are
+  limited to 128 accounts and 16 MiB and cleared on account/server changes.
+  Real TLS two-vault acceptance passes directory/name/JXL propagation to message
+  and member presentation without opening a profile popout. Native layout/media
+  inspection passes at wide/narrow sizes and 150% scaling, including native
+  circle/square JXL avatars in message and member rows.
+- Server Docker builder copies the new Qt Rust workspace member. Reconstructing
+  its exact COPY inputs passes locked/offline Cargo metadata for all 13 members.
+  An isolated checkout on `.54` also builds the complete OCI image successfully;
+  running its binary with `--version` succeeds as the non-root image user. This
+  does not claim deployment or database/runtime acceptance.
+- Bounded history uses an indexed server/route-scoped cursor, decrypts at most
+  300 rows, initially loads 100, and grows in steps of 100 before pruning the
+  newest edge while reading older messages. The upper bound stays frozen across
+  new arrivals; Latest and a successful send restore the current 100-row tail.
+  Account/server/route changes, locking and restart reset the window. Core tests
+  cover tied sequence values, cross-scope cursors, persistence and authenticated
+  cache tampering. Independent-vault TLS acceptance passes new arrivals during
+  browsing, bounded pruning, stale-route rejection, send, lock and reopen.
+- Native model tests preserve persistent indexes across prepend/prune/update.
+  QML viewport tests cover variable-height rows, retained ID/pixel offsets,
+  pruning, Latest and resize. Installed Windows interaction preserves the visible
+  row through two prepends and returns to the full latest message. Long sender
+  labels now elide within the message column at narrow sizes.
+- Redirected package tests now capture Qt diagnostics. A debugger trace identified
+  an attached tooltip's dynamic generic Controls import outside deployment scans;
+  buttons use an explicitly imported Basic tooltip instead. A visible native QML
+  hover test verifies showing and hiding its help text.
+- Local account removal is available from the locked picker after selecting one
+  account; settings explain the route. Its modal identifies the local target,
+  explains permanent vault/key/history deletion and recovery-copy preparation,
+  and requires that account's password. It does not issue remote revocation or
+  identity burn. Input clears on cancel/submit; busy actions cannot duplicate
+  submission. All five bridge vault tests pass, including wrong-password
+  rejection and preservation of a second vault/device after removal and restart.
+  QML tests pass target binding, cancel, input cleanup and bounded dialog layout.
+
+- Native avatar playback is shared by verified account ID plus image-content
+  digest across message, member and profile views; the locked picker supplies
+  its local registry identity. One entry owns the decoder, animation clock,
+  visibility polling and implicitly shared frame pixels. Crop/shape remain
+  local to each view. Anonymous images and different accounts never share on
+  display names. Source replacement selects a new entry and stale in-flight
+  decode results cannot update it. Weak registry/FIFO references release the
+  entry after its final consumer disappears. The two sandbox slots and
+  64-distinct-image bound remain enforced; repeated appearances do not consume
+  additional slots or entries.
+- Reduced motion and the stored disable-animation preference apply to every
+  avatar. The profile popup offers explicit Play/Pause without resuming other
+  paused appearances. Hidden/offscreen views retain their still frame and
+  resume on the account's current frame; decoding stops when no eligible view
+  needs it. Native tests exercise 80 appearances sharing the same decoded
+  pixels/frame sequence, independent pause/offscreen handling, account/image
+  isolation, crop/mask independence and final-consumer cleanup. All six media
+  test cases and all three CTest suites pass in native Windows and Linux
+  optimized builds. Both official build scripts produce complete Qt packages
+  and checksums with this change; Linux extracted-package startup passes with
+  the SDK environment removed (headless backend). Extracted Windows
+  startup against the disposable TLS fixture also passes with no SDK PATH or
+  source migrations at wide/narrow sizes and 150% scaling; repeated account
+  avatars visibly show the same frame and all captures exit with clean stderr.
 
 ## Remaining removal gates
 
-- Native profile image editing/conflict resolution; account removal UI; complete
+Build-script checkpoint (2026-10-16): Windows native script produces a complete
+Qt ZIP and checksum; its extracted development and optimized packages pass real TLS
+startup and imagery at wide/narrow/150% scaling without SDK PATH or source
+migrations. Linux native script produces an optimized Qt tarball and checksum
+on an isolated `.54` checkout, passes QML lint and all three CTest suites
+(optimized media suite approximately 10 seconds), and its extracted package lists accounts and renders
+the native picker with a clean environment using the deployed offscreen backend.
+X11/Wayland platform plugins are included explicitly. Actual X11/Wayland sessions,
+desktop portals and clean-distribution compatibility remain unverified. The
+unoptimized Linux media run exceeded its 90-second test startup bound; no timeout
+was relaxed to pass the optimized build.
+
+Active CI now defines native Qt Linux/Windows/macOS jobs with pinned SDK/build
+tools. YAML and embedded shell/PowerShell syntax checks pass; hosted runs and
+Windows/macOS runner availability remain unverified. Publication remains disabled.
+macOS PKG/DMG builders have native Qt paths and shell syntax validation, but no
+macOS build/runtime evidence. Legacy packaging helpers reject standalone old
+frontend artifacts rather than silently omitting the Qt runtime.
+
+- Native profile image editing/conflict resolution; complete
   role/profile contextual workflows and authoritative member role grouping.
-- Bounded history loading/scroll anchors; channel unread/mute state; automatic
-  directory refresh and canonical imagery across message/member surfaces.
+- Channel unread state; automatic
+  directory/profile refresh failure/pagination and native imagery acceptance at
+  larger scale. Basic two-vault automatic propagation passes.
 - Actual OS lock/suspend acceptance, Windows OS notification delivery/clicks,
   Linux/macOS lock/notification adapters, OS motion/theme adapters and file dialogs.
 - Three-server background acceptance with one unavailable peer, reconnects and
   nonselected-server notifications. Existing two-server core success is narrower.
-- Server presentation and moderation API gaps remain explicit; do not activate
-  staged schema-15 RBAC as a frontend shortcut.
-- Clean-machine Windows runtime/redist tests; Linux and macOS native build,
-  packaging/runtime acceptance; CI and release deployment/notices/signing.
-- Only after parity: switch default build/release entry points, remove the old
-  frontend and obsolete dependencies, then validate the Qt-only repository.
+- Server presentation and moderation API gaps remain explicit; preserve current
+  server policy activation and enforcement boundaries. Current source requires
+  PostgreSQL schema 15 (baseline commit 469b67b); the synthetic catalog fixture
+  remains preparatory. Earlier schema-14 notes were stale, not an instruction to
+  downgrade the repository or activate policy from the frontend.
+- Clean-machine Windows runtime/redist tests; Linux desktop-session acceptance;
+  macOS native build, packaging/runtime acceptance; CI and release
+  deployment/notices/signing.
+- Client build scripts now select Qt explicitly at the user's request. Release
+  integration and interactive Linux/macOS acceptance are still pending. Only after
+  parity: remove the old frontend and obsolete dependencies, then validate the
+  Qt-only repository.
 
 The migration is incomplete. The existing frontend remains temporarily as the
 behavioral reference required by the removal gate, not as the intended final
-architecture. No Linux/macOS runtime or production release is claimed.
+architecture. Linux package checks are headless; no interactive Linux/macOS
+desktop acceptance or production release is claimed.

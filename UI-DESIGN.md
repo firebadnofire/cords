@@ -285,6 +285,7 @@ Every reusable control MUST provide hover, focus, pressed, checked/selected, dis
 ### 4.4 Media presentation
 
 - Account avatars derive from the verified **canonical account-level signed profile**. Multiple devices must not create multiple public avatar identities.
+- Repeated appearances of the same account and image revision share decoding, frame pixels and an animation clock. Crop and mask belong to each view; paused/offscreen appearances retain a still frame and do not request further decoding. Do not key this sharing by display name.
 - Server icon and banner are **server presentation assets** with distinct storage/authorization; presentation edits never change server URL, signing key, or trust pin.
 - Support the separately specified bounded static and animated JPEG XL workflow. Use native decoding and Qt rendering rather than WebView/WASM as the target playback mechanism; keep decoder, memory, and animation timing tests.
 - Preserve frame timing, compositing, alpha, loops, crop/position, and reduced-motion preferences. Stop decoding/playing hidden or recycled delegates.
@@ -527,15 +528,15 @@ A screen or checkpoint is not complete until the applicable scenario works with 
 | --- | --- | --- | --- |
 | Qt shell and Cords style | Specified | **Partial native implementation** | MSVC/Qt 6.10.3 executable; real-service Windows captures at 1180x760, 680x520 and 150% scaling |
 | Server/channel rail | Specified | **Partial** | Core trust/selection, channel lifecycle and persisted notification mute wired; categories and unread remain incomplete |
-| Conversation/composer | Specified | **Partial** | Independent TLS/PostgreSQL send/receive/restart passes; bounded history loading/anchors remain |
-| Public member sidebar | Specified | **Partial** | Real admitted directory aggregates accounts; automatic refresh, avatars and role grouping remain |
-| Canonical profile/popouts | Specified | **Partial** | Signed name edit and propagation, native animated JXL verified; image editor and conflict resolution remain |
+| Conversation/composer | Specified | **Partial** | Independent TLS/PostgreSQL send/receive/restart and bounded 100–300-row history pass; native retained scroll anchors and Latest pass; unread state remains |
+| Public member sidebar | Specified | **Partial** | Real directory and automatic canonical name/JXL propagation pass two-vault TLS acceptance and native Windows captures; larger directory and role grouping remain |
+| Canonical profile/popouts | Specified | **Partial** | Signed name edit and propagation, shared per-account JXL playback and motion preferences pass native Windows/Linux tests; image editor and conflict resolution remain |
 | Members/requests/devices | Specified | **Partial** | Typed core commands and QML views; complete interaction/denial acceptance remains |
-| Roles and channel policy | Specified | **Partial** | Preparatory signed catalog/assignment API ported; active RBAC stays separately gated at schema 14 |
+| Roles and channel policy | Specified | **Partial** | Signed catalog/assignment API ported; preserve the server's current policy activation flag and enforcement boundaries |
 | Moderation and lifecycle | Specified | **Partial** | Supported departure/archive/burn and channel succession wired; moderation/deletion APIs remain gaps |
 | Server presentation/media | Specified | **Incomplete** | Native JXL renderer tested independently; server asset publication/editing remains unavailable |
 | Background sync/notifications | Specified | **Partial** | Real TLS classification, hidden previews, mute persistence and Rust click targets pass; OS presentation unavailable/suppressed in this run, unavailable-third-server and other OS adapters remain |
-| Accessibility and platform packaging | Specified | **Partial Windows evidence** | Installed-tree startup without SDK PATH/source migrations; native priority lock controller test passes; Linux/macOS runtime pending |
+| Accessibility and platform packaging | Specified | **Partial platform evidence** | Windows installed-tree real TLS startup without SDK PATH/source migrations; Linux native package/headless startup and native tests pass; interactive Linux/macOS runtime pending |
 
 Evidence is dated 2026-10-16; the detailed ledger is
 `docs/plans/qt-desktop-migration.md`. “Partial” does not satisfy the completion

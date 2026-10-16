@@ -79,17 +79,6 @@ prepare_dist() {
   DIST_DIR="$(cd "${DIST_DIR}" && pwd)"
 }
 
-build_frontend() {
-  require_command npm "install Node.js 24 and npm"
-  log "Installing locked frontend dependencies"
-  (
-    cd "${REPO_ROOT}/bins/cords-client/ui" || \
-      die "client UI directory is unavailable"
-    npm ci
-    npm run build
-  )
-}
-
 stage_common_files() {
   local destination="$1"
   install -m 0644 "${REPO_ROOT}/README.md" "${destination}/README.md"

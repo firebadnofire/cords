@@ -89,6 +89,52 @@ fn failed_registry_start_is_reported_and_queue_failure_has_no_secret() -> Result
 }
 
 #[test]
+fn authenticated_local_removal_preserves_the_other_vault_after_restart() -> Result<()> {
+    let state = tempfile::tempdir()?;
+    let desktop = open(state.path())?;
+    wait(&desktop, |_| true)?;
+    let first_password = "Mango Lantern local removal first 57";
+    let second_password = "Mango Lantern local removal second 82";
+    desktop.create_account("Remove fixture".into(), first_password.into(), false)?;
+    let first = wait(&desktop, |view| view.completed == 1)?;
+    assert!(first.error.is_empty(), "{}", first.error);
+    desktop.lock_account(false)?;
+    wait(&desktop, |view| view.completed == 2)?;
+    desktop.create_account("Preserve fixture".into(), second_password.into(), false)?;
+    let second = wait(&desktop, |view| view.completed == 3)?;
+    assert!(second.error.is_empty(), "{}", second.error);
+    desktop.lock_account(false)?;
+    wait(&desktop, |view| view.completed == 4)?;
+    desktop.remove_account(first.account.clone(), "incorrect local password".into())?;
+    let rejected = wait(&desktop, |view| view.completed == 5)?;
+    assert!(!rejected.error.is_empty());
+    assert_eq!(rejected.accounts.len(), 2);
+    desktop.unlock_account(first.account.clone(), first_password.into())?;
+    let verified = wait(&desktop, |view| view.completed == 6)?;
+    assert!(verified.unlocked && verified.error.is_empty());
+    assert_eq!(verified.device, first.device);
+    desktop.lock_account(false)?;
+    wait(&desktop, |view| view.completed == 7)?;
+    desktop.remove_account(first.account.clone(), first_password.into())?;
+    let removed = wait(&desktop, |view| view.completed == 8)?;
+    assert!(removed.error.is_empty(), "{}", removed.error);
+    assert!(!removed.unlocked && removed.messages.is_empty() && removed.servers.is_empty());
+    assert_eq!(removed.accounts.len(), 1);
+    assert_eq!(removed.accounts[0].id, second.account);
+    drop(desktop);
+    let desktop = open(state.path())?;
+    let restarted = wait(&desktop, |_| true)?;
+    assert_eq!(restarted.accounts.len(), 1);
+    assert_eq!(restarted.accounts[0].id, second.account);
+    desktop.unlock_account(second.account.clone(), second_password.into())?;
+    let preserved = wait(&desktop, |view| view.completed == 1)?;
+    assert!(preserved.error.is_empty(), "{}", preserved.error);
+    assert_eq!(preserved.account, second.account);
+    assert_eq!(preserved.device, second.device);
+    Ok(())
+}
+
+#[test]
 fn lock_interrupts_stalled_tls_and_releases_original_vault() -> Result<()> {
     use std::io::Read as _;
     let state = tempfile::tempdir()?;

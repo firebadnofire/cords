@@ -10,6 +10,7 @@ Button {
     implicitWidth: Math.max(72, contentItem.implicitWidth + 24)
     padding: 10
     focusPolicy: Qt.StrongFocus
+    hoverEnabled: true
     Accessible.name: text
     Accessible.description: help
     contentItem: Text {
@@ -29,6 +30,12 @@ Button {
         border.color: control.visualFocus ? Theme.focus : control.destructive ? Theme.danger : Theme.border
         opacity: control.enabled ? 1 : 0.6
     }
-    ToolTip.visible: hovered && help.length > 0
-    ToolTip.text: help
+    // A local Basic tooltip has an explicit QML dependency. Attached ToolTip
+    // dynamically imports the generic Controls module outside deployment scans.
+    ToolTip {
+        objectName: "buttonHelp"
+        visible: control.hovered && control.help.length > 0
+        text: control.help
+        delay: 500
+    }
 }

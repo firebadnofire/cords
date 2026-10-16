@@ -41,6 +41,7 @@ ApplicationWindow {
                 Theme.appearance = prefs.theme;
                 Theme.compact = prefs.compact;
                 Theme.reducedMotion = prefs.reducedMotion;
+                Theme.disableAnimations = prefs.disableAnimations;
             }
         }
     }

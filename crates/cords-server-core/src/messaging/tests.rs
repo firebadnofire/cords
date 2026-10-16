@@ -596,7 +596,13 @@ async fn https_fixture_at(
                             .map_err(|error| anyhow::anyhow!("TLS acceptance connection: {error}"))
                     });
                 }
-                result=connections.join_next(), if !connections.is_empty() => {result.context("connection task missing")???;}
+                result=connections.join_next(), if !connections.is_empty() => {
+                    match result.context("connection task missing")? {
+                        Ok(Ok(())) => {},
+                        Ok(Err(error)) => eprintln!("TLS fixture connection ended with error: {error:#}"),
+                        Err(error) => return Err(error.into()),
+                    }
+                }
             }
         }
     });
@@ -669,8 +675,28 @@ async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and
     let published = serde_json::to_string(card)?;
     assert!(!published.contains("images.example"));
     assert!(!published.contains("data:image/png"));
+    let before_admission = owner.account_directory("").await?;
+    assert_eq!(before_admission.accounts.len(), 1);
+    assert!(member.account_directory("").await.is_err());
     owner.approve_membership(&member.status().device_id).await?;
     member.authenticate().await?;
+    let admitted = member.account_directory("").await?;
+    assert_eq!(admitted.accounts.len(), 2);
+    assert!(admitted.next_after.is_none());
+    assert_eq!(
+        admitted
+            .accounts
+            .iter()
+            .map(|entry| &entry.account_id)
+            .collect::<Vec<_>>(),
+        owner
+            .account_directory("")
+            .await?
+            .accounts
+            .iter()
+            .map(|entry| &entry.account_id)
+            .collect::<Vec<_>>()
+    );
     assert!(member.create_channel("not permitted").await.is_err());
     let route = owner.create_channel("real encrypted acceptance").await?;
     member.publish_key_package().await?;
@@ -718,6 +744,7 @@ async fn independent_tls_clients_admission_mls_multiserver_departure_archive_and
     assert!(member.remove_server(&pin1, false).await?.remote_confirmed);
     assert!(member.servers().is_empty());
     assert!(member.history(&route).await?.is_empty());
+    assert_eq!(owner.account_directory("").await?.accounts.len(), 1);
     owner.synchronize().await?;
     let active: bool = sqlx::query_scalar(
         "SELECT active FROM channel_members WHERE channel_id=$1 AND device_id=$2",
@@ -1576,9 +1603,10 @@ async fn desktop_role_acceptance_fixture() -> Result<()> {
         .await?;
     owner.trust(&tls.origin).await?;
     owner.claim_ownership(&code).await?;
-    owner
+    let route = owner
         .create_channel_with_mode("Role acceptance", ConfidentialityMode::Public)
         .await?;
+    seed_desktop_member(&registry, &mut owner, &tls.origin, &route).await?;
     if std::env::var("CORDS_ROLE_DESKTOP_SEED_AUDIT").as_deref() == Ok("1") {
         use cords_protocol::roles::{Role, RoleChange, RoleChangeRequest};
         println!("Seeding three authorized role changes for manual audit-view acceptance");
@@ -1622,11 +1650,16 @@ async fn desktop_role_acceptance_fixture() -> Result<()> {
     println!("Packaged role fixture ready at {}", root.display());
     tokio::time::timeout(Duration::from_mins(30), async {
         while !root.join("stop").exists() {
+            anyhow::ensure!(
+                !tls.task.is_finished(),
+                "manual fixture HTTPS listener stopped"
+            );
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        Ok::<(), anyhow::Error>(())
     })
     .await
-    .context("manual fixture timed out without completion")?;
+    .context("manual fixture timed out without completion")??;
     if std::env::var("CORDS_ROLE_DESKTOP_DEFAULTS_ONLY").as_deref() == Ok("1") {
         verify_untouched_role_defaults(&service).await?;
         return Ok(());
@@ -1641,6 +1674,75 @@ async fn desktop_role_acceptance_fixture() -> Result<()> {
         assignments == 1,
         "GUI role was not assigned to exactly one test account"
     );
+    Ok(())
+}
+
+async fn seed_desktop_member(
+    registry: &cords_client_core::accounts::AccountRegistry,
+    owner: &mut cords_client_core::client::Client,
+    origin: &str,
+    route: &str,
+) -> Result<()> {
+    let mut member = registry
+        .create("Member acceptance", "Test-only Member Vault 5682!", false)
+        .await?;
+    member.trust(origin).await?;
+    member.authenticate().await?;
+    if std::env::var("CORDS_ROLE_DESKTOP_PROFILE_PICTURES").as_deref() == Ok("1") {
+        seed_desktop_profile_pictures(owner, &mut member).await?;
+    }
+    owner.join_channel(route).await?;
+    member.join_channel(route).await?;
+    owner.send(route, "Packaged review: owner message").await?;
+    member
+        .send(route, "Packaged review: member message")
+        .await?;
+    member.shutdown().await;
+    Ok(())
+}
+
+async fn seed_desktop_profile_pictures(
+    owner: &mut cords_client_core::client::Client,
+    member: &mut cords_client_core::client::Client,
+) -> Result<()> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use cords_protocol::profiles::{AccountProfile, ProfileAvatar};
+    for (client, name, shape, bytes) in [
+        (
+            owner,
+            "Alice motion",
+            "circle",
+            include_bytes!("../../../cords-avatar-codec/tests/fixtures/looping-a.jxl").as_slice(),
+        ),
+        (
+            member,
+            "Bob motion",
+            "square",
+            include_bytes!("../../../cords-avatar-codec/tests/fixtures/looping-b.jxl").as_slice(),
+        ),
+    ] {
+        let view = client
+            .save_account_profile(
+                AccountProfile {
+                    display_name: name.into(),
+                    avatar: Some(ProfileAvatar {
+                        sha256: hash(bytes),
+                        bytes: u32::try_from(bytes.len())?,
+                        width: 64,
+                        height: 64,
+                        shape: shape.into(),
+                    }),
+                },
+                Some(STANDARD.encode(bytes)),
+                vec![],
+            )
+            .await?;
+        anyhow::ensure!(
+            view.pending_publication.is_none(),
+            "Profile fixture publication pending: {:?}",
+            view.pending_publication
+        );
+    }
     Ok(())
 }
 
@@ -2796,4 +2898,6 @@ async fn initial_binding_is_authenticated_durable_and_idempotent() -> Result<()>
     );
     Ok(())
 }
+mod directory;
 mod enforced_roles;
+mod profiles;

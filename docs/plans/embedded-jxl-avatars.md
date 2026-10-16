@@ -1,12 +1,17 @@
 # Embedded static and animated JPEG XL avatars
 
-Status: implementation in progress; no feature acceptance gate is complete.
+Status: worker, native validation, signed account publication/retrieval and shared
+canvas playback are integrated. Independent native TLS/PostgreSQL tests and the
+packaged Windows JXL upload-to-other-account-render workflow pass, including
+explicit native animation playback. Packaged Linux/macOS acceptance remains open.
 The accepted [account-profile amendment](../adr/0010-canonical-account-profiles.md)
 supersedes device-scoped public-profile revisions below. Implement the shared media
 foundation first, then signed canonical account profiles and separately authorized
 server imagery. The consolidated execution sequence lives in
 [the existing milestone](member-rbac-milestone.md), not a parallel rework plan.
-Current evidence and remaining codec work: [2026-10-14 implementation report](../reports/embedded-jxl-avatars-20261014.md).
+Current integration evidence and remaining gates:
+[maintained UI implementation ledger](../reports/ui-rework-20261015.md).
+Earlier codec evidence: [2026-10-14 implementation report](../reports/embedded-jxl-avatars-20261014.md).
 Picker shape correction and current missing publication/rendering path:
 [2026-10-14 follow-up](../reports/avatar-picker-shape-20261014.md).
 Approved scope: local upload, animated cropping, lossless embedded JXL, signed
@@ -15,8 +20,9 @@ User amendment (2026-10-14): remove URL profile pictures; local files are the on
 profile-picture source. Preserve concurrent account and role work and the separate
 Jewel behavior. First replace the profile editor's URL controls with a local picker,
 stop publishing/fetching profile URLs, and validate selection/crop/failure behavior.
-The existing private still-image preview is explicitly local-only until the JXL
-pipeline is connected; do not publish it as a substitute for lossless JXL.
+Legacy private still-image previews remain local-only. The account editor now uses
+the bundled JXL pipeline and explicitly publishes a newly device-signed account
+revision; it never promotes a private preview into a fabricated legacy signature.
 
 ## Plan and execution gates
 
@@ -137,6 +143,10 @@ memory on lock/account switch; respect picker privacy. Profile images never fetc
 Invalid avatars fall back to initials with an unavailable state and bounded retries.
 
 ## Validation
+
+The 2026-10-15 incremental encoder adapter and ten emitted-WASM fidelity/resource
+tests are recorded in `../reports/ui-rework-20261015.md`. Encoder evidence does
+not complete the worker, publication, server validation or playback gates below.
 
 Codec fixtures cover each source format, zero and rational durations, finite and
 infinite loops, frame duplicates/order, transparency, disposal/blending, separate

@@ -41,6 +41,8 @@ use zeroize::Zeroizing;
 #[derive(Default, Serialize, Deserialize)]
 struct Durable {
     #[serde(default)]
+    account_profiles: BTreeMap<String, cords_protocol::profiles::ProfileGraph>,
+    #[serde(default)]
     member_profiles: BTreeMap<String, Contact>,
     #[serde(default)]
     profile_refresh: BTreeMap<String, u64>,
@@ -82,6 +84,8 @@ struct Durable {
     #[serde(default)]
     channel_identities: BTreeMap<String, LocalChannel>,
 }
+#[path = "client_profiles.rs"]
+mod profiles;
 #[derive(Clone, Serialize, Deserialize)]
 struct LocalChannel {
     channel: Channel,
@@ -1907,6 +1911,61 @@ impl Client {
             .insert(self.durable.server_id.clone(), now()?);
         self.persist(&[], &[]).await?;
         Ok(contacts)
+    }
+    /// Read one admitted-account page. Membership is server asserted; every
+    /// attached device/card is independently verified before reaching the UI.
+    /// # Errors
+    /// Rejects invalid identity evidence, ordering, bounds, or unavailable servers.
+    pub async fn account_directory(
+        &mut self,
+        after: &str,
+    ) -> Result<cords_protocol::directory::AccountDirectoryPage> {
+        ensure!(
+            after.len() <= 128
+                && after
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)),
+            "invalid account cursor"
+        );
+        self.ensure_session().await?;
+        let page: cords_protocol::directory::AccountDirectoryPage = self
+            .get(&format!("/api/v1/account-directory?after={after}"))
+            .await?;
+        ensure!(
+            page.version == 1
+                && page.server_id == self.durable.server_id
+                && page.accounts.len() <= 16,
+            "invalid account directory page"
+        );
+        let mut previous = after;
+        for account in &page.accounts {
+            ensure!(
+                account.account_id.as_str() > previous
+                    && account.account_id.len() <= 128
+                    && !account.devices.is_empty()
+                    && account.devices.len() <= 64,
+                "invalid directory account"
+            );
+            let mut last_device = "";
+            for device in &account.devices {
+                validate_contact(device, now()?)?;
+                let authorization = &device.authorization.value;
+                ensure!(
+                    authorization.account_id == account.account_id
+                        && authorization.device_id.as_str() > last_device,
+                    "substituted directory device"
+                );
+                last_device = &authorization.device_id;
+            }
+            previous = &account.account_id;
+        }
+        ensure!(
+            page.next_after
+                .as_deref()
+                .is_none_or(|next| page.accounts.len() == 16 && next == previous),
+            "invalid directory continuation"
+        );
+        Ok(page)
     }
     /// Verified presentation contacts for the selected server, retained in the sealed vault.
     #[must_use]

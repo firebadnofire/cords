@@ -26,12 +26,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {
     "macOS": { "signingIdentity": "-" },
-    "resources": { "../../../migrations/sqlite/": "migrations/sqlite/" },
+    "resources": { "../../../migrations/sqlite/": "migrations/sqlite/", "../../../assets/avatar-codec/licenses/": "licenses/avatar-codec/" },
     "active": true,
     "targets": "all",
     "icon": [

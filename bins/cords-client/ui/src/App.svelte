@@ -14,6 +14,8 @@
   import ConversationView from './components/ConversationView.svelte';
   import ConversationDetails from './components/ConversationDetails.svelte';
   import SideSurface from './components/SideSurface.svelte';
+  import MembersPanel from './components/MembersPanel.svelte';
+  import { profileScope, avatarMotion } from './profiles';
   import IdentityPanel from './components/IdentityPanel.svelte';
   import {
     defaults,
@@ -29,6 +31,7 @@
     type View,
     type Preferences,
     type ServerListing,
+    type AccountDirectoryPage,
   } from './model';
 
   let status: Status | null = null;
@@ -48,6 +51,8 @@
   let legacyVault = false;
   let identity: Identity | null = null;
   let prefs = defaults();
+  $: profileScope(status?.server_id ? `${activeAccount}/${status.server_id}` : '');
+  $: avatarMotion.set({ disabled: prefs.disableAvatarAnimations, reduced: prefs.reducedMotion });
   let confidentialityMode: 'encrypted' | 'public' = 'encrypted';
   let archives: Channel[] = [];
   let archiveMessages: Message[] = [];
@@ -81,6 +86,23 @@
   let presentationVersion = 0;
   let details = false;
   let navigation = false;
+  let keyboardFocus = false;
+  let membersWide =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(min-width: 1101px)').matches;
+  let membersRequested = false;
+  $: membersVisible = prefs.showMembers && (membersWide || membersRequested) && !details;
+  onMount(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(min-width: 1101px)');
+    const resize = () => {
+      membersWide = media.matches;
+      membersRequested = false;
+    };
+    media.addEventListener('change', resize);
+    return () => media.removeEventListener('change', resize);
+  });
   let settingsInitial: 'Identity & devices' | 'Server trust' = 'Identity & devices';
   let drafts: Record<string, string> = {};
 
@@ -496,7 +518,11 @@
     };
   }
   onMount(() => {
-    void listAccounts().catch((caught) => (error = String(caught)));
+    void (async () => {
+      await listAccounts();
+      const opened = await invoke<Status | null>('active_account');
+      if (opened) await finishUnlock(opened, opened.account_id);
+    })().catch((caught) => (error = String(caught)));
     const timer = setInterval(() => void refresh(), 1000);
     return () => clearInterval(timer);
   });
@@ -511,7 +537,16 @@
 </script>
 
 <svelte:head><title>Cords — Right on the wire</title></svelte:head>
-<svelte:window on:pointerdown={activity} on:keydown={activity} />
+<svelte:window
+  on:pointerdown={() => {
+    keyboardFocus = false;
+    activity();
+  }}
+  on:keydown={(event) => {
+    if (event.key === 'Tab') keyboardFocus = true;
+    activity();
+  }}
+/>
 
 {#if !status}
   <div data-theme={prefs.theme}>
@@ -529,6 +564,7 @@
 {:else}
   <div
     class="app-shell"
+    class:keyboard-focus={keyboardFocus}
     data-theme={prefs.theme}
     class:compact={prefs.compact}
     class:reduced-motion={prefs.reducedMotion}
@@ -605,6 +641,15 @@
           channel={selected}
           {query}
           detailsVisible={details}
+          membersAvailable={!!status.server_id && status.admission_state === 'active'}
+          {membersVisible}
+          toggleMembers={() => {
+            const show = !membersVisible;
+            details = false;
+            navigation = false;
+            membersRequested = show;
+            void run(() => savePreferences({ ...prefs, showMembers: show }));
+          }}
           navigationVisible={navigation}
           toggleNavigation={() => {
             details = false;
@@ -721,7 +766,20 @@
                 await action('publish');
               })}
           /></SideSurface
-        >{/if}
+        >{:else if membersVisible && !navigation && status.server_id && status.admission_state === 'active'}
+        {#key `${status.account_id}/${status.server_id}`}
+          <SideSurface
+            title="Server members"
+            close={() => void run(() => savePreferences({ ...prefs, showMembers: false }))}
+          >
+            <MembersPanel
+              serverId={status.server_id}
+              load={(after) => action<AccountDirectoryPage>('account_directory', { after })}
+              close={() => void run(() => savePreferences({ ...prefs, showMembers: false }))}
+            />
+          </SideSurface>
+        {/key}
+      {/if}
     </div>
 
     {#if overlay === 'settings'}<Settings

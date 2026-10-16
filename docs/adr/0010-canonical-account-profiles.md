@@ -68,6 +68,28 @@ Do not activate either media workflow from compilation or codec tests alone.
 
 ## Acceptance
 
+### Version 1 wire and persistence implementation
+
+The new domain is `CORDS-ACCOUNT-PROFILE-REVISION-V1`. Its deterministic CBOR
+statement contains version, account ID, device ID, authorization-record hash,
+sorted unique parent revision hashes, causal generation, sorted changed fields,
+and complete resulting profile content. Revision identifiers hash this domain's
+signing bytes (not a JSON spelling or signature bytes). The full signed device
+authorization travels alongside each revision; admission, revocation and identity
+burn checks remain independent and must precede new publication.
+
+Image bytes are stored separately by SHA-256, bounded to 5,000,000 bytes of verified
+JPEG XL. The signed atomic avatar field contains hash, encoded size, dimensions,
+and circle/square shape. Crops are baked identically into every frame, so no
+unsigned remote crop or external URL can change the resulting picture. New
+profile endpoints require explicit `account-profile-history-v1` discovery support;
+existing UserCard signatures are never reinterpreted as account profile revisions.
+
+History reads are paginated metadata; image reads are separate authenticated,
+bounded requests. Known records and heads are sealed in the account vault and
+shared across that account's joined servers. Database history remains append-only.
+No timestamp, device ordering or generation tie-break selects presentation.
+
 Validate multiple authorized devices, two independent servers, concurrent/offline
 updates, automatic signed merges, conflict resolution, missing ancestry, replay,
 revocation and restart persistence. Validate upload/crop/publication/retrieval and

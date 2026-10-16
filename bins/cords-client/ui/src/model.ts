@@ -22,6 +22,13 @@ export type UserCard = {
   issued_at: number;
 };
 export type Contact = { authorization: { value: Authorization }; user_card?: { value: UserCard } };
+export type DirectoryAccount = { account_id: string; devices: Contact[] };
+export type AccountDirectoryPage = {
+  version: number;
+  server_id: string;
+  accounts: DirectoryAccount[];
+  next_after: string | null;
+};
 export type ConfidentialityMode = 'encrypted' | 'public';
 export type Channel = {
   confidentiality_mode?: ConfidentialityMode;
@@ -95,6 +102,7 @@ export type Status = {
   cursors: Record<string, number>;
 };
 export type Message = {
+  sender_account_id?: string;
   message_id: string;
   sender_device_id: string;
   body: string;
@@ -118,6 +126,7 @@ export type View = {
   messages: Message[];
 };
 export type Picture = {
+  account?: string;
   url: string;
   data: string;
   shape: 'circle' | 'square';
@@ -131,6 +140,8 @@ export type Preferences = {
   theme: 'dark' | 'light' | 'midnight';
   compact: boolean;
   reducedMotion: boolean;
+  disableAvatarAnimations: boolean;
+  showMembers: boolean;
   jewelText: string;
   jewelColor: string;
   jewelAction: 'dms' | 'settings' | 'none';
@@ -156,6 +167,8 @@ export const defaults = (): Preferences => ({
   theme: 'dark',
   compact: false,
   reducedMotion: false,
+  disableAvatarAnimations: false,
+  showMembers: true,
   jewelText: 'C',
   jewelColor: '#477da3',
   jewelAction: 'settings',
@@ -183,6 +196,9 @@ export function picture(value: unknown): Picture {
         ? p.data
         : '',
     shape: p.shape === 'square' ? 'square' : 'circle',
+    ...(typeof p.account === 'string' && /^[A-Za-z0-9_-]{43}$/.test(p.account)
+      ? { account: p.account }
+      : {}),
     x: bounded(p.x, 0, 100, 50),
     y: bounded(p.y, 0, 100, 50),
     zoom: bounded(p.zoom, 1, 4, 1),
@@ -200,6 +216,8 @@ export function preferences(value: unknown): Preferences {
     theme: p.theme === 'light' || p.theme === 'midnight' ? p.theme : 'dark',
     compact: p.compact === true,
     reducedMotion: p.reducedMotion === true,
+    disableAvatarAnimations: p.disableAvatarAnimations === true,
+    showMembers: p.showMembers !== false,
     jewelText: typeof p.jewelText === 'string' ? p.jewelText.slice(0, 3) : 'C',
     jewelColor:
       typeof p.jewelColor === 'string' && /^#[0-9a-f]{6}$/i.test(p.jewelColor)
@@ -246,5 +264,8 @@ export function memberName(contact: Contact | undefined, fallback: string): stri
 }
 export function memberPicture(contact: Contact | undefined): Picture {
   const avatar = contact?.user_card?.value.avatar;
-  return picture(avatar ? { ...avatar, zoom: avatar.zoom_milli / 1000 } : undefined);
+  return picture({
+    ...(avatar ? { ...avatar, zoom: avatar.zoom_milli / 1000 } : {}),
+    account: contact?.authorization.value.account_id,
+  });
 }

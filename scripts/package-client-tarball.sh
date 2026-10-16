@@ -76,6 +76,8 @@ esac
 
 install -m 0644 "${repo_dir}/README.md" "${package_root}/README.md"
 install -m 0644 "${repo_dir}/LICENSE" "${package_root}/LICENSE"
+mkdir -p "${package_root}/licenses"
+cp -R "${repo_dir}/assets/avatar-codec/licenses" "${package_root}/licenses/avatar-codec"
 
 rm -f -- "${archive_path}"
 if [[ "${platform}" == windows ]]; then

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import RequestError from './RequestError.svelte';
   import {
     defaultPermissions,
     permissionGroups,
@@ -19,6 +20,7 @@
   let notice = '';
   let confirmingDelete = false;
   let retry: RoleRequest | null = null;
+  $: denied = /CORDS_PERMISSION_DENIED|CORDS_FORBIDDEN|HTTP 403/.test(error);
   $: dirty = draft !== null && JSON.stringify(draft) !== original;
   $: builtin = draft?.id.startsWith('builtin:') ?? false;
 
@@ -105,13 +107,13 @@
     <h1>Roles</h1>
     <p>Stable roles, server-validated permissions, and explicit hierarchy.</p>
   </div>
-  <button
-    class="admin-primary"
-    disabled={busy || !catalog?.roles.length || dirty || !!retry}
-    on:click={create}>Create role</button
-  >
+  {#if !denied}<button
+      class="admin-primary"
+      disabled={busy || !catalog?.roles.length || dirty || !!retry}
+      on:click={create}>Create role</button
+    >{/if}
 </header>
-{#if error}<p class="error" role="alert">{error}</p>{/if}
+{#if error}<RequestError {error} task="load or save roles" />{/if}
 {#if notice}<p role="status">{notice}</p>{/if}
 {#if retry}
   <p>
@@ -122,9 +124,9 @@
     >Retry same request</button
   >
   <button disabled={busy} on:click={reload}>Reload server state</button>
-{:else if !catalog && !busy}<button on:click={reload}>Retry loading roles</button>{/if}
+{:else if !catalog && !busy && !denied}<button on:click={reload}>Retry loading roles</button>{/if}
 {#if busy}<p role="status">Loading or saving role policy…</p>{/if}
-{#if catalog}
+{#if catalog && !denied}
   <div class="admin-footnote" role="note">
     <p>
       <strong>Role enforcement is not active.</strong> This editor saves the server's preparatory catalog

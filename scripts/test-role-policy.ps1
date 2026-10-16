@@ -5,13 +5,15 @@ param(
     [string]$DesktopFixtureDirectory = '',
     [string]$TestExecutable = '',
     [switch]$SeedAudit,
-    [switch]$DefaultsOnly
+    [switch]$DefaultsOnly,
+    [switch]$ProfilePictures
 )
 # Disposable acceptance only. The caller must authorize Docker use on SshHost.
 # Credentials exist only in memory/process environment and container metadata.
 # No production container, named volume, or installation directory is modified.
 $ErrorActionPreference = 'Stop'
 if ($SeedAudit -and !$DesktopFixtureDirectory) { throw 'SeedAudit requires a disposable desktop fixture' }
+if ($ProfilePictures -and !$DesktopFixtureDirectory) { throw 'ProfilePictures requires a disposable desktop fixture' }
 if ($DefaultsOnly -and (!$DesktopFixtureDirectory -or $SeedAudit)) { throw 'DefaultsOnly requires a desktop fixture without SeedAudit' }
 if ($TestExecutable) {
     if (!$DesktopFixtureDirectory -or ![IO.Path]::IsPathFullyQualified($TestExecutable) -or !(Test-Path -LiteralPath $TestExecutable -PathType Leaf)) {
@@ -32,6 +34,7 @@ $previousUrl = $env:CORDS_TEST_DATABASE_URL
 $previousDesktop = $env:CORDS_ROLE_DESKTOP_FIXTURE
 $previousSeed = $env:CORDS_ROLE_DESKTOP_SEED_AUDIT
 $previousDefaults = $env:CORDS_ROLE_DESKTOP_DEFAULTS_ONLY
+$previousProfilePictures = $env:CORDS_ROLE_DESKTOP_PROFILE_PICTURES
 try {
     $remoteScript = 'IFS= read -r fixture_password; printf "POSTGRES_PASSWORD=%s\n" "$fixture_password" | docker run -d --name ' + $fixtureName + ' --label cords.acceptance=role-policy --env-file /dev/stdin -e POSTGRES_USER=cords -e POSTGRES_DB=cords -p 127.0.0.1::5432 postgres@sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f'
     $null = $fixturePassword | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes $SshHost $remoteScript
@@ -63,6 +66,7 @@ try {
         if ($DesktopFixtureDirectory) {
             $env:CORDS_ROLE_DESKTOP_SEED_AUDIT = if ($SeedAudit) { '1' } else { $null }
             $env:CORDS_ROLE_DESKTOP_DEFAULTS_ONLY = if ($DefaultsOnly) { '1' } else { $null }
+            $env:CORDS_ROLE_DESKTOP_PROFILE_PICTURES = if ($ProfilePictures) { '1' } else { $null }
             $env:CORDS_ROLE_DESKTOP_FIXTURE = [IO.Path]::GetFullPath($DesktopFixtureDirectory)
             if ($TestExecutable) {
                 & $TestExecutable desktop_role_acceptance_fixture --ignored --nocapture
@@ -81,6 +85,7 @@ try {
     $env:CORDS_ROLE_DESKTOP_FIXTURE = $previousDesktop
     $env:CORDS_ROLE_DESKTOP_SEED_AUDIT = $previousSeed
     $env:CORDS_ROLE_DESKTOP_DEFAULTS_ONLY = $previousDefaults
+    $env:CORDS_ROLE_DESKTOP_PROFILE_PICTURES = $previousProfilePictures
     $fixturePassword = $null
     if ($null -ne $fixtureTunnel -and !$fixtureTunnel.HasExited) { Stop-Process -Id $fixtureTunnel.Id }
     if ($fixtureCreated) {

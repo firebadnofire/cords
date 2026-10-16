@@ -1,8 +1,10 @@
 # Local avatar codec gate
 
 This source build produces the libjxl encoder/decoder and incremental Rust source
-decoder. It does not yet enable uploaded avatars in the production application.
-The binding requirements and remaining gates are in
+decoder. Reviewed artifacts are checked in under `assets/avatar-codec/`; ordinary
+client/server builds verify these pins and need no codec toolchain or download.
+The Svelte worker editor/player and native profile endpoints use these modules.
+The binding requirements and remaining packaged/platform gates are in
 [the implementation plan](../../docs/plans/embedded-jxl-avatars.md).
 
 ## Build
@@ -106,3 +108,19 @@ These tests require the fixture-enabled build above. Missing assets fail explici
 They compare every frame with the fixture decoder oracle, exercise an actual
 128 MiB imported memory, and check truncated input, cleanup, static alpha and
 over-limit incoming payloads. Tiny fixture arrays are test-only.
+
+The production `avatarJxlEncoder` adapter now streams processed full-canvas frames
+through the pinned encoder and drains into a caller-reserved output buffer capped
+at 5,000,000 bytes. It retains no frame/chunk arrays, preserves raw timing and
+precision, and releases WASM allocations on failure. It requires an exclusively
+owned, reserved module and the external worker deadline. This adapter does not
+activate upload, canonical profile publication, player rendering, or server
+validation. Run its emitted-WASM tests with:
+
+```powershell
+node --experimental-transform-types tools/avatar-codec/test-encoder.mts target/avatar-codec
+```
+
+Ten tests cover source GIF/APNG/16-bit APNG/WebP plus identical per-frame crop,
+rational/zero timing, duplicate frames, loops, transparency, output exhaustion,
+invalid parameters, cleanup and the 1,000-frame limit.

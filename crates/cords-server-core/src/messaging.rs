@@ -42,6 +42,7 @@ struct Inner {
     session_seconds: u64,
     authentication_budget: Mutex<(Instant, u32)>,
     ownership_budget: Mutex<(Instant, u32)>,
+    profile_validation: Arc<tokio::sync::Semaphore>,
     join_policy: JoinPolicy,
 }
 
@@ -169,6 +170,7 @@ impl Service {
             session_seconds,
             authentication_budget: Mutex::new((Instant::now(), 0)),
             ownership_budget: Mutex::new((Instant::now(), 0)),
+            profile_validation: Arc::new(tokio::sync::Semaphore::new(1)),
             join_policy,
         })))
     }
@@ -449,6 +451,12 @@ pub fn router(service: Service) -> Router {
             post(departure::recover_owner),
         )
         .route("/api/v1/members", get(members))
+        .route("/api/v1/account-directory", get(directory::accounts))
+        .route("/api/v1/account-profiles/{account}", get(profiles::history))
+        .route(
+            "/api/v1/account-profiles/{account}/images/{image}",
+            get(profiles::image),
+        )
         .route("/api/v1/membership-requests", get(membership_requests))
         .route(
             "/api/v1/membership-requests/{device}/approve",
@@ -486,8 +494,15 @@ pub fn router(service: Service) -> Router {
         )
         .route("/api/v1/role-policy/audit", get(roles::audit))
         .route("/api/v1/events", get(websocket))
-        .with_state(service)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(MAX_ENVELOPE))
+        .merge(
+            Router::new()
+                .route("/api/v1/account-profiles", post(profiles::publish))
+                .layer(tower_http::limit::RequestBodyLimitLayer::new(
+                    8 * 1024 * 1024,
+                )),
+        )
+        .with_state(service)
 }
 
 fn member_capabilities(owner: bool) -> Vec<String> {
@@ -2066,7 +2081,9 @@ async fn socket_notice(
 }
 
 mod departure;
+mod directory;
 mod lifecycle;
+mod profiles;
 mod roles;
 #[cfg(test)]
 mod tests;

@@ -16,6 +16,12 @@
   export let leaveServer: () => void;
   export let archiveServer: () => void;
   let filter = '';
+  let serverMenuOpen = false;
+
+  function runServerAction(action: () => void) {
+    serverMenuOpen = false;
+    action();
+  }
 </script>
 
 <div class="channel-navigation">
@@ -28,24 +34,32 @@
           : 'Your servers'}</strong
     >
     {#if section === 'server' && status.server_id}
-      <details class="surface-menu">
+      <details class="surface-menu" bind:open={serverMenuOpen}>
         <summary aria-label="Server menu"><ChevronDown size={17} /></summary>
         <div class="context-menu inline-menu" role="menu">
-          <button role="menuitem" disabled={!status.server_id || busy} on:click={openAdmin}
-            >Server settings</button
+          <button
+            role="menuitem"
+            disabled={!status.server_id || busy}
+            on:click={() => runServerAction(openAdmin)}>Server settings</button
           >
-          <button role="menuitem" on:click={openConnection}>Connection and trust</button>
-          <button role="menuitem" disabled={!status.server_id || busy} on:click={synchronize}
-            >Refresh and synchronize</button
+          <button role="menuitem" on:click={() => runServerAction(openConnection)}
+            >Connection and trust</button
+          >
+          <button
+            role="menuitem"
+            disabled={!status.server_id || busy}
+            on:click={() => runServerAction(synchronize)}>Refresh and synchronize</button
           >
           <button
             role="menuitem"
             class="danger"
             disabled={!status.server_id || busy}
-            on:click={leaveServer}>Leave server…</button
+            on:click={() => runServerAction(leaveServer)}>Leave server…</button
           >
-          <button role="menuitem" disabled={!status.server_id || busy} on:click={archiveServer}
-            >Archive server…</button
+          <button
+            role="menuitem"
+            disabled={!status.server_id || busy}
+            on:click={() => runServerAction(archiveServer)}>Archive server…</button
           >
         </div>
       </details>

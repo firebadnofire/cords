@@ -316,7 +316,7 @@
           <header class="admin-page-header">
             <div>
               <h1>Channels</h1>
-              <p>Organize encrypted routes and inspect current MLS state.</p>
+              <p>Browse channels, access, and permanent confidentiality settings.</p>
             </div>
           </header>
           <div class="channel-admin-grid">
@@ -408,13 +408,13 @@
               {:else}<p>No channels available.</p>{/if}
             </div>
           </div>
-          <form class="admin-create-channel" on:submit|preventDefault={createChannel}>
-            <ConfidentialitySelect bind:mode />
-            <label>New channel<input maxlength="100" required bind:value={name} /></label><button
-              class="primary"
-              disabled={busy || !manager}>Create channel</button
-            >
-          </form>
+          {#if manager}<form class="admin-create-channel" on:submit|preventDefault={createChannel}>
+              <ConfidentialitySelect bind:mode />
+              <label>New channel<input maxlength="100" required bind:value={name} /></label><button
+                class="primary"
+                disabled={busy || !manager}>Create channel</button
+              >
+            </form>{/if}
         {:else if page === 'Audit Log'}
           {#key status.server_id}<RoleAudit load={loadRoleAudit} />{/key}
         {:else}

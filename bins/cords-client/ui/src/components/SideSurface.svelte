@@ -16,7 +16,11 @@
       }
       if (dialog.open) dialog.close();
       if (narrow) dialog.showModal();
-      else dialog.show();
+      else {
+        dialog.show();
+        // A desktop rail must not take focus from the conversation on mount.
+        if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+      }
     }
     present();
     media.addEventListener('change', present);

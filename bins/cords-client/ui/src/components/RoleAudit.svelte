@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import RequestError from './RequestError.svelte';
   import type { RoleAuditEntry, RoleAuditPage } from '../rolePolicy';
   export let load: (after: number) => Promise<RoleAuditPage>;
   let entries: RoleAuditEntry[] = [];
@@ -48,7 +49,7 @@
   This log covers role administration only. It is signed by this server; it is not independent proof
   against a compromised server.
 </p>
-{#if error}<p class="error" role="alert">{error}</p>{/if}
+{#if error}<RequestError {error} task="load role history" />{/if}
 {#if busy}<p role="status">Loading role history…</p>{/if}
 {#if loaded && !entries.length}<p>No committed role changes.</p>{/if}
 <ol aria-label="Role change history">

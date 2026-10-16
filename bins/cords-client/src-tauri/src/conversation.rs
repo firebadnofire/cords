@@ -265,13 +265,21 @@ pub(crate) async fn unlock_account(
     account_id: String,
     password: String,
 ) -> Result<Status, String> {
-    let password = Zeroizing::new(password);
+    launch_account(&app, &state, account_id, Zeroizing::new(password)).await
+}
+
+pub(crate) async fn launch_account(
+    app: &tauri::AppHandle,
+    state: &Desktop,
+    account_id: String,
+    password: Zeroizing<String>,
+) -> Result<Status, String> {
     let (registry, state_arc) = {
         let mut runtime = state.0.lock().await;
         if runtime.client.is_some() {
             return Err("An account is already unlocked".into());
         }
-        (registry(&app, &mut runtime).await?, state.0.clone())
+        (registry(app, &mut runtime).await?, state.0.clone())
     };
     let client = registry
         .unlock(&account_id, &password)
@@ -279,6 +287,28 @@ pub(crate) async fn unlock_account(
         .map_err(|e| e.to_string())?;
     let policy = mirror_picker_metadata(&registry, &account_id, &client.ui_preferences()).await?;
     Ok(activate(&state_arc, account_id, client, &policy).await)
+}
+
+#[tauri::command]
+pub(crate) async fn active_account(
+    state: tauri::State<'_, Desktop>,
+) -> Result<Option<Status>, String> {
+    Ok(state.0.lock().await.client.as_ref().map(Client::status))
+}
+
+pub(crate) async fn launch_accounts(
+    app: &tauri::AppHandle,
+    state: &Desktop,
+) -> Result<Value, String> {
+    let mut runtime = state.0.lock().await;
+    let registry = registry(app, &mut runtime).await?;
+    let accounts = picker_safe(registry.list().await.map_err(|error| error.to_string())?);
+    Ok(json!(
+        accounts
+            .iter()
+            .map(|account| json!({"account_id": account.account_id, "label": account.nickname}))
+            .collect::<Vec<_>>()
+    ))
 }
 
 #[tauri::command]
@@ -458,6 +488,9 @@ pub(crate) enum Action {
     },
     Synchronize,
     Members,
+    AccountDirectory {
+        after: String,
+    },
     MembershipRequests,
     RoleCatalog,
     RoleAudit {
@@ -480,6 +513,18 @@ pub(crate) enum Action {
         device: String,
     },
     Revoke,
+    AccountProfile {
+        account: String,
+    },
+    AccountProfileImage {
+        account: String,
+        sha256: String,
+    },
+    SaveAccountProfile {
+        profile: cords_protocol::profiles::AccountProfile,
+        image: Option<String>,
+        expected_heads: Vec<String>,
+    },
     Preferences {
         value: Value,
     },
@@ -530,6 +575,12 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
             serde_json::to_value(client.claim_ownership(&code).await?)?
         }
         Action::Authenticate => serde_json::to_value(client.authenticate().await?)?,
+        action => apply_conversation(client, action).await?,
+    })
+}
+
+async fn apply_conversation(client: &mut Client, action: Action) -> Result<Value> {
+    Ok(match action {
         Action::Publish => client.publish_key_package().await?,
         Action::Channels => serde_json::to_value(client.channels().await?)?,
         Action::Create {
@@ -572,6 +623,24 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
         Action::Send { route, body } => json!(client.send(&route, &body).await?),
         Action::Synchronize => serde_json::to_value(client.synchronize().await?)?,
         Action::Members => serde_json::to_value(client.members().await?)?,
+        Action::AccountProfile { account } => {
+            serde_json::to_value(client.account_profile(&account).await?)?
+        }
+        Action::AccountProfileImage { account, sha256 } => {
+            json!(client.account_profile_image(&account, &sha256).await?)
+        }
+        Action::SaveAccountProfile {
+            profile,
+            image,
+            expected_heads,
+        } => serde_json::to_value(
+            client
+                .save_account_profile(profile, image, expected_heads)
+                .await?,
+        )?,
+        Action::AccountDirectory { after } => {
+            serde_json::to_value(client.account_directory(&after).await?)?
+        }
         Action::MembershipRequests => serde_json::to_value(client.membership_requests().await?)?,
         Action::RoleCatalog => serde_json::to_value(client.role_catalog().await?)?,
         Action::RoleAudit { after } => serde_json::to_value(client.role_audit(after).await?)?,
@@ -600,6 +669,7 @@ async fn apply(client: &mut Client, action: Action) -> Result<Value> {
             client.save_ui_preferences(value).await?;
             json!(true)
         }
+        _ => anyhow::bail!("Server lifecycle action sent to conversation dispatcher"),
     })
 }
 

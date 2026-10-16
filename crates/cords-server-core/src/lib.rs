@@ -219,6 +219,8 @@ fn server_features() -> Vec<String> {
         "ownership-recovery-v1",
         "user-cards-v1",
         "member-pages-v1",
+        "account-directory-v1",
+        cords_protocol::profiles::FEATURE,
     ]
     .into_iter()
     .map(str::to_owned)

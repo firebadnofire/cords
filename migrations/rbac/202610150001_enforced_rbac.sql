@@ -86,7 +86,7 @@ WHERE c.confidentiality_mode='encrypted' AND m.active AND m.delivery_active AND 
   AND NOT EXISTS(SELECT 1 FROM pending_policy_removals p
                  WHERE p.channel_id=c.id AND p.device_id=d.device_id);
 
--- Keep policy inactive until native verification. Version 14 binaries must
+-- Keep policy inactive until native verification. Version 15 binaries must
 -- refuse this schema; completing migration is not an authorization bypass.
 ALTER TABLE role_policy DROP CONSTRAINT role_policy_active_check;
-UPDATE cords_schema_metadata SET version=15 WHERE singleton=TRUE;
+UPDATE cords_schema_metadata SET version=16 WHERE singleton=TRUE;

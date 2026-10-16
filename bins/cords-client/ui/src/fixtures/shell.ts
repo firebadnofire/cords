@@ -80,7 +80,10 @@ const messages = [
 }));
 
 mockIPC((command, payload) => {
-  const args = payload as { route?: string; action?: { kind: string; route?: string } };
+  const args = payload as {
+    route?: string;
+    action?: { kind: string; route?: string; value?: unknown };
+  };
   if (command === 'list_accounts')
     return {
       accounts: [
@@ -94,6 +97,7 @@ mockIPC((command, payload) => {
       legacy_vault: false,
     };
   if (command === 'unlock_account') return status;
+  if (command === 'active_account') return null;
   if (command === 'conversation_view')
     return {
       status,
@@ -121,6 +125,22 @@ mockIPC((command, payload) => {
         return channels;
       case 'members':
         return contacts;
+      case 'role_catalog':
+      case 'role_audit':
+        throw new Error('CORDS_PERMISSION_DENIED: HTTP 403 Forbidden (synthetic fixture)');
+      case 'account_directory':
+        return {
+          version: 1,
+          server_id: status.server_id,
+          accounts: contacts.map((contact) => ({
+            account_id: contact.authorization.value.account_id,
+            devices: [contact],
+          })),
+          next_after: null,
+        };
+      case 'preferences':
+        Object.assign(preferences, args.action.value);
+        return true;
       case 'authenticate':
         return status;
       case 'join':

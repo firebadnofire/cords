@@ -1,0 +1,63 @@
+{
+  "dependencies": {
+    "libjxl": {
+      "url": "https://github.com/libjxl/libjxl.git",
+      "revision": "a7a9c787341cf703dede03c2009fa460cae5e5df",
+      "version": "0.12.0",
+      "submodules": {
+        "third_party/brotli": "028fb5a23661f123017c060daa546b55cf4bde29",
+        "third_party/highway": "457c891775a7397bdb0376bb1031e6e027af1c48",
+        "third_party/skcms": "96d9171c94b937a1b5f0293de7309ac16311b722"
+      }
+    },
+    "emsdk": {
+      "url": "https://github.com/emscripten-core/emsdk.git",
+      "revision": "e4fe26ef59168ff44f4c23c466e497bf60b3411e",
+      "version": "4.0.20",
+      "release": "c387d7a7e9537d0041d2c3ae71b7538cc978104e"
+    },
+    "cmake": "3.31.6",
+    "ninja": "1.11.1",
+    "rust": "1.97.1",
+    "wasm-bindgen": "0.2.126"
+  },
+  "sources": {
+    "Cargo.lock": "1ec16a9f798ff1c75e43191d870f845891849195a4f1e2fec0c65860d4a33599",
+    "Cargo.toml": "e2bac4f31813c61d7bec84fa2e86dea0773ca7446d22611dcc003e60f34f4d9b",
+    "crates/cords-avatar-source/Cargo.toml": "e1d2144fe0a31fb56d7c4380a83c1dc87e445bb45fb96d54ac2884c4f3df064b",
+    "crates/cords-avatar-source/src/color.rs": "ff237c9070379f555abad942b966e6e82b189e8b01c944e8dfe1c2a190e922bd",
+    "crates/cords-avatar-source/src/lib.rs": "1b4761418ac51041daade3acaacaa5cfaaa3303109364a6e13ac19b189f46b74",
+    "crates/cords-avatar-source/src/png_frames.rs": "78a260cb04ac49edfb9c76c741dda940ad984b5fe3af21b64945e1541bba1863",
+    "crates/cords-avatar-source/src/source_metadata.rs": "ca17dfb6e8bfddd7441defea941d1c07736fb888474e97d375d120720553da84",
+    "crates/cords-avatar-source/src/tests.rs": "6211ae6e56404211bcc000fab45799f4afeb4bf4ff074fc5cf9dd713f873da52",
+    "rust-toolchain.toml": "d861e51a6315e4bb923f8d26244ed40782f41f5a768e22797bcd731e9214281b",
+    "tools/avatar-codec/CMakeLists.txt": "e8b3a2ca3ae399ee111c15a73c73a9a75f42d21cd7d43fe02a7d88d77566579b",
+    "tools/avatar-codec/bridge.cc": "674dd685831e5d8dfa22a005a231d2838725c7652411da1d6c646070fae614d4",
+    "tools/avatar-codec/build.py": "1ffa512d55486ad16fe40438de669d7d4b67217fb043bcad0655da62f5f0a783",
+    "tools/avatar-codec/coalescing.cmake": "18707b553e1a19f16007a59b79fbfc161e22c9ab5984a61dc8b9898c007ce2bf",
+    "tools/avatar-codec/dependencies.json": "5e5c6df6567d786486b84ad996cbde62eb5542b8d62b0200eda59890524b12a5",
+    "tools/avatar-codec/fixtures.cc": "0c15de069e8c8f4f7d3c848aafbbafa642ba663e0e7565298383f098d98e59bb"
+  },
+  "assets": {
+    "cords-jxl.mjs": {
+      "bytes": 10561,
+      "sha256": "f96769ba1754c6303bd5f299c9060cb2fd1763401156561608e19c4403b015e5"
+    },
+    "cords-jxl.wasm": {
+      "bytes": 2517017,
+      "sha256": "5c98d827b926297039c5da9a7881a6bfaffe922ab7d2f2532fe4641a5b64f5c4"
+    },
+    "source/cords_avatar_source.js": {
+      "bytes": 10981,
+      "sha256": "4b74799f32dd020a5e75ed154a69d2025d547a16ffa72c75fa89673a2e452801"
+    },
+    "source/cords_avatar_source_bg.wasm": {
+      "bytes": 983942,
+      "sha256": "b937428e9570b25d962d742f89cf6cc9e2917046d22e49f653b83209721f3fe9"
+    },
+    "source/package.json": {
+      "bytes": 18,
+      "sha256": "1239d4d885dcad42201a27ed9324f8f0f760b78700d8db9ced39a511cffe7eae"
+    }
+  }
+}

@@ -52,7 +52,11 @@
       <Fingerprint size={17} /><span>Device revoked</span>
     </div>{/if}
   <div class="user-panel">
-    <Avatar value={preferences.avatar} text={preferences.displayName.slice(0, 2)} size={40} />
+    <Avatar
+      value={{ ...preferences.avatar, account: status.account_id }}
+      text={preferences.displayName.slice(0, 2)}
+      size={40}
+    />
     <div class="user-identity">
       <strong>{preferences.displayName || 'You'}</strong><small title={status.device_id}
         >Account unlocked</small

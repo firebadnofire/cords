@@ -82,3 +82,40 @@ checks. Packaged notification delivery/navigation/privacy must be tested separat
 on Windows/Linux/macOS where available; use platform CI where practical. Source,
 cross-compilation and mocks are not runtime proof. Missing evidence stays incomplete.
 Record paths, commands, outcomes and remaining issues in the checkpoint report.
+
+### 2026-10-15 directory continuation
+
+Implemented the bounded, authenticated `account-directory-v1` read independently
+of device contacts and pending requests. It groups active, unrevoked devices under
+admitted account IDs, excludes burned identities, and rechecks current ViewServer
+policy/session state in a transaction. Pages contain up to 16 accounts and 64
+devices per account, with a 4 MiB stored-contact budget and explicit errors.
+PostgreSQL byte collation makes opaque account cursors agree with client ordering.
+The native client verifies device evidence and page identity/order before exposing
+it. The default right rail uses these pages, persists visibility and offers search,
+device expansion, refresh and pagination. Role grouping, canonical profile state,
+moderation and the account-centric administration replacement are still open.
+
+The complete server regression passed 53 tests, excluding only the manual desktop
+fixture, against disposable PostgreSQL 17.10 (fixture `cords-rbac-3e91f450e769`,
+cleaned). Core/server Clippy passed with warnings denied. Browser reviews are
+supplemental; packaged native acceptance remains separate. Evidence is in the
+existing `docs/reports/ui-rework-20261015.md` ledger.
+
+### 2026-10-16 shared account profiles
+
+Canonical signed profiles and separate hash-based JXL storage are integrated with
+the native vault, account directory presentation, message headers and My Account.
+The account-profile automatic PostgreSQL migration occupies schema 15. The staged
+RBAC activation candidate now advances 15 to 16; it remains outside automatic
+migrations. The former duplicate migration version was diagnosed and corrected,
+and migration/restart regressions passed. Do not activate the candidate from this
+profile work. Existing historical schema-14/15 reports describe earlier binaries.
+
+Independent TLS clients backed by disposable PostgreSQL on `.54` passed image
+publication, authenticated retrieval from a separate account, second-server
+replication, sealed restart, offline edits/retry, removal and revoked-device denial.
+Causal protocol tests cover independent-field merges and explicit conflict review.
+These do not complete every multi-device, legacy-candidate migration, background
+multi-server or packaged-platform acceptance gate. See the maintained UI ledger
+for commands, logs and current native review status.

@@ -1011,7 +1011,7 @@
 .composer-restriction svg {
   flex-shrink: 0;
 }
-.cords-composer:focus-within {
+.keyboard-focus .cords-composer:focus-within {
   border-color: var(--focus);
 }
 .cords-composer input {
@@ -1197,7 +1197,7 @@
   width: 100%;
 }
 .connect-dialog {
-  width: min(520px, calc(100vw - 50px));
+  width: 100%;
 }
 .account-banner {
   display: flex;
@@ -1401,6 +1401,9 @@ textarea:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--focus, #82c4fa);
   outline-offset: 3px;
+}
+.cords-composer input:focus-visible {
+  outline: none;
 }
 button.primary {
   background: color-mix(in srgb, var(--accent, #356d95), #000 4%);
@@ -2044,6 +2047,7 @@ dialog.wide > .modal-heading {
 }
 dialog.wide > .settings-layout {
   height: calc(100% - 46px);
+  grid-template-rows: minmax(0, 1fr);
 }
 .donor-settings,
 .server-admin-layout {
@@ -2051,9 +2055,10 @@ dialog.wide > .settings-layout {
 }
 .donor-settings-nav {
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   background: var(--bg-sidebar);
-  padding: 16px 11px;
+  padding: 10px 11px;
   border-right: 1px solid var(--border);
 }
 .profile-heading,
@@ -2061,7 +2066,7 @@ dialog.wide > .settings-layout {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 4px 7px 16px;
+  padding: 4px 7px 10px;
 }
 .profile-heading > span,
 .admin-server-heading > div {
@@ -2076,14 +2081,14 @@ dialog.wide > .settings-layout {
   font-size: 10px;
 }
 .settings-search {
-  margin: 0 4px 13px;
+  margin: 0 4px 8px;
 }
 .settings-search input {
   padding: 8px 10px;
   font-size: 11px;
 }
 .settings-menu-group {
-  margin-bottom: 15px;
+  margin-bottom: 6px;
 }
 .settings-menu-group h3 {
   margin: 0 8px 5px;
@@ -2098,7 +2103,7 @@ dialog.wide > .settings-layout {
   background: transparent;
   text-align: left;
   color: var(--muted);
-  padding: 8px 9px;
+  padding: 6px 9px;
   margin: 1px 0;
   font-size: 11px;
 }
@@ -2113,9 +2118,9 @@ dialog.wide > .settings-layout {
   gap: 7px;
   color: var(--muted);
   font-size: 9px;
-  padding: 12px 8px;
+  padding: 8px;
   border-top: 1px solid var(--border);
-  margin-top: 12px;
+  margin-top: 0;
 }
 .donor-settings-body,
 .admin-scroll {
@@ -2125,8 +2130,9 @@ dialog.wide > .settings-layout {
 }
 .donor-settings-body {
   width: min(920px, 100%);
+  min-width: 0;
   margin: 0 auto;
-  padding: 0 36px 55px;
+  padding: 24px 28px;
 }
 .settings-topbar {
   position: sticky;
@@ -2165,17 +2171,17 @@ dialog.wide > .settings-layout {
   margin-bottom: 24px;
 }
 .account-banner-art {
-  height: 100px;
+  height: 40px;
   background: linear-gradient(125deg, #245d7e, #497da3 48%, #6b527d);
 }
 .account-profile-main {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0 18px 18px;
+  padding: 12px 18px;
 }
 .account-profile-main > .avatar {
-  margin-top: -34px;
+  margin-top: 0;
   box-shadow: 0 0 0 5px #3b3e46;
 }
 .account-profile-main > div {
@@ -2183,7 +2189,7 @@ dialog.wide > .settings-layout {
   flex: 1;
   flex-direction: column;
   gap: 3px;
-  padding-top: 11px;
+  padding-top: 0;
 }
 .account-profile-main span,
 .account-profile-main small {
@@ -2336,12 +2342,89 @@ dialog.wide > .settings-layout {
   gap: 12px;
   background: var(--bg-panel);
   border-top: 1px solid #4a4d54;
-  margin: 28px -36px -20px;
-  padding: 13px 36px;
+  margin: 24px 0 0;
+  padding: 16px 0 0;
 }
 .image-editor {
   display: grid;
+  align-content: start;
   gap: 12px;
+}
+
+.members-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sidebar);
+  min-width: 0;
+}
+.members-heading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 12px 8px;
+}
+.members-heading h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+}
+.members-search {
+  margin: 8px 12px;
+}
+.members-list {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 8px 16px;
+}
+.members-list h3 {
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding: 8px;
+}
+.member-list-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+.member-list-row > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.member-list-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+}
+.member-list-row small {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.member-summary {
+  padding: 12px;
+  margin: 4px 8px 12px;
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.member-summary code {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+  font-size: 0.7rem;
+}
+.image-editor > h2,
+.image-editor > label,
+.image-editor > p,
+.image-editor > .actions {
+  margin: 0;
 }
 .crop-workspace {
   display: grid;
@@ -2460,6 +2543,39 @@ dialog.wide > .settings-layout {
 .admin-page {
   width: min(960px, calc(100% - 64px));
   margin: 34px auto 65px;
+}
+.request-error {
+  border: 1px solid var(--border);
+  background: var(--input);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+.request-error p {
+  margin: 8px 0 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.request-error details {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.request-error code {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 8px;
+}
+.app-shell .role-editor,
+.app-shell .channel-editor,
+.app-shell .channel-tree,
+.app-shell .role-list,
+.app-shell .identity-fingerprint,
+.app-shell .identity-authority,
+.app-shell .identity-device,
+.app-shell .account-profile-card,
+.app-shell .profile-preview-row {
+  background: var(--input);
+  border: 1px solid var(--border);
 }
 .admin-page-header {
   display: flex;
@@ -2924,6 +3040,7 @@ dialog.wide > .settings-layout {
   .donor-settings,
   .server-admin-layout {
     grid-template-columns: 155px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
   .donor-settings-nav {
     padding: 12px 7px;
@@ -3025,4 +3142,33 @@ dialog.wide > .settings-layout {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+/* Signed profile media uses the same controls and surfaces as account settings. */
+.profile-crop {
+  display: flex;
+  gap: 24px;
+  align-items: start;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.profile-crop canvas,
+.profile-animation-review {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-input, #19212a);
+  flex-shrink: 0;
+}
+.profile-crop canvas.square,
+.profile-animation-review.square {
+  border-radius: 12px;
+}
+.profile-crop-controls {
+  flex: 1 1 220px;
+  display: grid;
+  gap: 12px;
+}
+.profile-animation-review {
+  margin: 16px 0;
 }

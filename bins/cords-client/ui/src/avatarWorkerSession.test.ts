@@ -136,7 +136,7 @@ describe('avatar worker watchdog and ownership', () => {
     const session = supervisor.start(input);
     expect(input.byteLength).toBe(0);
     expect(ports[0].last?.input?.byteLength).toBe(50);
-    expect(memory.used).toBe(401 * 1024 * 1024 + 50);
+    expect(memory.used).toBe(449 * 1024 * 1024 + 50);
     expect(() => supervisor.start(new ArrayBuffer(1))).toThrow('Another');
     ports[0].reply();
     (await session.opened).release();
@@ -188,7 +188,7 @@ describe('avatar worker watchdog and ownership', () => {
   it('accounts for cache and held frame buffers, including after worker termination', async () => {
     const { supervisor, ports, memory } = setup();
     const cache = {};
-    memory.reserve(cache, 80 * 1024 * 1024);
+    memory.reserve(cache, 32 * 1024 * 1024);
     const session = supervisor.start(new ArrayBuffer(1));
     ports[0].reply();
     (await session.opened).release();
@@ -196,12 +196,12 @@ describe('avatar worker watchdog and ownership', () => {
     ports[0].reply(new ArrayBuffer(20 * 1024 * 1024));
     const held = await preview;
     await expect(session.request('preview', null, 20 * 1024 * 1024)).rejects.toThrow('512 MiB');
-    expect(memory.used).toBe(100 * 1024 * 1024);
+    expect(memory.used).toBe(52 * 1024 * 1024);
     expect(held.buffer?.byteLength).toBe(20 * 1024 * 1024);
     held.release();
     held.release();
     expect(held.buffer).toBeUndefined();
-    expect(memory.used).toBe(80 * 1024 * 1024);
+    expect(memory.used).toBe(32 * 1024 * 1024);
     memory.release(cache);
   });
 

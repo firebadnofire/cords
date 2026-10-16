@@ -1,0 +1,16 @@
+[package]
+name = "cords-avatar-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+wasmtime = { version = "=49.0.3", default-features = false, features = ["anyhow", "cranelift", "runtime", "std"] }
+
+[build-dependencies]
+sha2.workspace = true
+hex.workspace = true
+
+[lints]
+workspace = true

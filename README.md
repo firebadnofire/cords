@@ -79,6 +79,38 @@ npm ci
 npm run tauri:dev
 ```
 
+The packaged desktop client also accepts `--list-accounts` and
+`--account <account-ID> --password-stdin`. Listing returns only picker-safe labels
+and IDs; hidden nicknames stay hidden. Unlocking verifies the existing vault
+password and retains normal account isolation and auto-lock behavior. With no
+arguments, startup still opens the account picker. A failed unlock exits nonzero.
+
+Passwords are read from the first UTF-8 line of redirected stdin (maximum 4096
+bytes). Do not put passwords in argv, environment variables, shell history or
+files. For example, a Python parent can prompt without echo and supply the pipe:
+
+```python
+import getpass
+import subprocess
+
+client = r"C:\path\to\Cords.exe"  # Use the installed executable on other platforms.
+accounts = subprocess.run([client, "--list-accounts"], check=True, capture_output=True, text=True)
+print(accounts.stdout)
+account_id = input("Account ID: ")
+password = getpass.getpass("Vault password: ")
+process = subprocess.Popen([client, "--account", account_id, "--password-stdin"], stdin=subprocess.PIPE)
+process.communicate((password + "\n").encode("utf-8"))
+raise SystemExit(process.returncode)
+```
+
+The example waits until the desktop window closes. Python is only an example
+pipe provider, not a client dependency. A password manager or another parent
+process can provide the same redirected input. Native password buffers are
+zeroized after verification; the caller remains responsible for its own memory.
+Existing `CORDS_CLIENT_STATE`, `CORDS_CLIENT_MIGRATIONS` and `CORDS_CLIENT_CA`
+overrides select the vault/resources and certificate trust as before. Windows
+GUI builds expose help/list/errors when stdout/stderr are redirected by the caller.
+
 ## Checks
 
 ```sh

@@ -91,6 +91,15 @@ async fn contact_and_key_package_operations_observe_current_policy() -> Result<(
         StatusCode::FORBIDDEN
     );
     remove_default_permission(&service, &owner, Permission::ViewServer).await?;
+    assert!(
+        super::super::directory::accounts(
+            State(service.clone()),
+            headers(&member)?,
+            Query(MembershipPage::default())
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(
         members(
             State(service.clone()),

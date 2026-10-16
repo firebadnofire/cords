@@ -31,7 +31,9 @@ interface Pending {
 const heapBytes = (256 + 128) * 1024 * 1024;
 // Bindings, timing metadata and transfer plumbing also need headroom. The actual
 // codec command must still bound its host allocations within this reservation.
-const runtimeBytes = 16 * 1024 * 1024;
+// 16 MiB for bindings/metadata plus 48 MiB for explicitly bounded transient
+// canvases, hash copies and verification buffers inside the worker.
+const runtimeBytes = 64 * 1024 * 1024;
 
 /** Binary data has exactly one explicit transferable slot. Bound metadata before
  * cloning it so nested typed arrays cannot evade the buffer reservation ledger. */

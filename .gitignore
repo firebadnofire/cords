@@ -2,6 +2,7 @@
 /dist/
 /bins/cords-client/ui/node_modules/
 /bins/cords-client/ui/dist/
+/bins/cords-client/ui/public/avatar-codec/
 /bins/cords-client/src-tauri/gen/
 /bins/cords-client/src-tauri/target/
 /bins/cords-client/ui/.svelte-kit/

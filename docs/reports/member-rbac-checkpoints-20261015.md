@@ -141,3 +141,18 @@ is claimed. The staged migration must not be moved into automatic startup yet.
 
 Not complete. Runtime enforcement, policy/MLS proof integration, moderation/deletion,
 directory/UI and notifications remain required by the approved contract.
+
+The admitted-account directory and default Members rail now have a validated
+implementation slice; see the directory continuation in the existing milestone
+and `docs/reports/ui-rework-20261015.md` for scope and PostgreSQL/browser evidence.
+Role grouping, canonical profiles and account-centric administration remain open;
+this does not complete checkpoints 3–7 or activate RBAC.
+
+## Follow-up schema allocation, 2026-10-16
+
+The automatic account-profile migration now owns schema 15, with migration ID
+`202610150000`. The unactivated RBAC candidate keeps migration ID `202610150001`
+and advances schema 15 to 16. Earlier schema 14-to-15 activation descriptions in
+this report are historical. The duplicate-ID failure was diagnosed before dependent
+work continued; 20 focused migration regressions and the 55-test real PostgreSQL
+suite passed after correction. No production migration or RBAC activation was run.

@@ -12,6 +12,7 @@
   import Modal from './Modal.svelte';
   import Avatar from './Avatar.svelte';
   import ImageEditor from './ImageEditor.svelte';
+  import AccountProfileSettings from './AccountProfileSettings.svelte';
   import { tick } from 'svelte';
   import type { Preferences, Identity, ServerListing, Status } from '../model';
 
@@ -70,9 +71,10 @@
   let baseline = JSON.stringify(value);
   let page: Page = initialPage;
   let discardPrompt = false;
+  let profileDirty = false;
   let discardElement: HTMLElement;
   let returnFocus: HTMLElement | null = null;
-  $: dirty = JSON.stringify(draft) !== baseline;
+  $: dirty = JSON.stringify(draft) !== baseline || profileDirty;
   $: if (dirty) saved = false;
   let filter = '';
   let error = '';
@@ -196,6 +198,10 @@
               .includes(filter.toLowerCase())) as item (item)}<button
               class:active={page === item}
               aria-current={page === item ? 'page' : undefined}
+              disabled={profileDirty && item !== page}
+              title={profileDirty && item !== page
+                ? 'Publish or discard your profile edits first'
+                : undefined}
               on:click={() => {
                 page = item;
                 saved = false;
@@ -208,7 +214,6 @@
       </div>
     </aside>
     <section class="settings-body donor-settings-body">
-      <div class="settings-topbar"><strong>{page}</strong></div>
       {#if discardPrompt}
         <section
           class="unsaved-notice"
@@ -229,28 +234,11 @@
       {#if error}<p role="alert" class="error">{error}</p>{/if}
 
       {#if page === 'My Account'}
-        <header class="settings-page-header">
-          <h1>My account</h1>
-          <p>Local profile preview and account preferences.</p>
-        </header>
-        <div class="account-profile-card">
-          <div class="account-banner-art"></div>
-          <div class="account-profile-main">
-            <Avatar value={draft.avatar} text={draft.displayName.slice(0, 2)} size={76} />
-            <div>
-              <strong>{draft.displayName || 'You'}</strong><span>Portable Cords identity</span
-              ><small
-                >Your nickname is shared when you request membership. Image previews stay local
-                until JPEG XL publication is available.</small
-              >
-            </div>
-          </div>
-        </div>
-        <section>
-          <h2>Local profile</h2>
-          <label>Display name<input maxlength="100" bind:value={draft.displayName} /></label
-          ><ImageEditor title="Profile picture" bind:value={draft.avatar} />
-        </section>
+        {#if status}<AccountProfileSettings
+            account={status.account_id}
+            initialName={draft.displayName}
+            bind:dirty={profileDirty}
+          />{:else}<p>Unlock your account to edit its public profile.</p>{/if}
       {:else if page === 'Jewel'}
         <header class="settings-page-header">
           <h1>The Jewel</h1>
@@ -473,6 +461,14 @@
           ><span>Compact message mode<small>Reduce message spacing and avatar size.</small></span
           ><input type="checkbox" bind:checked={draft.compact} /></label
         >
+        <label class="toggle-row"
+          ><span
+            >Show server members<small
+              >Keep the members panel open on wide windows. On smaller windows, open it from the
+              channel header.</small
+            ></span
+          ><input type="checkbox" bind:checked={draft.showMembers} /></label
+        >
       {:else if page === 'Accessibility'}
         <header class="settings-page-header">
           <h1>Accessibility</h1>
@@ -483,6 +479,13 @@
             type="checkbox"
             bind:checked={draft.reducedMotion}
           /></label
+        >
+        <label class="toggle-row"
+          ><span
+            >Disable profile-picture animation<small
+              >Show still pictures by default. Expanded previews can play explicitly.</small
+            ></span
+          ><input type="checkbox" bind:checked={draft.disableAvatarAnimations} /></label
         >
       {:else if page === 'Notifications'}
         <header class="settings-page-header">

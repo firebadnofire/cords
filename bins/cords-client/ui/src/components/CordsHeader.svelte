@@ -7,6 +7,7 @@
     MessageSquareText,
     Search,
     Settings2,
+    Users,
   } from '@lucide/svelte';
   import type { Channel } from '../model';
   export let section: 'server' | 'dms';
@@ -15,6 +16,9 @@
   export let detailsVisible: boolean;
   export let setQuery: (value: string) => void;
   export let toggleDetails: () => void;
+  export let membersVisible = false;
+  export let membersAvailable = false;
+  export let toggleMembers: () => void = () => undefined;
   export let openSettings: () => void;
   export let navigationVisible = false;
   export let toggleNavigation: () => void = () => undefined;
@@ -46,6 +50,12 @@
     >
   </div>
   <div class="header-tools">
+    {#if membersAvailable}<button
+        title="Server members"
+        aria-label="Server members"
+        aria-pressed={membersVisible}
+        on:click={toggleMembers}><Users size={21} /></button
+      >{/if}
     {#if channel}
       <label class="header-search"
         ><input

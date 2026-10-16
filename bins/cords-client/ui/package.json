@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "predev": "node ../../../tools/avatar-codec/stage-assets.mjs",
+    "prebuild": "node ../../../tools/avatar-codec/stage-assets.mjs",
     "dev": "vite --port 1420",
     "build": "vite build",
     "format": "prettier --write .",

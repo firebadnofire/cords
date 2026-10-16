@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+cords-avatar-codec.workspace = true
 base64.workspace = true
 cords-protocol.workspace = true
 cords-storage.workspace = true

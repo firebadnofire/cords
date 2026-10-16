@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowRight, Hash, LockKeyhole, Send, Server } from '@lucide/svelte';
   import RemoteAvatar from './RemoteAvatar.svelte';
+  import { publicProfiles } from '../profiles';
   import CopyButton from './CopyButton.svelte';
   import {
     memberName,
@@ -123,8 +124,13 @@
         <article class="cords-message">
           <RemoteAvatar
             value={message.sender_device_id === status.device_id
-              ? preferences.avatar
-              : memberPicture(sender(message.sender_device_id))}
+              ? { ...preferences.avatar, account: message.sender_account_id ?? status.account_id }
+              : {
+                  ...memberPicture(sender(message.sender_device_id)),
+                  account:
+                    message.sender_account_id ??
+                    sender(message.sender_device_id)?.authorization.value.account_id,
+                }}
             text={message.sender_device_id === status.device_id
               ? preferences.displayName.slice(0, 2)
               : name(message.sender_device_id).slice(0, 2)}
@@ -135,9 +141,14 @@
               <strong
                 title={message.sender_device_id}
                 class:message-own={message.sender_device_id === status.device_id}
-                >{message.sender_device_id === status.device_id
-                  ? preferences.displayName
-                  : name(message.sender_device_id)}</strong
+                >{$publicProfiles[
+                  message.sender_account_id ??
+                    sender(message.sender_device_id)?.authorization.value.account_id ??
+                    (message.sender_device_id === status.device_id ? status.account_id : '')
+                ]?.state.agreed?.display_name ??
+                  (message.sender_device_id === status.device_id
+                    ? preferences.displayName
+                    : name(message.sender_device_id))}</strong
               ><time
                 datetime={new Date(message.client_timestamp * 1000).toISOString()}
                 title={new Date(message.client_timestamp * 1000).toLocaleString()}

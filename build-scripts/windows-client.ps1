@@ -130,6 +130,9 @@ try {
     Copy-Item -LiteralPath $client -Destination (Join-Path $packageRoot 'Cords.exe')
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.md') -Destination $packageRoot
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination $packageRoot
+    $codecNotices = Join-Path $packageRoot 'licenses\avatar-codec'
+    [IO.Directory]::CreateDirectory((Split-Path $codecNotices -Parent)) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'assets\avatar-codec\licenses') -Destination $codecNotices -Recurse
     # A portable Cargo build does not run Tauri's resource bundler. Preserve the
     # same resource layout used by release-mode app.path().resource_dir().
     $migrationSource = Join-Path $repositoryRoot 'migrations\sqlite'

@@ -1,6 +1,8 @@
 //! Public Cords protocol v1 types and deterministic encodings.
 
+pub mod directory;
 pub mod messaging;
+pub mod profiles;
 pub mod roles;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};

@@ -94,6 +94,8 @@ stage_common_files() {
   local destination="$1"
   install -m 0644 "${REPO_ROOT}/README.md" "${destination}/README.md"
   install -m 0644 "${REPO_ROOT}/LICENSE" "${destination}/LICENSE"
+  mkdir -p "${destination}/licenses"
+  cp -R "${REPO_ROOT}/assets/avatar-codec/licenses" "${destination}/licenses/avatar-codec"
 }
 
 stage_server_distribution() {

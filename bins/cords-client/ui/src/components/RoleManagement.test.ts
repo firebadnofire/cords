@@ -135,23 +135,31 @@ describe('server-backed role editor', () => {
     await unmount(component);
   });
 
-  it('surfaces authorization failure instead of inventing roles or enabling edits', async () => {
-    const change = vi.fn();
-    const target = document.createElement('div');
-    const component = mount(RoleManagement, {
-      target,
-      props: {
-        load: async () => {
-          throw new Error('CORDS_FORBIDDEN');
+  it.each(['CORDS_FORBIDDEN', 'CORDS_PERMISSION_DENIED: HTTP 403 Forbidden'])(
+    'surfaces %s without inventing roles or offering edits',
+    async (error) => {
+      const change = vi.fn();
+      const target = document.createElement('div');
+      const component = mount(RoleManagement, {
+        target,
+        props: {
+          load: async () => {
+            throw new Error(error);
+          },
+          change,
         },
-        change,
-      },
-    });
-    await settle();
-    expect(target.querySelector('[role="alert"]')?.textContent).toContain('CORDS_FORBIDDEN');
-    expect(button(target, 'Create role').disabled).toBe(true);
-    expect(target.querySelector('form')).toBeNull();
-    expect(change).not.toHaveBeenCalled();
-    await unmount(component);
-  });
+      });
+      await settle();
+      expect(target.querySelector('[role="alert"]')?.textContent).toContain('Access restricted');
+      expect(target.querySelector('details code')?.textContent).toContain(error);
+      expect(
+        [...target.querySelectorAll('button')].some(
+          (item) => item.textContent?.trim() === 'Create role',
+        ),
+      ).toBe(false);
+      expect(target.querySelector('form')).toBeNull();
+      expect(change).not.toHaveBeenCalled();
+      await unmount(component);
+    },
+  );
 });

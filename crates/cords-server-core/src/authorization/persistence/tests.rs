@@ -193,6 +193,7 @@ async fn additive_role_migration_preserves_legacy_and_rolls_back_failure() -> Re
     std::fs::write(staged.path().join(next), migration)?;
     let defaults = "202610140001_role_catalog_defaults.sql";
     std::fs::copy(source.join(defaults), staged.path().join(defaults))?;
+    copy_later_migrations(&source, staged.path(), defaults)?;
     for _ in 0..2 {
         store.migrate(staged.path()).await?;
         store.require_current().await?;
@@ -264,6 +265,7 @@ async fn role_defaults_migrate_atomically_and_preserve_existing_edits() -> Resul
                 .await?;
         assert_eq!(after, before);
         std::fs::write(staged.path().join(next), migration)?;
+        copy_later_migrations(&source, staged.path(), next)?;
         for _ in 0..2 {
             store.migrate(staged.path()).await?;
             store.require_current().await?;
@@ -304,6 +306,16 @@ async fn role_defaults_migrate_atomically_and_preserve_existing_edits() -> Resul
             let edit = request(0, Change::PutRole { role });
             assert_eq!(commit(&store, &edit).await?, 1);
             assert_eq!(commit(&store, &edit).await?, 1);
+        }
+    }
+    Ok(())
+}
+
+fn copy_later_migrations(source: &Path, staged: &Path, after: &str) -> Result<()> {
+    for file in std::fs::read_dir(source)? {
+        let file = file?;
+        if file.file_name().to_string_lossy().as_ref() > after {
+            std::fs::copy(file.path(), staged.join(file.file_name()))?;
         }
     }
     Ok(())

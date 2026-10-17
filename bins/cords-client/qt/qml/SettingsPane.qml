@@ -8,6 +8,16 @@ Item {
     id: page
     objectName: "accountSettings"
     required property Controller desktop
+    signal closeRequested
+    readonly property bool modalOpen: confirm.visible || discardPreferences.visible
+    function requestClose() {
+        if (saving)
+            return;
+        if (dirty)
+            discardPreferences.open();
+        else
+            closeRequested();
+    }
     signal profileRequested
     property string section: "Account"
     property var draft: ({})
@@ -33,8 +43,20 @@ Item {
         draft = next;
         dirty = true;
     }
-    onVisibleChanged: if (visible && !dirty)
-        reload()
+    onVisibleChanged: {
+        if (visible && !dirty)
+            reload();
+        if (!visible) {
+            currentPassword.clear();
+            newPassword.clear();
+            confirmPassword.clear();
+        }
+    }
+    onSectionChanged: {
+        currentPassword.clear();
+        newPassword.clear();
+        confirmPassword.clear();
+    }
     Component.onCompleted: reload()
     Rectangle {
         width: page.width < 800 ? 180 : Math.max(220, (page.width - 1040) / 2 + 220)
@@ -60,6 +82,14 @@ Item {
                     Layout.alignment: Qt.AlignRight
                     Layout.preferredWidth: Math.min(188, parent.width)
                 }
+                CordsField {
+                    id: settingsSearch
+                    placeholderText: "Find a setting"
+                    Accessible.name: "Search account settings"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 188
+                    Layout.alignment: Qt.AlignRight
+                }
                 Repeater {
                     model: ["Account", "Appearance", "Notifications", "Privacy", "Password", "Identity"]
                     delegate: CordsButton {
@@ -67,6 +97,7 @@ Item {
                         text: modelData
                         quiet: true
                         selected: page.section === modelData
+                        visible: !settingsSearch.text || modelData.toLowerCase().includes(settingsSearch.text.toLowerCase())
                         Layout.fillWidth: true
                         Layout.maximumWidth: 188
                         Layout.alignment: Qt.AlignRight
@@ -97,6 +128,16 @@ Item {
                             font.pixelSize: Theme.headingSize
                             Layout.topMargin: 16
                         }
+                        CordsLabel {
+                            text: page.desktop.state.burned ? "Identity burned" : page.desktop.state.revoked ? "Device revoked" : "Local vault unlocked"
+                            color: page.desktop.state.burned || page.desktop.state.revoked ? Theme.warning : Theme.secondary
+                            Layout.fillWidth: true
+                        }
+                        CordsLabel {
+                            text: "Your fingerprint identifies your account. A profile name or local nickname does not change it."
+                            color: Theme.secondary
+                            Layout.fillWidth: true
+                        }
                         CordsField {
                             text: page.desktop.state.account || ""
                             readOnly: true
@@ -104,9 +145,13 @@ Item {
                             Accessible.name: "Account fingerprint"
                         }
                         CordsButton {
-                            text: "Open canonical public profile"
+                            text: "Edit public profile"
                             enabled: !page.desktop.busy
                             onClicked: page.profileRequested()
+                        }
+                        CordsButton {
+                            text: "Copy account fingerprint"
+                            onClicked: page.desktop.copy(page.desktop.state.account)
                         }
                         CordsLabel {
                             text: "Local nickname"
@@ -302,6 +347,20 @@ Item {
                             inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
                             Layout.fillWidth: true
                         }
+                        CordsField {
+                            id: confirmPassword
+                            placeholderText: "Confirm new password"
+                            echoMode: TextInput.Password
+                            inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
+                            Layout.fillWidth: true
+                            Accessible.name: "Confirm new password"
+                        }
+                        CordsLabel {
+                            visible: !!confirmPassword.text && confirmPassword.text !== newPassword.text
+                            text: "The new passwords do not match."
+                            color: Theme.warning
+                            Layout.fillWidth: true
+                        }
                         CordsCheck {
                             id: weak
                             Layout.fillWidth: true
@@ -316,11 +375,12 @@ Item {
                         }
                         CordsButton {
                             text: "Change local password"
-                            enabled: !page.desktop.busy && currentPassword.text.length > 0 && Array.from(newPassword.text).length >= 12
+                            enabled: !page.desktop.busy && currentPassword.text.length > 0 && Array.from(newPassword.text).length >= 12 && newPassword.text === confirmPassword.text
                             onClicked: {
                                 page.desktop.changePassword(page.desktop.state.account, currentPassword.text, newPassword.text, weak.checked);
                                 currentPassword.clear();
                                 newPassword.clear();
+                                confirmPassword.clear();
                             }
                         }
                     }
@@ -415,9 +475,20 @@ Item {
             }
             CordsButton {
                 text: "Discard edits"
-                enabled: page.dirty
+                enabled: page.dirty && !page.desktop.busy
                 onClicked: page.reload()
             }
+        }
+    }
+    ConfirmDialog {
+        id: discardPreferences
+        objectName: "discardPreferences"
+        title: "Discard unsaved preferences?"
+        explanation: "Your saved preferences will remain unchanged."
+        confirmText: "Discard and close"
+        operation: function () {
+            page.reload();
+            page.closeRequested();
         }
     }
     ConfirmDialog {

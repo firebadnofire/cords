@@ -51,7 +51,7 @@ void Controller::apply(const cords::Snapshot &s) {
         people.insert(qs(person.id), QVariantMap{{"image", qs(person.image)}, {"shape", qs(person.shape)}});
     m_state = {{"people", people}, {"presentationError", qs(s.presentation_error)}, {"directoryLoaded", s.directory_loaded},
         {"unlocked", s.unlocked}, {"legacy", s.legacy}, {"account", qs(s.account)}, {"device", qs(s.device)},
-        {"server", qs(s.server)}, {"origin", qs(s.origin)}, {"ownership", qs(s.ownership)}, {"admission", qs(s.admission)},
+        {"server", qs(s.server)}, {"origin", qs(s.origin)}, {"ownership", qs(s.ownership)}, {"admission", qs(s.admission)}, {"joinPolicy", strings(s.join_policy)},
         {"route", qs(s.route)}, {"error", qs(s.error)}, {"notice", qs(s.notice)}, {"connected", s.connected},
         {"canCreate", s.can_create}, {"canApprove", s.can_approve}, {"canRoles", s.can_roles}, {"canAssign", s.can_assign},
         {"canAudit", s.can_audit}, {"revoked", s.revoked}, {"burned", s.burned}, {"revision", QVariant::fromValue(s.revision)},

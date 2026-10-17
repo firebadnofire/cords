@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 Dialog {
     id: control
     modal: true
+    focus: true
     anchors.centerIn: Overlay.overlay
     width: Math.min(500, parent ? parent.width - 32 : 500)
     padding: 20

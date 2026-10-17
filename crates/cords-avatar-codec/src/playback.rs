@@ -31,6 +31,7 @@ pub struct Decoder {
     numerator: u32,
     denominator: u32,
     loops: u32,
+    animated: bool,
     frames: u32,
     ticks: u64,
     done: bool,
@@ -44,6 +45,9 @@ impl std::fmt::Debug for Decoder {
     }
 }
 impl Decoder {
+    /// Original animation flag and loop count, including single-frame animations.
+    #[must_use]
+    pub fn animation(&self) -> (bool, u32) { (self.animated, self.loops) }
     /// # Errors
     /// Rejects excessive input, dimensions, precision, invalid headers or limits.
     pub fn new(input: &[u8]) -> Result<Self> {
@@ -105,6 +109,7 @@ impl Decoder {
             numerator,
             denominator,
             loops,
+            animated,
             frames: 0,
             ticks: 0,
             done: false,

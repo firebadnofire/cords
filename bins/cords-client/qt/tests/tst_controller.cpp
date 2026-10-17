@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "rowfilter.h"
 #include "platformevents.h"
 #include "jxlimage.h"
 #include <QQmlComponent>
@@ -10,6 +11,7 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QSignalSpy>
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -25,6 +27,7 @@ private slots:
 #endif
         qmlRegisterUncreatableType<Controller>("Cords", 1, 0, "Controller", "Test owned");
         qmlRegisterUncreatableType<Rows>("Cords", 1, 0, "Rows", "Test owned");
+        qmlRegisterType<RowFilter>("Cords", 1, 0, "RowFilter");
         qmlRegisterType<JxlImage>("Cords", 1, 0, "JxlImage");
         const auto qmlPath = QStringLiteral(CORDS_QML_DIR);
         qmlRegisterSingletonType(QUrl::fromLocalFile(qmlPath + "/Theme.qml"), "Cords", 1, 0, "Theme");
@@ -115,14 +118,26 @@ private slots:
         QTest::qWait(150);
         QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-fixture-settings.png"));
         QVERIFY(settings->property("width").toReal() > 1100);
+        QSignalSpy closeRequested(settings, SIGNAL(closeRequested()));
+        QVERIFY(QMetaObject::invokeMethod(settings, "change", Q_ARG(QVariant, "name"), Q_ARG(QVariant, "Unsaved nickname")));
+        QVERIFY(QMetaObject::invokeMethod(settings, "requestClose"));
+        QTRY_VERIFY(settings->property("modalOpen").toBool());
+        QCOMPARE(closeRequested.count(), 0);
+        auto *discard = settings->findChild<QObject *>("discardPreferences");
+        QVERIFY(discard);
+        QVERIFY(QMetaObject::invokeMethod(discard, "close"));
+        QVERIFY(settings->property("dirty").toBool());
+        QVERIFY(QMetaObject::invokeMethod(settings, "reload"));
+        QVERIFY(QMetaObject::invokeMethod(settings, "requestClose"));
+        QCOMPARE(closeRequested.count(), 1);
         item->setProperty("showSettings", false);
         item->setProperty("showAdmin", true);
         auto *admin = item->findChild<QObject *>("serverSettings");
         QVERIFY(admin);
-        controller.roles()->replace({{{"id", "fixture-role"}, {"name", "Community guides"}, {"color", "#8dc4e7"}}});
+        controller.roles()->replace({{{"id", "fixture-role"}, {"name", "Community guides"}, {"color", "#8dc4e7"}, {"priority", 1}}});
         for (const auto size : {QSize(1920, 1080), QSize(680, 520)}) {
             window.resize(size); item->setSize(size);
-            for (int section : {0, 3, 6}) {
+            for (int section : {0, 1, 3, 6, 7}) {
                 admin->setProperty("page", section);
                 QTest::qWait(100);
                 QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT)
@@ -134,6 +149,65 @@ private slots:
         QTRY_VERIFY(!item->property("showAdmin").toBool());
         item->setParentItem(nullptr);
         QThreadPool::globalInstance()->waitForDone();
+    }
+    void administrationDraftsAndVirtualization() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_state = {{"canRoles", true}, {"revision", 7}, {"server", "test-server"}, {"directoryLoaded", true}};
+        QQmlEngine engine;
+        const auto path = QStringLiteral(CORDS_QML_DIR);
+        QQuickWindow editorWindow; editorWindow.resize(800, 780); editorWindow.show();
+        QQmlComponent roleComponent(&engine, QUrl::fromLocalFile(path + "/RoleEditor.qml"));
+        QScopedPointer<QObject> editor(roleComponent.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}, {"parent", QVariant::fromValue(editorWindow.contentItem())}}));
+        QVERIFY2(editor, qPrintable(roleComponent.errorString()));
+        const QVariantMap role{{"id", "custom-role"}, {"name", "Guides"}, {"color", "#80b5db"}, {"priority", 1}, {"permissions", QStringList{"server.read"}}, {"mentionable", false}, {"description", ""}};
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "edit", Q_ARG(QVariant, role), Q_ARG(QVariant, true)));
+        QTest::qWait(100);
+        QVERIFY(editorWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-polish-role-editor.png"));
+        editorWindow.resize(680, 520);
+        QTest::qWait(100);
+        QVERIFY(editor->property("height").toReal() <= 488);
+        QVERIFY(editorWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-polish-role-editor-narrow.png"));
+        QCOMPARE(editor->property("reviewedRevision").toInt(), 7);
+        QVERIFY(!editor->property("dirty").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "change", Q_ARG(QVariant, "color"), Q_ARG(QVariant, "invalid")));
+        QVERIFY(editor->property("dirty").toBool());
+        QVERIFY(!editor->property("valid").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "change", Q_ARG(QVariant, "color"), Q_ARG(QVariant, "#ffffff")));
+        controller.m_state["revision"] = 8;
+        controller.m_state["error"] = "Concurrent policy change";
+        emit controller.stateChanged();
+        QCOMPARE(editor->property("reviewedRevision").toInt(), 7);
+        QCOMPARE(editor->property("draft").value<QJSValue>().toVariant().toMap().value("color").toString(), "#ffffff");
+        auto *save = editor->findChild<QObject *>("saveRole");
+        QVERIFY(save);
+        QVERIFY(!save->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "close"));
+
+        QList<QVariantMap> members;
+        for (int i = 0; i < 2000; ++i) members.push_back({{"id", QString::number(i)}, {"name", QString("Person %1").arg(i)}, {"roles", QStringList{}}});
+        controller.members()->replace(members);
+        controller.m_busy = true;
+        QQmlComponent memberComponent(&engine, QUrl::fromLocalFile(path + "/MemberWorkspace.qml"));
+        QScopedPointer<QObject> workspace(memberComponent.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(workspace, qPrintable(memberComponent.errorString()));
+        auto *item = qobject_cast<QQuickItem *>(workspace.data());
+        QQuickWindow window; window.setColor(QColor("#252e38")); window.resize(1100, 650);
+        item->setParentItem(window.contentItem()); item->setSize(window.size()); window.show();
+        QTest::qWait(100);
+        auto *list = workspace->findChild<QObject *>("administrativeMembers");
+        QVERIFY(list);
+        QCOMPARE(list->property("count").toInt(), 2000);
+        const auto rendered = workspace->findChildren<QObject *>("administrativeMemberRow").size();
+        QVERIFY2(rendered < 100, "Member list must not instantiate every account");
+        auto *search = workspace->findChild<QObject *>("memberSearch");
+        QVERIFY(search);
+        search->setProperty("text", "Person 1999");
+        QTRY_COMPARE(list->property("count").toInt(), 1);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-polish-members.png"));
+        item->setParentItem(nullptr);
     }
     void accountPickerUsesRealVaultAuthentication() {
         QTemporaryDir state;

@@ -18,13 +18,18 @@ Item {
     readonly property bool wide: width >= 1120
     readonly property string route: desktop.state.route || ""
     readonly property bool settingsOpen: showSettings || showAdmin
+    function closeSettings() {
+        if (showSettings)
+            settingsPane.requestClose();
+        else if (!adminPane.modalOpen) {
+            showAdmin = false;
+            composer.forceActiveFocus();
+        }
+    }
     Shortcut {
         sequence: "Escape"
-        enabled: shell.settingsOpen && !profile.visible && !confirmation.visible && !serverClaim.visible
-        onActivated: {
-            shell.showSettings = false;
-            shell.showAdmin = false;
-        }
+        enabled: shell.settingsOpen && !profile.visible && !confirmation.visible && !serverClaim.visible && !settingsPane.modalOpen && !adminPane.modalOpen
+        onActivated: shell.closeSettings()
     }
     Rectangle {
         anchors.fill: parent
@@ -115,7 +120,11 @@ Item {
                             color: serverButton.row.selected ? Theme.accent : serverButton.hovered ? Theme.hover : Theme.elevated
                             border.width: serverButton.visualFocus ? 2 : 0
                             border.color: Theme.focus
-                            Behavior on radius { NumberAnimation { duration: Theme.reducedMotion ? 0 : 120 } }
+                            Behavior on radius {
+                                NumberAnimation {
+                                    duration: Theme.reducedMotion ? 0 : 120
+                                }
+                            }
                         }
                         Rectangle {
                             anchors.left: parent.left
@@ -359,7 +368,10 @@ Item {
                             elide: Text.ElideRight
                             wrapMode: Text.NoWrap
                         }
-                        CordsLabel { text: "⚙"; color: Theme.secondary }
+                        CordsLabel {
+                            text: "⚙"
+                            color: Theme.secondary
+                        }
                     }
                     Layout.fillWidth: true
                     help: "Account settings"
@@ -435,10 +447,7 @@ Item {
                         quiet: true
                         help: "Return to chat (Escape)"
                         visible: shell.showSettings || shell.showAdmin
-                        onClicked: {
-                            shell.showSettings = false;
-                            shell.showAdmin = false;
-                        }
+                        onClicked: shell.closeSettings()
                     }
                 }
             }
@@ -464,6 +473,11 @@ Item {
                 padding: 8
             }
             SettingsPane {
+                id: settingsPane
+                onCloseRequested: {
+                    shell.showSettings = false;
+                    composer.forceActiveFocus();
+                }
                 visible: shell.showSettings
                 desktop: shell.desktop
                 Layout.fillWidth: true
@@ -471,6 +485,7 @@ Item {
                 onProfileRequested: shell.openProfile(shell.desktop.state.account)
             }
             AdminPane {
+                id: adminPane
                 visible: shell.showAdmin
                 desktop: shell.desktop
                 route: shell.route
@@ -538,7 +553,9 @@ Item {
                             height: visible ? implicitHeight : 0
                             padding: 8
                             hoverEnabled: true
-                            HoverHandler { id: messageHover }
+                            HoverHandler {
+                                id: messageHover
+                            }
                             background: Rectangle {
                                 color: messageHover.hovered ? Theme.navigation : "transparent"
                                 radius: Theme.radius

@@ -4,6 +4,7 @@
 //! contain verified presentation data only. Short exchanges do not span I/O awaits.
 
 mod media;
+mod avatar;
 mod runtime;
 mod startup;
 use anyhow::{Context as _, Result};
@@ -131,6 +132,13 @@ pub mod ffi {
         conflicts: Vec<String>,
         pending: String,
     }
+    #[derive(Clone, Debug, Default)]
+    struct AvatarDraft {
+        id: String,
+        image: String,
+        width: u32,
+        height: u32,
+    }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct Preferences {
         name: String,
@@ -166,6 +174,7 @@ pub mod ffi {
         origin: String,
         ownership: String,
         admission: String,
+        join_policy: Vec<String>,
         route: String,
         error: String,
         notice: String,
@@ -199,6 +208,7 @@ pub mod ffi {
         roles: Vec<RoleRow>,
         audit: Vec<AuditRow>,
         profile: Profile,
+        avatar_draft: AvatarDraft,
         preferences: Preferences,
         notifications: Vec<Alert>,
     }
@@ -296,6 +306,9 @@ pub mod ffi {
         fn load_audit(self: &Desktop, after: u64) -> Result<()>;
         fn load_profile(self: &Desktop, account: String) -> Result<()>;
         fn save_profile_name(self: &Desktop, name: String, heads: Vec<String>) -> Result<()>;
+        fn prepare_avatar(self: &Desktop, path: String) -> Result<()>;
+        fn save_avatar(self: &Desktop, id: String, x: f64, y: f64, zoom: f64, shape: String) -> Result<()>;
+        fn cancel_avatar(self: &Desktop) -> Result<()>;
         fn save_preferences(self: &Desktop, preferences: Preferences) -> Result<()>;
     }
 }
@@ -778,6 +791,20 @@ impl Desktop {
     pub fn save_profile_name(&self, name: String, heads: Vec<String>) -> Result<()> {
         self.submit(Command::ProfileName(name, heads))
     }
+    /// Stage a bounded local image without publication.
+    /// # Errors
+    /// Reports a locked runtime or full command queue.
+    pub fn prepare_avatar(&self, path: String) -> Result<()> { self.submit(Command::PrepareAvatar(path)) }
+    /// Sign and save a reviewed crop of the active account's staged image.
+    /// # Errors
+    /// Reports a locked runtime or full command queue.
+    pub fn save_avatar(&self, id: String, x: f64, y: f64, zoom: f64, shape: String) -> Result<()> {
+        self.submit(Command::SaveAvatar(id, x, y, zoom, shape))
+    }
+    /// Discard transient staged image data.
+    /// # Errors
+    /// Reports a locked runtime or full command queue.
+    pub fn cancel_avatar(&self) -> Result<()> { self.submit(Command::CancelAvatar) }
     /// # Errors
     /// Returns a worker submission or input validation error.
     pub fn save_preferences(&self, preferences: ffi::Preferences) -> Result<()> {

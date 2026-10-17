@@ -10,12 +10,26 @@ CordsDialog {
     property string account: ""
     readonly property var profile: desktop.state.profile || ({})
     readonly property bool loaded: profile.account === account
+    property bool nameDirty: false
+    property bool nameSaving: false
+    property var reviewedHeads: []
+    function reloadName() {
+        if (!loaded)
+            return;
+        name.text = profile.name || "";
+        reviewedHeads = profile.heads || [];
+        nameDirty = false;
+    }
     property bool manualPlayback: false
     property bool playbackPaused: false
     objectName: "expandedProfile"
     title: "Account profile"
     width: Math.min(440, parent ? parent.width - 32 : 440)
     onOpened: {
+        nameDirty = false;
+        nameSaving = false;
+        name.clear();
+        reloadName();
         manualPlayback = false;
         playbackPaused = false;
         if (account && !desktop.busy)
@@ -28,6 +42,19 @@ CordsDialog {
     onAccountChanged: {
         manualPlayback = false;
         playbackPaused = false;
+    }
+    Connections {
+        target: popup.desktop
+        function onStateChanged() {
+            if (!popup.visible)
+                return;
+            if (popup.nameSaving && !popup.desktop.busy) {
+                popup.nameSaving = false;
+                if (!popup.desktop.state.error && popup.desktop.state.notice === "Signed profile saved")
+                    popup.reloadName();
+            } else if (!popup.nameDirty)
+                popup.reloadName();
+        }
     }
     Connections {
         target: Theme
@@ -129,6 +156,7 @@ CordsDialog {
             }
             CordsField {
                 id: name
+                onTextEdited: popup.nameDirty = true
                 visible: popup.account === popup.desktop.state.account && popup.loaded
                 placeholderText: "New public display name"
                 maximumLength: 100
@@ -137,8 +165,11 @@ CordsDialog {
             CordsButton {
                 text: "Sign and save name"
                 visible: name.visible
-                enabled: !popup.desktop.busy && name.text.trim().length > 0 && (popup.profile.conflicts || []).length === 0
-                onClicked: popup.desktop.saveProfileName(name.text, popup.profile.heads || [])
+                enabled: !popup.desktop.busy && popup.nameDirty && name.text.trim().length > 0 && (popup.profile.conflicts || []).length === 0
+                onClicked: {
+                    popup.nameSaving = true;
+                    popup.desktop.saveProfileName(name.text, popup.reviewedHeads);
+                }
             }
             CordsLabel {
                 text: popup.desktop.state.error || ""

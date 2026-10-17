@@ -65,6 +65,9 @@ pub(super) enum Command {
     Audit(u64),
     Profile(String),
     ProfileName(String, Vec<String>),
+    PrepareAvatar(String),
+    SaveAvatar(String, f64, f64, f64, String),
+    CancelAvatar,
     Preferences(ffi::Preferences),
     ActivateAlert(String),
     MuteServer(bool),
@@ -169,6 +172,7 @@ pub(super) fn empty_snapshot() -> ffi::Snapshot {
         origin: String::new(),
         ownership: String::new(),
         admission: String::new(),
+        join_policy: Vec::new(),
         route: String::new(),
         error: String::new(),
         notice: String::new(),
@@ -202,6 +206,7 @@ pub(super) fn empty_snapshot() -> ffi::Snapshot {
         roles: Vec::new(),
         audit: Vec::new(),
         profile: empty_profile(),
+        avatar_draft: ffi::AvatarDraft::default(),
         preferences: default_preferences(),
         notifications: Vec::new(),
     }
@@ -239,6 +244,7 @@ pub(super) struct Worker {
     history_scope: (String, String, String),
     history_end: Option<String>,
     history_limit: u32,
+    avatar_draft: Option<Arc<crate::avatar::Draft>>,
 }
 impl Worker {
     #[allow(clippy::too_many_arguments)] // Explicit lifecycle inputs; no hidden global runtime.
@@ -291,6 +297,7 @@ impl Worker {
             history_scope: (String::new(), String::new(), String::new()),
             history_end: None,
             history_limit: 100,
+            avatar_draft: None,
         };
         if let Err(error) = worker.refresh().await {
             worker.view.error = format!("{error:#}");
@@ -1058,6 +1065,45 @@ impl Worker {
                 self.profile(&account).await?;
                 self.view.notice = "Signed profile saved".into();
             }
+            Command::PrepareAvatar(path) => {
+                self.avatar_draft = None;
+                self.view.avatar_draft = ffi::AvatarDraft::default();
+                let account = client.status().account_id;
+                let current = client.account_profile(&account).await?;
+                ensure!(current.state.conflicts.is_empty(), "Resolve profile conflicts before changing your picture");
+                let (mut draft, preview) = tokio::task::spawn_blocking(move || crate::avatar::prepare(std::path::Path::new(&path))).await??;
+                draft.heads = current.state.heads;
+                use base64::{Engine as _, engine::general_purpose::STANDARD};
+                self.view.avatar_draft = ffi::AvatarDraft { id: draft.id.clone(), image: format!("data:image/jxl;base64,{}", STANDARD.encode(preview)), width: draft.width, height: draft.height };
+                self.avatar_draft = Some(Arc::new(draft));
+            }
+            Command::CancelAvatar => {
+                self.avatar_draft = None;
+                self.view.avatar_draft = ffi::AvatarDraft::default();
+            }
+            Command::SaveAvatar(id, x, y, zoom, shape) => {
+                ensure!(matches!(shape.as_str(), "circle" | "square"), "Invalid picture shape");
+                let draft = self.avatar_draft.clone().context("Choose a picture first")?;
+                ensure!(draft.id == id, "Picture changed; review the current crop");
+                let encoding = draft.clone();
+                let image = tokio::task::spawn_blocking(move || crate::avatar::encode(&encoding, x, y, zoom)).await??;
+                let account = client.status().account_id;
+                let current = client.account_profile(&account).await?;
+                ensure!(current.state.heads == draft.heads && current.state.conflicts.is_empty(), "Profile changed while editing. Cancel and reopen the picture editor to review it.");
+                let mut profile = current.state.agreed.unwrap_or(cords_protocol::profiles::AccountProfile { display_name: self.view.preferences.name.clone(), avatar: None });
+                use sha2::{Digest as _, Sha256};
+                use base64::{Engine as _, engine::general_purpose::STANDARD};
+                let side = crate::avatar::crop(draft.width, draft.height, x, y, zoom)?.2.min(1024);
+                profile.avatar = Some(cords_protocol::profiles::ProfileAvatar {
+                    sha256: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(&image)),
+                    bytes: u32::try_from(image.len())?, width: u16::try_from(side)?, height: u16::try_from(side)?, shape,
+                });
+                client.save_account_profile(profile, Some(STANDARD.encode(image)), draft.heads.clone()).await?;
+                self.avatar_draft = None;
+                self.view.avatar_draft = ffi::AvatarDraft::default();
+                self.profile(&account).await?;
+                self.view.notice = "Profile picture saved".into();
+            }
             Command::Preferences(preferences) => {
                 // Preserve unrecognized and existing frontend preferences rather
                 // than replacing the encrypted preferences document.
@@ -1181,6 +1227,8 @@ impl Worker {
         self.view.roles.clear();
         self.view.audit.clear();
         self.view.profile = empty_profile();
+        self.avatar_draft = None;
+        self.view.avatar_draft = ffi::AvatarDraft::default();
         self.view.directory_after.clear();
         self.view.presentation_error.clear();
         self.view.directory_loaded = false;
@@ -1489,6 +1537,7 @@ impl Worker {
         self.view.origin = status.origin;
         self.view.ownership = status.ownership_state;
         self.view.admission = status.admission_state;
+        self.view.join_policy = status.join_policy;
         self.view.burned = status.burned;
         self.view.revoked = identity["revoked"].as_bool().unwrap_or(true);
         let capabilities = identity

@@ -2,6 +2,7 @@
 //! network, clock or randomness imports. Only bounded memory growth is permitted.
 use anyhow::{Result, bail, ensure};
 pub mod playback;
+pub mod encoding;
 use std::{
     sync::OnceLock,
     time::{Duration, Instant},

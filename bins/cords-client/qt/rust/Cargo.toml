@@ -12,6 +12,8 @@ anyhow.workspace = true
 base64.workspace = true
 cords-client-core.workspace = true
 cords-avatar-codec.workspace = true
+cords-avatar-source = { path = "../../../../crates/cords-avatar-source" }
+sha2.workspace = true
 cords-protocol.workspace = true
 cxx = "=1.0.205"
 serde_json.workspace = true

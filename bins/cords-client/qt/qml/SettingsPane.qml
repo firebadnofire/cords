@@ -36,16 +36,30 @@ Item {
     onVisibleChanged: if (visible && !dirty)
         reload()
     Component.onCompleted: reload()
+    Rectangle {
+        width: page.width < 800 ? 180 : Math.max(220, (page.width - 1040) / 2 + 220)
+        height: parent.height
+        color: Theme.navigation
+    }
     ColumnLayout {
         anchors.fill: parent
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             ColumnLayout {
-                Layout.preferredWidth: page.width < 650 ? 105 : 164
+                Layout.preferredWidth: page.width < 800 ? 148 : Math.max(188, (page.width - 1040) / 2 + 188)
                 Layout.fillHeight: true
-                Layout.margins: 12
+                Layout.margins: 16
                 spacing: 4
+                CordsLabel {
+                    text: "YOUR ACCOUNT"
+                    color: Theme.secondary
+                    font.pixelSize: Theme.captionSize
+                    font.bold: true
+                    Layout.bottomMargin: 14
+                    Layout.alignment: Qt.AlignRight
+                    Layout.preferredWidth: Math.min(188, parent.width)
+                }
                 Repeater {
                     model: ["Account", "Appearance", "Notifications", "Privacy", "Password", "Identity"]
                     delegate: CordsButton {
@@ -54,6 +68,8 @@ Item {
                         quiet: true
                         selected: page.section === modelData
                         Layout.fillWidth: true
+                        Layout.maximumWidth: 188
+                        Layout.alignment: Qt.AlignRight
                         onClicked: page.section = modelData
                     }
                 }
@@ -68,9 +84,10 @@ Item {
                 contentWidth: availableWidth
                 clip: true
                 ColumnLayout {
-                    width: Math.max(200, settingsScroll.availableWidth - 32)
-                    x: 16
-                    spacing: 14
+                    width: Math.min(740, settingsScroll.availableWidth - 48)
+                    x: 24
+                    y: 12
+                    spacing: 20
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 14
@@ -279,6 +296,7 @@ Item {
                         }
                         CordsField {
                             id: newPassword
+                            onTextChanged: weak.checked = false
                             placeholderText: "New password (at least 12 characters)"
                             echoMode: TextInput.Password
                             inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
@@ -288,11 +306,17 @@ Item {
                             id: weak
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            text: "Accept an identified weak-password warning"
+                            enabled: !page.desktop.busy && Array.from(newPassword.text).length >= 12
+                            text: "Allow a predictable password (12+ characters)"
+                        }
+                        CordsLabel {
+                            text: "At least 12 characters are required. This checkbox only accepts warnings about common passwords, repeated characters, or your nickname."
+                            color: Theme.secondary
+                            Layout.fillWidth: true
                         }
                         CordsButton {
                             text: "Change local password"
-                            enabled: !page.desktop.busy && currentPassword.text.length > 0 && newPassword.text.length >= 12
+                            enabled: !page.desktop.busy && currentPassword.text.length > 0 && Array.from(newPassword.text).length >= 12
                             onClicked: {
                                 page.desktop.changePassword(page.desktop.state.account, currentPassword.text, newPassword.text, weak.checked);
                                 currentPassword.clear();
@@ -378,6 +402,8 @@ Item {
             Layout.leftMargin: 16
         }
         RowLayout {
+            Layout.leftMargin: page.width < 800 ? 204 : Math.max(244, (page.width - 1040) / 2 + 244)
+            Layout.bottomMargin: 16
             CordsButton {
                 text: "Save preferences"
                 primary: true

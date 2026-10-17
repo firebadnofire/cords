@@ -77,7 +77,7 @@ Pane {
         }
         CordsLabel {
             visible: panel.desktop.members.count === 0
-            text: panel.desktop.state.directoryLoaded ? "No admitted accounts in this page." : "Loading admitted members…"
+            text: panel.desktop.state.ownership === "UNCLAIMED" ? "Members will appear after this server is claimed." : !panel.desktop.state.connected ? "Authenticate to view this server’s members." : panel.desktop.state.directoryLoaded ? "No admitted accounts in this page." : "Loading admitted members…"
             color: Theme.secondary
             Layout.fillWidth: true
         }
@@ -90,7 +90,8 @@ Pane {
         }
         CordsButton {
             text: "Refresh members"
-            enabled: !panel.desktop.busy
+            enabled: !panel.desktop.busy && !!panel.desktop.state.connected
+            quiet: true
             Layout.fillWidth: true
             onClicked: panel.desktop.loadDirectory("")
         }

@@ -17,6 +17,19 @@ Item {
     property string submittedRoute: ""
     readonly property bool wide: width >= 1120
     readonly property string route: desktop.state.route || ""
+    readonly property bool settingsOpen: showSettings || showAdmin
+    Shortcut {
+        sequence: "Escape"
+        enabled: shell.settingsOpen && !profile.visible && !confirmation.visible && !serverClaim.visible
+        onActivated: {
+            shell.showSettings = false;
+            shell.showAdmin = false;
+        }
+    }
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.conversation
+    }
     onWideChanged: {
         memberDrawer.close();
         infoDrawer.close();
@@ -66,6 +79,7 @@ Item {
         anchors.fill: parent
         spacing: 0
         Rectangle {
+            visible: !shell.settingsOpen
             Layout.preferredWidth: 72
             Layout.fillHeight: true
             color: Theme.rail
@@ -128,6 +142,8 @@ Item {
                             shell.showSettings = false;
                             shell.showAdmin = false;
                             shell.desktop.selectServer(row.id);
+                            if (row.selected && shell.desktop.state.ownership === "UNCLAIMED")
+                                serverClaim.open();
                         }
                         TapHandler {
                             acceptedButtons: Qt.RightButton
@@ -190,6 +206,7 @@ Item {
             }
         }
         Rectangle {
+            visible: !shell.settingsOpen
             Layout.preferredWidth: shell.width < 850 ? 176 : shell.width >= 1400 ? 280 : 232
             Layout.fillHeight: true
             color: Theme.navigation
@@ -199,15 +216,41 @@ Item {
                 spacing: 10
                 CordsButton {
                     text: shell.desktop.state.origin ? shell.desktop.state.origin.replace("https://", "") : "Choose a server"
+                    quiet: true
+                    font.bold: true
+                    implicitHeight: 44
                     Layout.fillWidth: true
                     help: shell.desktop.state.origin || "Connect using + in the server rail"
-                    onClicked: {
-                        shell.showAdmin = !shell.showAdmin;
-                        shell.showSettings = false;
+                    onClicked: serverHeaderMenu.popup()
+                    Menu {
+                        id: serverHeaderMenu
+                        MenuItem {
+                            text: "Server settings"
+                            enabled: !!shell.desktop.state.server
+                            onTriggered: {
+                                shell.showAdmin = true;
+                                shell.showSettings = false;
+                            }
+                        }
+                        MenuItem {
+                            text: shell.desktop.state.ownership === "UNCLAIMED" ? "Claim server…" : "Authenticate / request admission"
+                            enabled: !shell.desktop.busy && !!shell.desktop.state.server
+                            onTriggered: {
+                                if (shell.desktop.state.ownership === "UNCLAIMED")
+                                    serverClaim.open();
+                                else
+                                    shell.desktop.authenticate();
+                            }
+                        }
+                        MenuItem {
+                            text: shell.desktop.state.serverMuted ? "Unmute server" : "Mute server"
+                            enabled: !shell.desktop.busy && !!shell.desktop.state.server
+                            onTriggered: shell.desktop.muteServer(!shell.desktop.state.serverMuted)
+                        }
                     }
                 }
                 CordsLabel {
-                    text: shell.desktop.state.admission || "No server selected"
+                    text: shell.desktop.state.ownership === "UNCLAIMED" ? "Unclaimed server · owner setup required" : shell.desktop.state.admission || "No server selected"
                     color: Theme.secondary
                     font.pixelSize: Theme.captionSize
                 }
@@ -216,7 +259,12 @@ Item {
                     visible: !!shell.desktop.state.server && !shell.desktop.state.connected
                     Layout.fillWidth: true
                     enabled: !shell.desktop.busy
-                    onClicked: shell.desktop.authenticate()
+                    onClicked: {
+                        if (shell.desktop.state.ownership === "UNCLAIMED")
+                            serverClaim.open();
+                        else
+                            shell.desktop.authenticate();
+                    }
                 }
                 CordsField {
                     id: filter
@@ -249,6 +297,7 @@ Item {
                     clip: true
                     spacing: 4
                     delegate: CordsButton {
+                        id: channelButton
                         required property var row
                         width: channelList.width
                         text: "# " + row.name + (row.retired ? " · archive" : "")
@@ -263,17 +312,55 @@ Item {
                             shell.showAdmin = false;
                             shell.desktop.selectChannel(row.id);
                         }
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: channelMenu.popup()
+                        }
+                        Menu {
+                            id: channelMenu
+                            MenuItem {
+                                text: "Open channel"
+                                enabled: !shell.desktop.busy
+                                onTriggered: shell.desktop.selectChannel(channelButton.row.id)
+                            }
+                            MenuItem {
+                                text: shell.desktop.state.routeMuted ? "Unmute conversation" : "Mute conversation"
+                                enabled: !shell.desktop.busy && channelButton.row.id === shell.route
+                                onTriggered: shell.desktop.muteRoute(channelButton.row.id, !shell.desktop.state.routeMuted)
+                            }
+                        }
                     }
                     ScrollBar.vertical: ScrollBar {}
                 }
                 CordsButton {
                     text: "Synchronize"
+                    quiet: true
                     Layout.fillWidth: true
                     enabled: !shell.desktop.busy && !!shell.desktop.state.server
                     onClicked: shell.desktop.synchronize()
                 }
                 CordsButton {
                     text: shell.desktop.state.preferences ? shell.desktop.state.preferences.name : "Your account"
+                    selected: true
+                    quiet: true
+                    implicitHeight: 52
+                    contentItem: RowLayout {
+                        spacing: 10
+                        CordsAvatar {
+                            name: shell.desktop.state.preferences ? shell.desktop.state.preferences.name || "Your account" : "Your account"
+                            account: shell.desktop.state.account || ""
+                            Layout.preferredWidth: 30
+                            Layout.preferredHeight: 30
+                        }
+                        CordsLabel {
+                            text: shell.desktop.state.preferences ? shell.desktop.state.preferences.name || "Your account" : "Your account"
+                            font.bold: true
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            wrapMode: Text.NoWrap
+                        }
+                        CordsLabel { text: "⚙"; color: Theme.secondary }
+                    }
                     Layout.fillWidth: true
                     help: "Account settings"
                     onClicked: {
@@ -315,6 +402,8 @@ Item {
                     }
                     CordsButton {
                         text: "Members"
+                        quiet: true
+                        selected: shell.showMembers
                         visible: !shell.showSettings && !shell.showAdmin
                         help: "Toggle public member directory"
                         onClicked: {
@@ -329,6 +418,8 @@ Item {
                     }
                     CordsButton {
                         text: "Info"
+                        quiet: true
+                        selected: shell.showInfo
                         visible: !shell.showSettings && !shell.showAdmin
                         help: "Conversation security and technical details"
                         onClicked: {
@@ -340,7 +431,9 @@ Item {
                         }
                     }
                     CordsButton {
-                        text: "Back to chat"
+                        text: "×  Close"
+                        quiet: true
+                        help: "Return to chat (Escape)"
                         visible: shell.showSettings || shell.showAdmin
                         onClicked: {
                             shell.showSettings = false;
@@ -356,7 +449,7 @@ Item {
                 implicitHeight: 3
             }
             CordsLabel {
-                text: shell.desktop.state.error || ""
+                text: shell.desktop.state.error === "CORDS_SERVER_UNCLAIMED" ? "This server needs an owner. Choose Authenticate to claim it, or ask its operator to finish setup." : shell.desktop.state.error || ""
                 color: Theme.danger
                 visible: text.length > 0
                 Layout.fillWidth: true
@@ -384,6 +477,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 onProfileRequested: account => shell.openProfile(account)
+                onClaimRequested: serverClaim.open()
             }
             RowLayout {
                 visible: !shell.showSettings && !shell.showAdmin
@@ -398,13 +492,8 @@ Item {
                         Layout.fillWidth: true
                         Layout.leftMargin: 14
                         Layout.rightMargin: 14
-                        visible: !!shell.route
+                        visible: !!shell.route && (!!shell.desktop.state.historyOlder || !!shell.desktop.state.historyBrowsing)
                         spacing: 8
-                        CordsButton {
-                            text: shell.desktop.state.routeMuted ? "Unmute this conversation" : "Mute this conversation"
-                            enabled: !shell.desktop.busy
-                            onClicked: shell.desktop.muteRoute(shell.route, !shell.desktop.state.routeMuted)
-                        }
                         CordsButton {
                             text: "Older messages"
                             objectName: "olderMessages"
@@ -718,6 +807,15 @@ Item {
                 onClicked: createChannel.close()
             }
         }
+    }
+    ServerClaim {
+        id: serverClaim
+        server: shell.desktop.state.server || ""
+        ownership: shell.desktop.state.ownership || ""
+        origin: shell.desktop.state.origin || ""
+        operationBusy: shell.desktop.busy
+        errorText: shell.desktop.state.error || ""
+        onClaimRequested: code => shell.desktop.claimOwnership(code)
     }
     ProfilePopup {
         id: profile

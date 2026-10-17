@@ -6,9 +6,11 @@ import QtQuick.Layouts
 
 Item {
     id: admin
+    objectName: "serverSettings"
     required property Controller desktop
     property string route: ""
     signal profileRequested(string account)
+    signal claimRequested
     property int page: 0
     property var editingRole: ({})
     property string mutationId: ""
@@ -34,31 +36,65 @@ Item {
         rolePermissions.text = (role.permissions || []).join("\n");
         mentionable.checked = !!role.mentionable;
     }
-    ColumnLayout {
+    RowLayout {
         anchors.fill: parent
-        anchors.margins: 14
-        Flow {
-            Layout.fillWidth: true
-            spacing: 6
-            Repeater {
-                model: ["Overview", "Members", "Requests", "Roles", "Channels", "Audit", "Ownership"]
-                delegate: CordsButton {
-                    required property string modelData
-                    required property int index
-                    text: modelData
-                    primary: admin.page === index
-                    implicitWidth: Math.max(54, contentItem.implicitWidth + 16)
-                    onClicked: admin.selectPage(index)
+        spacing: 0
+        Rectangle {
+            Layout.preferredWidth: admin.width < 800 ? 180 : Math.max(220, (admin.width - 1040) / 2 + 220)
+            Layout.fillHeight: true
+            color: Theme.navigation
+            ColumnLayout {
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                width: Math.min(parent.width - 32, 220)
+                anchors.margins: 16
+                spacing: 4
+                CordsLabel {
+                    text: admin.desktop.state.origin ? admin.desktop.state.origin.replace("https://", "") : "SERVER SETTINGS"
+                    color: Theme.secondary
+                    font.pixelSize: Theme.captionSize
+                    font.bold: true
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: 14
+                    elide: Text.ElideRight
+                    wrapMode: Text.NoWrap
+                }
+                Repeater {
+                    model: ["Overview", "Members", "Requests", "Roles", "Channels", "Audit", "Ownership"]
+                    delegate: CordsButton {
+                        required property string modelData
+                        required property int index
+                        text: modelData
+                        quiet: true
+                        selected: admin.page === index
+                        Layout.fillWidth: true
+                        onClicked: admin.selectPage(index)
+                    }
+                }
+                Item {
+                    Layout.fillHeight: true
+                }
+                CordsLabel {
+                    text: "Server authority and conversation encryption are managed separately."
+                    color: Theme.muted
+                    font.pixelSize: Theme.captionSize
+                    Layout.fillWidth: true
                 }
             }
         }
         ScrollView {
+            id: adminScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             contentWidth: availableWidth
+            clip: true
+            topPadding: 28
+            bottomPadding: 24
             ColumnLayout {
-                width: parent.width
-                spacing: 12
+                width: Math.min(740, adminScroll.availableWidth - 48)
+                x: 24
+                spacing: 20
                 ColumnLayout {
                     visible: admin.page === 0
                     Layout.fillWidth: true
@@ -66,11 +102,26 @@ Item {
                         text: "Server overview"
                         font.pixelSize: Theme.headingSize
                     }
+                    CordsLabel {
+                        text: "Manage this community’s members, roles, channels and ownership."
+                        color: Theme.secondary
+                        Layout.fillWidth: true
+                    }
+                    CordsLabel {
+                        text: "SERVER ADDRESS"
+                        font.pixelSize: Theme.captionSize
+                        font.bold: true
+                    }
                     CordsField {
                         text: admin.desktop.state.origin || ""
                         readOnly: true
                         Layout.fillWidth: true
                         Accessible.name: "Server HTTPS origin"
+                    }
+                    CordsLabel {
+                        text: "PINNED SIGNING IDENTITY"
+                        font.pixelSize: Theme.captionSize
+                        font.bold: true
                     }
                     CordsField {
                         text: admin.desktop.state.server || ""
@@ -87,12 +138,17 @@ Item {
                         Layout.fillWidth: true
                     }
                     CordsButton {
-                        text: "Authenticate / refresh admission"
+                        text: admin.desktop.state.ownership === "UNCLAIMED" ? "Claim this server" : "Authenticate / refresh admission"
                         enabled: !admin.desktop.busy && !!admin.desktop.state.server
-                        onClicked: admin.desktop.authenticate()
+                        onClicked: {
+                            if (admin.desktop.state.ownership === "UNCLAIMED")
+                                admin.claimRequested();
+                            else
+                                admin.desktop.authenticate();
+                        }
                     }
                     CordsLabel {
-                        text: "Server presentation editing is unavailable in the current Rust client API."
+                        text: "Server name, icon and banner editing are not available yet."
                         color: Theme.secondary
                         Layout.fillWidth: true
                     }
@@ -223,6 +279,7 @@ Item {
                         }
                         CordsButton {
                             text: "New role"
+                            primary: true
                             enabled: !admin.desktop.busy
                             onClicked: admin.roleDraft({
                                 id: admin.desktop.newId(),
@@ -238,101 +295,135 @@ Item {
                     Repeater {
                         model: admin.page === 3 ? admin.desktop.roles : null
                         delegate: CordsButton {
+                            id: roleRow
                             required property var row
                             text: "$" + row.name
+                            quiet: true
+                            selected: admin.editingRole.id === row.id
                             Layout.fillWidth: true
+                            implicitHeight: 52
+                            contentItem: RowLayout {
+                                spacing: 12
+                                Rectangle {
+                                    implicitWidth: 12
+                                    implicitHeight: 12
+                                    radius: 6
+                                    color: roleRow.row.color || Theme.accent
+                                }
+                                CordsLabel {
+                                    text: "$" + roleRow.row.name
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                }
+                                CordsLabel {
+                                    text: "Edit  ›"
+                                    color: Theme.secondary
+                                }
+                            }
                             onClicked: admin.roleDraft(row)
                         }
                     }
-                    CordsField {
-                        id: roleName
-                        placeholderText: "Role name (without $)"
-                        maximumLength: 100
+                    ColumnLayout {
+                        visible: !!admin.editingRole.id
                         Layout.fillWidth: true
-                    }
-                    CordsField {
-                        id: roleColor
-                        placeholderText: "Role color (#RRGGBB)"
-                        Layout.fillWidth: true
-                    }
-                    CordsField {
-                        id: roleDescription
-                        placeholderText: "Role description"
-                        Layout.fillWidth: true
-                    }
-                    RowLayout {
+                        spacing: 12
                         CordsLabel {
-                            text: "Priority: " + (admin.editingRole.priority || 0)
+                            text: "Edit role"
+                            font.pixelSize: Theme.headingSize
+                            Layout.topMargin: 16
                         }
-                        CordsButton {
-                            text: "Move up"
-                            onClicked: {
-                                let draft = Object.assign({}, admin.editingRole);
-                                draft.priority = (draft.priority || 0) + 1;
-                                admin.editingRole = draft;
+                        CordsField {
+                            id: roleName
+                            placeholderText: "Role name (without $)"
+                            maximumLength: 100
+                            Layout.fillWidth: true
+                        }
+                        CordsField {
+                            id: roleColor
+                            placeholderText: "Role color (#RRGGBB)"
+                            Layout.fillWidth: true
+                        }
+                        CordsField {
+                            id: roleDescription
+                            placeholderText: "Role description"
+                            Layout.fillWidth: true
+                        }
+                        RowLayout {
+                            CordsLabel {
+                                text: "Priority: " + (admin.editingRole.priority || 0)
+                            }
+                            CordsButton {
+                                text: "Move up"
+                                onClicked: {
+                                    let draft = Object.assign({}, admin.editingRole);
+                                    draft.priority = (draft.priority || 0) + 1;
+                                    admin.editingRole = draft;
+                                }
+                            }
+                            CordsButton {
+                                text: "Move down"
+                                enabled: (admin.editingRole.priority || 0) > 0
+                                onClicked: {
+                                    let draft = Object.assign({}, admin.editingRole);
+                                    draft.priority -= 1;
+                                    admin.editingRole = draft;
+                                }
                             }
                         }
-                        CordsButton {
-                            text: "Move down"
-                            enabled: (admin.editingRole.priority || 0) > 0
-                            onClicked: {
-                                let draft = Object.assign({}, admin.editingRole);
-                                draft.priority -= 1;
-                                admin.editingRole = draft;
+                        CordsLabel {
+                            text: "Capability strings, one per line. The server validates grants, hierarchy and authority."
+                            Layout.fillWidth: true
+                            color: Theme.secondary
+                        }
+                        TextArea {
+                            id: rolePermissions
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 120
+                            textFormat: TextEdit.PlainText
+                            color: Theme.text
+                            selectByMouse: true
+                            background: Rectangle {
+                                color: Theme.rail
+                                border.color: Theme.border
                             }
+                            Accessible.name: "Role capability strings"
                         }
-                    }
-                    CordsLabel {
-                        text: "Capability strings, one per line. The server validates grants, hierarchy and authority."
-                        Layout.fillWidth: true
-                        color: Theme.secondary
-                    }
-                    TextArea {
-                        id: rolePermissions
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 120
-                        textFormat: TextEdit.PlainText
-                        color: Theme.text
-                        selectByMouse: true
-                        background: Rectangle {
-                            color: Theme.rail
-                            border.color: Theme.border
+                        CordsCheck {
+                            id: mentionable
+                            text: "Mentionable role"
                         }
-                        Accessible.name: "Role capability strings"
-                    }
-                    CordsCheck {
-                        id: mentionable
-                        text: "Mentionable role"
-                    }
-                    RowLayout {
-                        CordsButton {
-                            text: "Save role"
-                            primary: true
-                            enabled: !admin.desktop.busy && !!admin.editingRole.id && roleName.text.trim().length > 0
-                            onClicked: admin.desktop.putRole({
-                                id: admin.editingRole.id,
-                                name: roleName.text,
-                                color: roleColor.text,
-                                description: roleDescription.text,
-                                priority: admin.editingRole.priority || 0,
-                                permissions: rolePermissions.text.split("\n").map(s => s.trim()).filter(s => s.length > 0),
-                                mentionable: mentionable.checked
-                            }, admin.desktop.state.revision, admin.mutationId)
-                        }
-                        CordsButton {
-                            text: "Delete role…"
-                            destructive: true
-                            enabled: !admin.desktop.busy && !!admin.editingRole.id && !admin.editingRole.id.startsWith("builtin:")
-                            onClicked: {
-                                confirmation.title = "Delete role";
-                                confirmation.explanation = "Delete $" + roleName.text + " at the reviewed policy revision.";
-                                const id = admin.editingRole.id;
-                                const revision = admin.desktop.state.revision;
-                                const requestId = admin.desktop.newId();
-                                confirmation.operation = function () {
-                                    admin.desktop.deleteRole(id, revision, requestId);
-                                };
-                                confirmation.open();
+                        RowLayout {
+                            CordsButton {
+                                text: "Save role"
+                                primary: true
+                                enabled: !admin.desktop.busy && !!admin.editingRole.id && roleName.text.trim().length > 0
+                                onClicked: admin.desktop.putRole({
+                                    id: admin.editingRole.id,
+                                    name: roleName.text,
+                                    color: roleColor.text,
+                                    description: roleDescription.text,
+                                    priority: admin.editingRole.priority || 0,
+                                    permissions: rolePermissions.text.split("\n").map(s => s.trim()).filter(s => s.length > 0),
+                                    mentionable: mentionable.checked
+                                }, admin.desktop.state.revision, admin.mutationId)
+                            }
+                            CordsButton {
+                                text: "Delete role…"
+                                destructive: true
+                                enabled: !admin.desktop.busy && !!admin.editingRole.id && !admin.editingRole.id.startsWith("builtin:")
+                                onClicked: {
+                                    confirmation.title = "Delete role";
+                                    confirmation.explanation = "Delete $" + roleName.text + " at the reviewed policy revision.";
+                                    const id = admin.editingRole.id;
+                                    const revision = admin.desktop.state.revision;
+                                    const requestId = admin.desktop.newId();
+                                    confirmation.operation = function () {
+                                        admin.desktop.deleteRole(id, revision, requestId);
+                                    };
+                                    confirmation.open();
+                                }
                             }
                         }
                     }

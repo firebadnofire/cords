@@ -13,6 +13,7 @@ Button {
     padding: 10
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
+    font.pixelSize: Theme.bodySize
     Accessible.name: text
     Accessible.description: help
     contentItem: Text {
@@ -28,7 +29,7 @@ Button {
     background: Rectangle {
         radius: Theme.radius
         color: control.primary && control.enabled ? Theme.accent : control.down ? Theme.border : control.selected ? Theme.selected : control.hovered ? Theme.hover : control.quiet ? "transparent" : Theme.elevated
-        border.width: control.visualFocus ? 2 : control.quiet ? 0 : 1
+        border.width: control.visualFocus ? 2 : control.destructive ? 1 : 0
         border.color: control.visualFocus ? Theme.focus : control.destructive ? Theme.danger : Theme.border
         opacity: control.enabled ? 1 : 0.6
     }

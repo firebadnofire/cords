@@ -20,6 +20,9 @@ class ControllerTest : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() {
+#ifdef Q_OS_WIN
+        QGuiApplication::setFont(QFont(QStringLiteral("Segoe UI")));
+#endif
         qmlRegisterUncreatableType<Controller>("Cords", 1, 0, "Controller", "Test owned");
         qmlRegisterUncreatableType<Rows>("Cords", 1, 0, "Rows", "Test owned");
         qmlRegisterType<JxlImage>("Cords", 1, 0, "JxlImage");
@@ -111,6 +114,24 @@ private slots:
         settings->setProperty("section", "Appearance");
         QTest::qWait(150);
         QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-fixture-settings.png"));
+        QVERIFY(settings->property("width").toReal() > 1100);
+        item->setProperty("showSettings", false);
+        item->setProperty("showAdmin", true);
+        auto *admin = item->findChild<QObject *>("serverSettings");
+        QVERIFY(admin);
+        controller.roles()->replace({{{"id", "fixture-role"}, {"name", "Community guides"}, {"color", "#8dc4e7"}}});
+        for (const auto size : {QSize(1920, 1080), QSize(680, 520)}) {
+            window.resize(size); item->setSize(size);
+            for (int section : {0, 3, 6}) {
+                admin->setProperty("page", section);
+                QTest::qWait(100);
+                QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT)
+                    + QString("/ui-fixture-admin-%1-%2.png").arg(section).arg(size.width())));
+            }
+            QVERIFY(admin->property("width").toReal() >= size.width() - 1);
+        }
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QTRY_VERIFY(!item->property("showAdmin").toBool());
         item->setParentItem(nullptr);
         QThreadPool::globalInstance()->waitForDone();
     }

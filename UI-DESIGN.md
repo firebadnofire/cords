@@ -549,6 +549,8 @@ passed its removal gate.
 
 Record each change as `date — decision — rationale — affected surfaces`.
 
+- **2026-10-16 — Native desktop layout refinement:** Use dedicated full-window account/server settings with left section navigation, bounded 740 px forms, and Close/Escape return to chat. Apply quiet navigation rows, compact shared controls, a slate Cords palette, and explicit role editing to the native surfaces. Discord screenshots inform layout and hierarchy, without adding unsupported features or changing Cords authority. Windows fixture captures cover 680 px and 1920 px layouts; real-service and other-platform acceptance remain separate.
+
 - **2026-10-15 — Initial Cords design contract:** Familiar Discord-inspired navigation; account-centric members and roles; technical conversation info on demand; honest UI controls; client-local notifications; server-authoritative RBAC/MLS.
 - **2026-10-15 — Native Qt direction:** Qt 6 Quick/QML with a custom Cords style replaces Tauri/Svelte as the **target** interface framework; Rust remains authoritative for core behavior. Existing frontend can remain during validated transition.
 - **2026-10-15 — Discord feedback synthesis:** Preserve the familiar four-region desktop model and contextual interactions; prioritize readable density, distinct server icons, optional panel sizing, stable control positions, and avoidance of visual clutter. Feedback is qualitative and includes both criticism and praise of redesigns.

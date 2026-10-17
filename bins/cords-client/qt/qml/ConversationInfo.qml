@@ -10,13 +10,23 @@ ScrollView {
     required property var channel
     required property string route
     contentWidth: availableWidth
+    clip: true
+    leftPadding: 16
+    rightPadding: 16
+    topPadding: 16
     ColumnLayout {
-        width: parent.width
+        width: info.availableWidth
         spacing: 12
         CordsLabel {
             text: "Conversation details"
             font.bold: true
             Layout.fillWidth: true
+        }
+        CordsButton {
+            text: info.desktop.state.routeMuted ? "Unmute conversation" : "Mute conversation"
+            quiet: true
+            enabled: !info.desktop.busy && !!info.route
+            onClicked: info.desktop.muteRoute(info.route, !info.desktop.state.routeMuted)
         }
         CordsLabel {
             text: "Mode: " + (info.channel.mode || "No channel") + "\nEpoch: " + (info.channel.epoch || 0)

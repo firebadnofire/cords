@@ -285,7 +285,7 @@ Every reusable control MUST provide hover, focus, pressed, checked/selected, dis
 ### 4.4 Media presentation
 
 - Account avatars derive from the verified **canonical account-level signed profile**. Multiple devices must not create multiple public avatar identities.
-- Repeated appearances of the same account and image revision share decoding, frame pixels and an animation clock. Crop and mask belong to each view; paused/offscreen appearances retain a still frame and do not request further decoding. Do not key this sharing by display name.
+- Repeated appearances of the same account and image revision share a decoded default still image, but playback timelines MUST be per visible instance. Message avatars play while the whole message is hovered; member avatars play while their row is hovered. Leaving either region restores the default still frame. Expanded profiles play while visible, respecting encoded loops and motion preferences. Hidden/recycled instances release playback resources. Do not key sharing by display name. This supersedes the shared-clock rule under the explicit 2026-10-16 integration request.
 - Server icon and banner are **server presentation assets** with distinct storage/authorization; presentation edits never change server URL, signing key, or trust pin.
 - Support the separately specified bounded static and animated JPEG XL workflow. Use native decoding and Qt rendering rather than WebView/WASM as the target playback mechanism; keep decoder, memory, and animation timing tests.
 - Preserve frame timing, compositing, alpha, loops, crop/position, and reduced-motion preferences. Stop decoding/playing hidden or recycled delegates.
@@ -530,7 +530,7 @@ A screen or checkpoint is not complete until the applicable scenario works with 
 | Server/channel rail | Specified | **Partial** | Core trust/selection, channel lifecycle and persisted notification mute wired; categories and unread remain incomplete |
 | Conversation/composer | Specified | **Partial** | Independent TLS/PostgreSQL send/receive/restart and bounded 100–300-row history pass; native retained scroll anchors and Latest pass; unread state remains |
 | Public member sidebar | Specified | **Partial** | Real directory and automatic canonical name/JXL propagation pass two-vault TLS acceptance and native Windows captures; larger directory and role grouping remain |
-| Canonical profile/popouts | Specified | **Partial** | Signed name edit and propagation, shared per-account JXL playback and motion preferences pass native Windows/Linux tests; image editor and conflict resolution remain |
+| Canonical profile/popouts | Specified | **Partial** | Signed name edit and propagation, shared JXL still images and independent hover/profile playback pass native Windows tests (the new interaction policy has not been retested on Linux); image editor and conflict resolution remain |
 | Members/requests/devices | Specified | **Partial** | Typed core commands and QML views; complete interaction/denial acceptance remains |
 | Roles and channel policy | Specified | **Partial** | Signed catalog/assignment API ported; preserve the server's current policy activation flag and enforcement boundaries |
 | Moderation and lifecycle | Specified | **Partial** | Supported departure/archive/burn and channel succession wired; moderation/deletion APIs remain gaps |

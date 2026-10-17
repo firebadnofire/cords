@@ -44,10 +44,12 @@ Pane {
             }
             delegate: CordsButton {
                 id: member
+                objectName: "memberRow"
                 required property var row
                 readonly property var person: panel.desktop.state.people ? panel.desktop.state.people[row.id] || ({}) : ({})
                 width: ListView.view.width
                 text: row.name
+                quiet: true
                 visible: search.text.length === 0 || row.name.toLowerCase().includes(search.text.toLowerCase()) || row.id.includes(search.text)
                 height: visible ? Theme.rowHeight : 0
                 help: "Open verified profile"
@@ -60,7 +62,7 @@ Pane {
                         shape: member.person.shape || "circle"
                         Layout.preferredWidth: 28
                         Layout.preferredHeight: 28
-                        playing: member.visible && member.y + member.height >= memberList.contentY && member.y <= memberList.contentY + memberList.height
+                        playing: member.hovered && member.visible && member.y + member.height >= memberList.contentY && member.y <= memberList.contentY + memberList.height
                     }
                     CordsLabel {
                         text: member.row.name

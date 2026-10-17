@@ -16,6 +16,7 @@ class JxlImage : public QQuickPaintedItem {
     Q_PROPERTY(bool square READ square WRITE setSquare NOTIFY squareChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
+    Q_PROPERTY(bool animated READ animated NOTIFY animatedChanged)
     Q_PROPERTY(int frameNumber READ frameNumber NOTIFY frameChanged)
     Q_PROPERTY(qreal centerX MEMBER m_centerX NOTIFY cropChanged)
     Q_PROPERTY(qreal centerY MEMBER m_centerY NOTIFY cropChanged)
@@ -33,6 +34,7 @@ public:
     void setSquare(bool square);
     QString error() const { return m_error; }
     bool ready() const { return !m_image.isNull(); }
+    bool animated() const { return m_animated; }
     int frameNumber() const { return m_frame; }
     void paint(QPainter *painter) override;
 signals:
@@ -42,6 +44,7 @@ signals:
     void squareChanged();
     void errorChanged();
     void readyChanged();
+    void animatedChanged();
     void frameChanged();
     void cropChanged();
 private:
@@ -52,10 +55,10 @@ private:
     void reset();
     bool eligible() const;
     QString m_source, m_account, m_error;
-    bool m_playing = true, m_square = false;
+    bool m_playing = true, m_square = false, m_animated = false;
     int m_frame = 0;
     QImage m_image;
     QTimer m_visibility;
     qreal m_centerX = 0.5, m_centerY = 0.5, m_zoom = 1;
-    std::shared_ptr<JxlPlayback> m_playback;
+    std::shared_ptr<JxlPlayback> m_playback, m_stillPlayback;
 };

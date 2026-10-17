@@ -93,9 +93,19 @@ and deployed plugins, not just directly linked libraries. Preserve the applicati
 AGPL license and bundled codec notices. Signing, notarization, installers, source
 offers and clean-machine platform acceptance remain release gates.
 
-Avatar playback is shared by account and image content across repeated message,
-member and profile appearances. Visible playing copies use the same decoded
-frame; paused/offscreen copies retain a still image. Crop and circle/square
-presentation remain local. Shared entries release their sandbox when no view
-needs decoding and disappear after their last consumer. Motion preferences apply
-to every avatar; the profile popup supports explicit Play/Pause.
+Avatar still images are shared by account and image content. Each playing instance
+has its own timeline on the bounded asynchronous decoder scheduler. Message and
+member rows play on hover and return to their default still frame on exit;
+expanded profiles play while visible. Hidden/offscreen copies release playback.
+Crop and circle/square presentation remain local. Motion preferences apply to
+all avatars, with explicit Play/Pause in the expanded profile.
+
+### Identity selection and navigation
+
+The native console-style picker lists remembered identities, not servers. Selecting
+an identity reveals authentication controls; it never unlocks automatically.
+Escape/Back clears selection, and the shell switch-identity action locks the vault.
+Each account retains its existing independent memberships and credentials. Server
+order and channel selection are stored in its encrypted `qtNavigation` preferences;
+the core persists the active server. Cached JXL picker avatars remain still.
+See `docs/reports/qt-prototype-integration.md` for local acceptance and unrun cases.

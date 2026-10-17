@@ -222,6 +222,7 @@ pub(super) struct Worker {
     last_activity: Instant,
     policy: Option<AccountSummary>,
     channel_by_server: BTreeMap<String, String>,
+    server_order: Vec<String>,
     scope: Arc<Mutex<Scope>>,
     sync_cursor: usize,
     server_health: BTreeMap<String, (bool, String, bool)>,
@@ -273,6 +274,7 @@ impl Worker {
             last_activity: Instant::now(),
             policy: None,
             channel_by_server: BTreeMap::new(),
+            server_order: Vec::new(),
             scope,
             sync_cursor: 0,
             server_health: BTreeMap::new(),
@@ -378,6 +380,10 @@ impl Worker {
         let Some(result) = result else {
             self.priority_close(lock, input).await;
             return;
+        };
+        let result = match result {
+            Ok(()) => self.save_navigation().await,
+            Err(error) => Err(error),
         };
         if let Err(error) = result {
             self.view.error = format!("{error:#}");
@@ -642,11 +648,56 @@ impl Worker {
             .into_iter()
             .find(|entry| entry.account_id == account)
             .context("Account is absent from registry")?;
+        let (order, channels) = navigation(&client.ui_preferences())?;
+        self.server_order = order;
+        self.channel_by_server = channels;
         self.client = Some(client);
         self.policy = Some(policy);
         self.reset_server_views();
         self.last_activity = Instant::now();
         self.view.notice = "Account unlocked".into();
+        Ok(())
+    }
+    async fn save_navigation(&mut self) -> Result<()> {
+        let Some(client) = self.client.as_mut() else {
+            return Ok(());
+        };
+        let mut value = client.ui_preferences();
+        let (mut order, mut channels) = navigation(&value)?;
+        let known: Vec<_> = client
+            .servers()
+            .into_iter()
+            .map(|server| server.server_id)
+            .collect();
+        order.retain(|id| known.contains(id));
+        for id in &known {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+        channels.retain(|server, _| known.contains(server));
+        let active = client.status().server_id;
+        if !self.view.route.is_empty()
+            && client
+                .cached_channels()
+                .iter()
+                .any(|channel| channel.channel_id == self.view.route)
+        {
+            channels.insert(active, self.view.route.clone());
+        }
+        let saved = serde_json::json!({"serverOrder": order, "channels": channels});
+        if value.get("qtNavigation") != Some(&saved) {
+            value
+                .as_object_mut()
+                .context("Invalid preference document")?
+                .insert("qtNavigation".into(), saved);
+            client
+                .save_ui_preferences(value)
+                .await
+                .context("Cannot persist account navigation")?;
+        }
+        self.server_order = order;
+        self.channel_by_server = channels;
         Ok(())
     }
     async fn close(&mut self, sign_out: bool) {
@@ -669,6 +720,7 @@ impl Worker {
         self.history_end = None;
         self.history_limit = 100;
         self.channel_by_server.clear();
+        self.server_order.clear();
         self.server_health.clear();
         self.sync_cursor = 0;
         self.classifier = Classifier::default();
@@ -852,6 +904,13 @@ impl Worker {
                 self.view.notice = format!("{} deliveries pending", result.pending.len());
             }
             Command::SelectChannel(route) => {
+                ensure!(
+                    client
+                        .cached_channels()
+                        .iter()
+                        .any(|channel| channel.channel_id == route),
+                    "Channel is unavailable on the selected server"
+                );
                 self.view.route = route;
             }
             Command::OlderMessages(route) => {
@@ -1447,7 +1506,7 @@ impl Worker {
         self.view.can_roles = has("server.roles.manage");
         self.view.can_assign = has("server.roles.assign");
         self.view.can_audit = has("server.audit.read");
-        self.view.servers = server_rows(client, &self.server_health);
+        self.view.servers = server_rows(client, &self.server_health, &self.server_order);
         if let Some((connected, error, _)) = self.server_health.get(&self.view.server) {
             self.view.connected = *connected;
             if !error.is_empty() && self.view.error.is_empty() {
@@ -1637,9 +1696,16 @@ fn append_directory(
 fn server_rows(
     client: &Client,
     health: &BTreeMap<String, (bool, String, bool)>,
+    order: &[String],
 ) -> Vec<ffi::ServerRow> {
-    client
-        .servers()
+    let mut servers = client.servers();
+    servers.sort_by_key(|server| {
+        order
+            .iter()
+            .position(|id| id == &server.server_id)
+            .unwrap_or(usize::MAX)
+    });
+    servers
         .into_iter()
         .map(|server| {
             let status = health.get(&server.server_id).cloned().unwrap_or_default();
@@ -1713,4 +1779,92 @@ fn notification_preferences(value: &serde_json::Value) -> Result<notifications::
                 .context("Invalid encrypted notification preferences")
         },
     )
+}
+
+// Navigation lives in the existing encrypted per-account preference document.
+// It is presentation state, never evidence of membership or channel access.
+fn navigation(value: &serde_json::Value) -> Result<(Vec<String>, BTreeMap<String, String>)> {
+    let Some(value) = value.get("qtNavigation") else {
+        return Ok((Vec::new(), BTreeMap::new()));
+    };
+    ensure!(
+        value.is_object(),
+        "Invalid encrypted navigation preferences"
+    );
+    let order: Vec<String> = serde_json::from_value(
+        value
+            .get("serverOrder")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+    )
+    .context("Invalid encrypted server order")?;
+    let channels = serde_json::from_value(
+        value
+            .get("channels")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    )
+    .context("Invalid encrypted channel navigation")?;
+    ensure!(
+        order
+            .iter()
+            .enumerate()
+            .all(|(index, id)| !order[..index].contains(id)),
+        "Duplicate server in navigation order"
+    );
+    Ok((order, channels))
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+
+    #[test]
+    fn navigation_rejects_malformed_and_duplicate_ids() -> Result<()> {
+        let empty = navigation(&serde_json::json!({}))?;
+        assert!(empty.0.is_empty() && empty.1.is_empty());
+        assert!(navigation(&serde_json::json!({"qtNavigation": []})).is_err());
+        assert!(
+            navigation(&serde_json::json!({"qtNavigation": {"serverOrder": ["a", "a"]}})).is_err()
+        );
+        assert!(navigation(&serde_json::json!({"qtNavigation": {"channels": {"a": 4}}})).is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn navigation_persists_independently_in_real_vaults() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let migrations =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../migrations/sqlite");
+        let registry = AccountRegistry::open(directory.path(), &migrations, None).await?;
+        let first_password = "Mango Lantern independent navigation 83";
+        let second_password = "Mango Lantern independent navigation 27";
+        let mut first = registry.create("First", first_password, false).await?;
+        let first_id = first.status().account_id;
+        let mut value = first.ui_preferences();
+        value["qtNavigation"] = serde_json::json!({"serverOrder": ["private-navigation-marker-a", "shared"], "channels": {"shared": "first-channel"}});
+        first.save_ui_preferences(value.clone()).await?;
+        first.shutdown().await;
+        let mut second = registry.create("Second", second_password, false).await?;
+        let second_id = second.status().account_id;
+        let mut second_value = second.ui_preferences();
+        assert!(navigation(&second_value)?.0.is_empty());
+        second_value["qtNavigation"] = serde_json::json!({"serverOrder": ["shared", "b"], "channels": {"shared": "second-channel"}});
+        second.save_ui_preferences(second_value.clone()).await?;
+        second.shutdown().await;
+        drop(registry);
+        let registry = AccountRegistry::open(directory.path(), &migrations, None).await?;
+        assert!(registry.unlock(&first_id, second_password).await.is_err());
+        let first = registry.unlock(&first_id, first_password).await?;
+        assert_eq!(first.ui_preferences(), value);
+        // Presentation IDs do not create server memberships or credentials.
+        assert!(first.servers().is_empty());
+        assert!(first.identity_view()["membership"].is_null());
+        first.shutdown().await;
+        let second = registry.unlock(&second_id, second_password).await?;
+        assert_eq!(second.ui_preferences(), second_value);
+        assert!(second.servers().is_empty());
+        second.shutdown().await;
+        Ok(())
+    }
 }

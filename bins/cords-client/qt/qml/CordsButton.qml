@@ -4,6 +4,8 @@ import QtQuick.Controls.Basic
 Button {
     id: control
     property bool primary: false
+    property bool quiet: false
+    property bool selected: false
     property bool destructive: false
     property string help: ""
     implicitHeight: Theme.controlHeight
@@ -18,15 +20,15 @@ Button {
         textFormat: Text.PlainText
         font: control.font
         color: control.primary && control.enabled ? Theme.onAccent : control.destructive ? Theme.danger : Theme.text
-        horizontalAlignment: Text.AlignHCenter
+        horizontalAlignment: control.quiet ? Text.AlignLeft : Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
         opacity: control.enabled ? 1 : 0.55
     }
     background: Rectangle {
         radius: Theme.radius
-        color: control.primary && control.enabled ? Theme.accent : control.down ? Theme.border : control.hovered ? Theme.hover : Theme.elevated
-        border.width: control.visualFocus ? 2 : 1
+        color: control.primary && control.enabled ? Theme.accent : control.down ? Theme.border : control.selected ? Theme.selected : control.hovered ? Theme.hover : control.quiet ? "transparent" : Theme.elevated
+        border.width: control.visualFocus ? 2 : control.quiet ? 0 : 1
         border.color: control.visualFocus ? Theme.focus : control.destructive ? Theme.danger : Theme.border
         opacity: control.enabled ? 1 : 0.6
     }

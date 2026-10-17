@@ -44,6 +44,7 @@ private slots:
         QVERIFY(theme->setProperty("disableAnimations", false));
         QVERIFY(theme->setProperty("reducedMotion", true));
         QVERIFY(!image->playing());
+        QVERIFY(avatar->setProperty("playing", true));
         QVERIFY(avatar->setProperty("motionOverride", true));
         QVERIFY(image->playing());
         QTRY_VERIFY_WITH_TIMEOUT(image->frameNumber() > still, 10000);
@@ -97,70 +98,69 @@ private slots:
         // A destroyed view may have work in flight; jobs retain only their Rust
         // decoder, never a pointer to the destroyed Qt item.
     }
-    void repeatedAccountAvatarsShareFramesAndLifetime() {
+    void repeatedAvatarsHaveIndependentTimelines() {
         QFile fixture(QStringLiteral(CORDS_TEST_IMAGE));
         QVERIFY(fixture.open(QIODevice::ReadOnly));
         const auto source = "data:image/jxl;base64," + fixture.readAll().toBase64();
         QQuickWindow window;
         window.resize(420, 160);
-        window.show();
-        std::vector<std::unique_ptr<JxlImage>> avatars;
-        // More views than the distinct-image budget must still use one entry.
-        for (int index = 0; index < 80; ++index) {
-            auto view = std::make_unique<JxlImage>(window.contentItem());
-            view->setSize({20, 20});
-            view->setPosition({qreal(index % 20 * 20), qreal(index / 20 * 20)});
-            view->setAccount("verified-account-a"); view->setSource(source);
-            avatars.push_back(std::move(view));
+        JxlImage first(window.contentItem()), second(window.contentItem());
+        for (auto *view : {&first, &second}) {
+            view->setSize({100, 100}); view->setPlaying(false);
+            view->setAccount("same-account"); view->setSource(source);
         }
-        auto *first = avatars.front().get();
-        auto *copy = avatars.back().get();
-        QTRY_VERIFY_WITH_TIMEOUT(first->frameNumber() >= 3 && copy->ready(), 90000);
-        for (const auto &view : avatars) {
-            QVERIFY2(view->error().isEmpty(), qPrintable(view->error()));
-            QCOMPARE(view->m_playback.get(), first->m_playback.get());
-            QCOMPARE(view->frameNumber(), first->frameNumber());
-            QCOMPARE(view->m_image.cacheKey(), first->m_image.cacheKey());
-        }
-        copy->setPlaying(false);
-        const auto paused = copy->frameNumber();
-        QTRY_VERIFY_WITH_TIMEOUT(first->frameNumber() > paused, 10000);
-        QCOMPARE(copy->frameNumber(), paused);
-        copy->setPlaying(true);
-        QCOMPARE(copy->frameNumber(), first->frameNumber());
-        copy->setVisible(false);
-        const auto hidden = copy->frameNumber();
-        QTRY_VERIFY_WITH_TIMEOUT(first->frameNumber() > hidden, 10000);
-        QCOMPARE(copy->frameNumber(), hidden);
-        copy->setVisible(true);
-        QCOMPARE(copy->frameNumber(), first->frameNumber());
-
-        // Identity, image revision, and crop/mask have different jobs.
-        copy->setAccount("verified-account-b");
-        QVERIFY(copy->m_playback.get() != first->m_playback.get());
-        QTRY_VERIFY_WITH_TIMEOUT(copy->ready(), 15000);
-        copy->setAccount("verified-account-a");
-        QCOMPARE(copy->m_playback.get(), first->m_playback.get());
-        copy->setSquare(true); copy->setSize({70, 70});
-        QCOMPARE(copy->m_image.cacheKey(), first->m_image.cacheKey());
-        QFile replacement(QFileInfo(QStringLiteral(CORDS_TEST_IMAGE)).dir().filePath("looping-b.jxl"));
-        QVERIFY(replacement.open(QIODevice::ReadOnly));
-        copy->setSource("data:image/jxl;base64," + replacement.readAll().toBase64());
-        QVERIFY(copy->m_playback.get() != first->m_playback.get());
-        QTRY_VERIFY_WITH_TIMEOUT(copy->ready(), 15000);
-        QVERIFY(copy->m_image.cacheKey() != first->m_image.cacheKey());
-        copy->setSource(source);
-        QCOMPARE(copy->m_playback.get(), first->m_playback.get());
-
-        window.hide(); QTest::qWait(350);
-        const auto stopped = first->frameNumber();
+        second.setX(110); window.show();
+        QTRY_VERIFY_WITH_TIMEOUT(first.ready() && second.ready(), 90000);
+        QCOMPARE(first.m_playback, second.m_playback);
+        const auto still = first.m_image;
+        first.setPlaying(true);
+        QTRY_VERIFY_WITH_TIMEOUT(first.frameNumber() >= 3, 15000);
+        QCOMPARE(second.m_image, still);
+        second.setPlaying(true);
+        QVERIFY(first.m_playback != second.m_playback);
+        QTRY_VERIFY_WITH_TIMEOUT(second.frameNumber() >= 2, 15000);
+        first.setPlaying(false);
+        QCOMPARE(first.m_image, still);
+        const auto frame = second.frameNumber();
+        QTRY_VERIFY_WITH_TIMEOUT(second.frameNumber() > frame, 15000);
+        QCOMPARE(first.m_image, still);
+        const auto playback = second.m_playback;
+        second.setPlaying(true); second.setSquare(true);
+        QCOMPARE(second.m_playback, playback);
+        second.setPlaying(false);
+        QCOMPARE(first.m_playback, second.m_playback);
+        QCOMPARE(second.m_image, still);
+    }
+    void finiteLoopStopsAndCanBeTriggeredAgain() {
+        QFile fixture(QFileInfo(QStringLiteral(CORDS_TEST_IMAGE)).dir().filePath("finite.jxl"));
+        QVERIFY(fixture.open(QIODevice::ReadOnly));
+        QQuickWindow window; window.resize(160, 160);
+        JxlImage image(window.contentItem()); image.setSize({100, 100});
+        image.setSource("data:image/jxl;base64," + fixture.readAll().toBase64()); window.show();
+        QTRY_COMPARE_WITH_TIMEOUT(image.frameNumber(), 4, 15000);
+        QVERIFY(image.animated());
+        QTest::qWait(1200);
+        QCOMPARE(image.frameNumber(), 4);
+        image.setPlaying(false); QCOMPARE(image.frameNumber(), 1);
+        image.setPlaying(true);
+        QTRY_COMPARE_WITH_TIMEOUT(image.frameNumber(), 4, 15000);
+    }
+    void staticJxlNeverStartsAnAnimationTimeline() {
+        QFile fixture(QFileInfo(QStringLiteral(CORDS_TEST_IMAGE)).dir().filePath("static.jxl"));
+        QVERIFY(fixture.open(QIODevice::ReadOnly));
+        QQuickWindow window; window.resize(160, 160);
+        JxlImage image(window.contentItem()); image.setSize({100, 100});
+        image.setPlaying(false);
+        image.setSource("data:image/jxl;base64," + fixture.readAll().toBase64()); window.show();
+        QTRY_VERIFY_WITH_TIMEOUT(image.ready(), 15000);
+        QVERIFY(!image.animated());
+        const auto still = image.m_playback;
+        const auto pixels = image.m_image;
+        image.setPlaying(true);
         QTest::qWait(700);
-        QCOMPARE(first->frameNumber(), stopped);
-        window.show();
-        QTRY_VERIFY_WITH_TIMEOUT(first->frameNumber() > stopped, 15000);
-        const std::weak_ptr<JxlPlayback> released = first->m_playback;
-        avatars.clear();
-        QVERIFY(released.expired());
+        QCOMPARE(image.m_playback, still);
+        QCOMPARE(image.m_image, pixels);
+        QCOMPARE(image.frameNumber(), 1);
     }
     void boundedSlotsYieldToOtherVisibleImages() {
         QFile fixture(QStringLiteral(CORDS_TEST_IMAGE));

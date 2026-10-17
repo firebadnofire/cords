@@ -4,7 +4,7 @@ import QtQuick.Controls.Basic
 CheckBox {
     id: control
     spacing: 10
-    implicitHeight: Theme.controlHeight
+    implicitHeight: Math.max(Theme.controlHeight, contentItem.implicitHeight + topPadding + bottomPadding)
     Accessible.name: text
     indicator: Rectangle {
         implicitWidth: 20

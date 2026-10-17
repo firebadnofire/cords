@@ -195,3 +195,13 @@ The migration is incomplete. The existing frontend remains temporarily as the
 behavioral reference required by the removal gate, not as the intended final
 architecture. Linux package checks are headless; no interactive Linux/macOS
 desktop acceptance or production release is claimed.
+
+## 2026-10-16 prototype interaction amendment
+
+The prototype alignment request supersedes the shared animation clock described
+above. Still pixels remain shared by account/content; active message, member and
+expanded-profile instances now have independent timelines. Message/member rows
+play on hover and reset to the still frame on exit. Expanded profiles play while
+visible, subject to loops and motion preferences. See
+[the local implementation and validation report](../reports/qt-prototype-integration.md).
+Previous Linux results do not validate this new interaction policy.

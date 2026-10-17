@@ -16,7 +16,7 @@
 
 namespace {
 // Two bounded 128 MiB sandbox heaps. Entries and the FIFO are bounded by
-// distinct account/image pairs, rather than the number of avatar views.
+// shared still images and independent active avatar timelines.
 QSemaphore decoderSlots(2);
 QList<std::weak_ptr<JxlPlayback>> entries, waiting;
 QTimer *scheduler = nullptr;
@@ -42,6 +42,7 @@ public:
     int serial = 0, generation = 0;
     quint32 cycles = 0;
     bool pending = false, queued = false, finished = false;
+    bool animate = false, animated = false;
     QTimer timer, visibility;
     QElapsedTimer clock;
     long double due = 0;
@@ -56,7 +57,7 @@ public:
     }
     bool needed() const {
         for (const auto &view : views)
-            if (view && view->eligible() && (!view->ready() || (view->playing() && !finished))) return true;
+            if (view && view->eligible() && (!view->ready() || (animate && view->playing() && !finished))) return true;
         return false;
     }
     void distribute() {
@@ -69,8 +70,10 @@ public:
                 view->m_error = error; emit view->errorChanged();
             }
             if (!view || view->m_playback.get() != this) continue;
-            if (!image.isNull() && (!view->ready() || view->playing()) && view->m_frame != serial) {
+            if (!image.isNull() && (!animate || !view->ready() || view->playing()) && view->m_frame != serial) {
                 view->m_image = image; view->m_frame = serial;
+                if (view->m_animated != animated) { view->m_animated = animated; emit view->animatedChanged(); }
+                if (!view || view->m_playback.get() != this) continue;
                 view->update(); emit view->frameChanged();
                 if (view && view->m_playback.get() == this) emit view->readyChanged();
             }
@@ -112,6 +115,7 @@ public:
             if (!frame.error.isEmpty()) {
                 self->error = frame.error; self->decoder.reset(); self->distribute(); return;
             }
+            self->animated = self->animated || !frame.last || frame.ticks != 0;
             self->image = frame.image; ++self->serial;
             self->distribute();
             if (!self->clock.isValid()) self->clock.start();
@@ -202,7 +206,7 @@ void JxlImage::detach() {
     m_visibility.start();
 }
 void JxlImage::reset() {
-    detach(); m_image = {}; m_error.clear(); m_frame = 0;
+    detach(); m_stillPlayback.reset(); m_animated = false; emit animatedChanged(); m_image = {}; m_error.clear(); m_frame = 0;
     emit readyChanged(); emit errorChanged(); emit frameChanged(); update();
 }
 void JxlImage::setSource(const QString &source) {
@@ -219,31 +223,43 @@ void JxlImage::setPlaying(bool value) {
 }
 void JxlImage::setSquare(bool value) { if (m_square != value) { m_square = value; emit squareChanged(); update(); } }
 void JxlImage::requestFrame() {
-    if (!m_playback && eligible() && m_error.isEmpty()) {
-        entries.removeIf([](const auto &entry) { return entry.expired(); });
-        // Anonymous standalone images never share on a presentation label.
-        const auto key = m_account + ':' + QString::fromLatin1(QCryptographicHash::hash(m_source.toUtf8(), QCryptographicHash::Sha256).toHex());
-        if (!m_account.isEmpty()) {
-            for (const auto &entry : entries) {
-                auto playback = entry.lock();
-                if (playback && playback->key == key) { m_playback = std::move(playback); break; }
-            }
+    if (!eligible()) {
+        if (m_playback && m_playback != m_stillPlayback) {
+            detach(); m_frame = 0;
+            if (m_stillPlayback) { m_image = m_stillPlayback->image; update(); emit frameChanged(); }
         }
-        if (!m_playback) {
+        return;
+    }
+    if (!m_stillPlayback && m_error.isEmpty()) {
+        entries.removeIf([](const auto &entry) { return entry.expired(); });
+        const auto key = m_account + ':' + QString::fromLatin1(QCryptographicHash::hash(m_source.toUtf8(), QCryptographicHash::Sha256).toHex());
+        for (const auto &entry : entries) {
+            auto playback = entry.lock();
+            if (playback && !playback->animate && playback->key == key) { m_stillPlayback = playback; break; }
+        }
+        if (!m_stillPlayback) {
             if (entries.size() >= 64) {
                 m_error = tr("Visible media limit reached"); emit errorChanged(); return;
             }
-            m_playback = std::make_shared<JxlPlayback>(key, m_source); entries.append(m_playback);
+            m_stillPlayback = std::make_shared<JxlPlayback>(key, m_source);
+            entries.append(m_stillPlayback);
         }
+    }
+    if (!m_stillPlayback) return;
+    const bool active = m_playing && m_stillPlayback->animated && !m_stillPlayback->image.isNull();
+    if (!m_playback || m_playback->animate != active) {
+        detach();
+        if (!active) m_frame = 0;
+        if (active) {
+            m_playback = std::make_shared<JxlPlayback>(m_stillPlayback->key, m_source);
+            m_playback->animate = true;
+        } else m_playback = m_stillPlayback;
         m_playback->views.append(this);
-        // Once attached, visibility polling also belongs to the shared entry.
-        m_visibility.stop();
     }
-    if (m_playback) {
-        const auto playback = m_playback;
-        playback->refresh();
-    }
+    const auto playback = m_playback;
+    playback->refresh();
 }
+
 void JxlImage::paint(QPainter *painter) {
     if (m_image.isNull()) return;
     QPainterPath mask;

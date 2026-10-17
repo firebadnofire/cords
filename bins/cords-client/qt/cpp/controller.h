@@ -95,6 +95,7 @@ signals:
     void notificationsRequested();
     void conversationRequested();
 private:
+    friend class ControllerTest;
     void submit(const std::function<void()> &operation);
     void apply(const cords::Snapshot &snapshot);
     void hideWhileLocking();

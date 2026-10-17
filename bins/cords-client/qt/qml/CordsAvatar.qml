@@ -7,11 +7,12 @@ Rectangle {
     property string account: ""
     property string shape: "circle"
     property url source: ""
-    property bool playing: true
+    property bool playing: false
     property bool motionOverride: false
     property real centerX: 0.5
     property real centerY: 0.5
     property real zoom: 1
+    readonly property bool animated: nativeImage.animated
     readonly property string imageError: nativeImage.error
     width: 36
     height: width

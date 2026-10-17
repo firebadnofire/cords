@@ -1707,6 +1707,20 @@ Codex MUST NOT:
 - Couple the entire application to OpenMLS concrete types.
 - Mark native deployment as supported without tests and documentation.
 
+## 36.3 Pre-release compatibility and legacy migration policy
+
+Cords is still in active early development and is not widely deployed. Contributors MUST optimize for a correct, maintainable target design rather than preserving every experimental implementation, database layout, local cache, or internal API that existed during development. Pre-release code and development-only state do not automatically create a long-term compatibility obligation.
+
+- Contributors SHOULD implement the intended architecture directly, even when doing so breaks compatibility with obsolete development builds or test data.
+- Contributors SHOULD NOT add legacy adapters, dual-read or dual-write paths, fallback formats, compatibility flags, or elaborate data-conversion machinery solely to support hypothetical users of unreleased versions.
+- Contributors MAY require a documented reset or recreation of disposable development databases, caches, fixtures, or test configurations instead of implementing a bespoke migration for them. Any destructive step MUST be explicit, never automatic or disguised as a routine upgrade.
+- When storage schemas change, contributors MUST still maintain coherent schema creation and migration mechanisms for supported installations as required by section 27. The existence of a migration system does not mean every abandoned development schema needs a supported upgrade path.
+- Contributors MUST NOT silently destroy or invalidate real user data, account identities, private keys, recovery material, or other irreplaceable state. Changes that risk such state require a deliberate preservation or recovery strategy and clearly documented operator action.
+- Published releases, explicitly supported protocol versions, documented compatibility windows, and security-critical trust transitions remain binding. This policy does not override sections 15.4, 27, or 33, nor the compatibility and security requirements of accepted ADRs.
+- When a clean break is justified, contributors SHOULD make the breaking change plainly, update relevant tests and documentation, and report what existing development installations must reset or reconfigure.
+
+**Default rule:** Do not spend feature-development time inventing legacy migration problems for an installed base that does not meaningfully exist. Build the right system for the first stable release; preserve compatibility where an actual support commitment or non-disposable user state requires it.
+
 # 37. Open decisions
 
 The following decisions remain intentionally open and require an ADR before production release:

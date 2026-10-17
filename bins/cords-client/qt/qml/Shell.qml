@@ -96,6 +96,23 @@ Item {
                         height: 48
                         text: row.origin.replace("https://", "").slice(0, 2).toUpperCase()
                         primary: row.selected
+                        background: Rectangle {
+                            radius: serverButton.row.selected || serverButton.hovered ? 13 : width / 2
+                            color: serverButton.row.selected ? Theme.accent : serverButton.hovered ? Theme.hover : Theme.elevated
+                            border.width: serverButton.visualFocus ? 2 : 0
+                            border.color: Theme.focus
+                            Behavior on radius { NumberAnimation { duration: Theme.reducedMotion ? 0 : 120 } }
+                        }
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.leftMargin: -8
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 3
+                            height: serverButton.row.selected ? 32 : 16
+                            radius: 2
+                            visible: serverButton.row.selected || serverButton.hovered
+                            color: Theme.text
+                        }
                         help: row.origin + (row.archived ? " (archived)" : row.error ? " · " + row.error : row.connected ? " · Connected" : " · Connecting")
                         Rectangle {
                             visible: serverButton.row.unread
@@ -165,15 +182,15 @@ Item {
                     onClicked: joinServer.open()
                 }
                 CordsButton {
-                    text: "L"
+                    text: "⇄"
                     Layout.fillWidth: true
-                    help: "Lock account (Ctrl+L)"
+                    help: "Switch identity and lock this account (Ctrl+L)"
                     onClicked: shell.desktop.lockAccount(false)
                 }
             }
         }
         Rectangle {
-            Layout.preferredWidth: shell.width < 850 ? 184 : 232
+            Layout.preferredWidth: shell.width < 850 ? 176 : shell.width >= 1400 ? 280 : 232
             Layout.fillHeight: true
             color: Theme.navigation
             ColumnLayout {
@@ -237,7 +254,8 @@ Item {
                         text: "# " + row.name + (row.retired ? " · archive" : "")
                         visible: filter.text.length === 0 || row.name.toLowerCase().includes(filter.text.toLowerCase())
                         height: visible ? Theme.rowHeight : 0
-                        primary: row.id === shell.route
+                        quiet: true
+                        selected: row.id === shell.route
                         enabled: !shell.desktop.busy
                         help: row.mode === "public" ? "Public: server can read messages" : "End-to-end encrypted"
                         onClicked: {
@@ -271,7 +289,7 @@ Item {
             spacing: 0
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 54
+                Layout.preferredHeight: 50
                 color: Theme.window
                 RowLayout {
                     anchors.fill: parent
@@ -282,6 +300,12 @@ Item {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         wrapMode: Text.NoWrap
+                    }
+                    CordsField {
+                        id: messageSearch
+                        placeholderText: "Search loaded messages"
+                        Layout.preferredWidth: shell.width < 850 ? 120 : 210
+                        visible: shell.route.length > 0 && !shell.showSettings && !shell.showAdmin
                     }
                     CordsButton {
                         text: "Activity"
@@ -370,14 +394,6 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     spacing: 8
-                    CordsField {
-                        id: messageSearch
-                        placeholderText: "Search loaded messages"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 14
-                        Layout.rightMargin: 14
-                        visible: shell.route.length > 0
-                    }
                     Flow {
                         Layout.fillWidth: true
                         Layout.leftMargin: 14
@@ -425,6 +441,7 @@ Item {
                         browsing: !!shell.desktop.state.historyBrowsing
                         delegate: ItemDelegate {
                             id: message
+                            objectName: "messageRow"
                             required property var row
                             readonly property var person: shell.desktop.state.people ? shell.desktop.state.people[row.account] || ({}) : ({})
                             width: messages.width - messages.leftMargin - messages.rightMargin
@@ -432,52 +449,68 @@ Item {
                             height: visible ? implicitHeight : 0
                             padding: 8
                             hoverEnabled: true
+                            HoverHandler { id: messageHover }
                             background: Rectangle {
-                                color: message.hovered ? Theme.navigation : "transparent"
+                                color: messageHover.hovered ? Theme.navigation : "transparent"
                                 radius: Theme.radius
                             }
-                            contentItem: ColumnLayout {
-                                spacing: 4
-                                RowLayout {
-                                    CordsAvatar {
+                            contentItem: RowLayout {
+                                spacing: 12
+                                CordsButton {
+                                    Layout.preferredWidth: 40
+                                    Layout.preferredHeight: 40
+                                    Layout.alignment: Qt.AlignTop
+                                    padding: 0
+                                    quiet: true
+                                    text: message.row.author || "Verified sender"
+                                    help: "Open account profile"
+                                    enabled: !!message.row.account
+                                    onClicked: shell.openProfile(message.row.account)
+                                    contentItem: CordsAvatar {
                                         name: message.row.author
                                         account: message.row.account
                                         source: message.person.image || ""
                                         shape: message.person.shape || "circle"
-                                        Layout.preferredWidth: 30
-                                        Layout.preferredHeight: 30
-                                        playing: message.visible && message.y + message.height >= messages.contentY && message.y <= messages.contentY + messages.height
-                                    }
-                                    CordsButton {
-                                        text: message.row.author || "Verified sender"
-                                        help: "Open account profile"
-                                        implicitHeight: 28
-                                        Layout.maximumWidth: Math.max(100, message.width * 0.52)
-                                        enabled: !!message.row.account
-                                        onClicked: shell.openProfile(message.row.account)
-                                    }
-                                    CordsLabel {
-                                        text: new Date(message.row.timestamp * 1000).toLocaleString()
-                                        font.pixelSize: Theme.captionSize
-                                        color: Theme.muted
-                                        Layout.fillWidth: true
-                                        Layout.minimumWidth: 0
-                                        wrapMode: Text.NoWrap
-                                        elide: Text.ElideRight
+                                        playing: messageHover.hovered && message.visible && message.y + message.height >= messages.contentY && message.y <= messages.contentY + messages.height
                                     }
                                 }
-                                TextArea {
-                                    text: message.row.body
-                                    textFormat: TextEdit.PlainText
-                                    readOnly: true
-                                    selectByMouse: true
-                                    wrapMode: TextEdit.Wrap
-                                    color: Theme.text
-                                    font.pixelSize: Theme.bodySize
-                                    padding: 0
+                                ColumnLayout {
                                     Layout.fillWidth: true
-                                    background: null
-                                    Accessible.name: "Message from " + message.row.author
+                                    spacing: 2
+                                    RowLayout {
+                                        CordsButton {
+                                            text: message.row.author || "Verified sender"
+                                            quiet: true
+                                            font.bold: true
+                                            padding: 0
+                                            implicitHeight: 22
+                                            Layout.maximumWidth: Math.max(90, message.width * 0.45)
+                                            enabled: !!message.row.account
+                                            onClicked: shell.openProfile(message.row.account)
+                                        }
+                                        CordsLabel {
+                                            text: new Date(message.row.timestamp * 1000).toLocaleString()
+                                            font.pixelSize: Theme.captionSize
+                                            color: Theme.muted
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            wrapMode: Text.NoWrap
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    TextArea {
+                                        text: message.row.body
+                                        textFormat: TextEdit.PlainText
+                                        readOnly: true
+                                        selectByMouse: true
+                                        wrapMode: TextEdit.Wrap
+                                        color: Theme.text
+                                        font.pixelSize: Theme.bodySize
+                                        padding: 0
+                                        Layout.fillWidth: true
+                                        background: null
+                                        Accessible.name: "Message from " + message.row.author
+                                    }
                                 }
                             }
                             TapHandler {
@@ -535,7 +568,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: Math.min(140, Math.max(48, composer.contentHeight + 20))
-                            color: Theme.rail
+                            color: Theme.elevated
                             radius: Theme.radius
                             border.color: composer.activeFocus ? Theme.focus : Theme.border
                             ScrollView {
@@ -583,7 +616,7 @@ Item {
                 MemberList {
                     visible: shell.showMembers && shell.wide
                     desktop: shell.desktop
-                    Layout.preferredWidth: 230
+                    Layout.preferredWidth: 240
                     Layout.fillHeight: true
                     onProfileRequested: account => shell.openProfile(account)
                 }

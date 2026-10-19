@@ -52,7 +52,7 @@ CordsDialog {
                 objectName: "confirmRemoval"
                 text: removal.operationBusy ? "Removing…" : "Delete local vault"
                 destructive: true
-                enabled: !removal.operationBusy && !!removal.account && removalPassword.text.length > 0
+                enabled: !removal.operationBusy && !!removal.account
                 onClicked: {
                     removal.removalRequested(removal.account, removalPassword.text);
                     removalPassword.clear();

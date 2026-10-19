@@ -215,10 +215,9 @@ Pane {
                 }
                 CordsField {
                     id: password
-                    onTextChanged: allowWeak.checked = false
                     objectName: "accountPassword"
                     visible: picker.creating || picker.migrating || !!picker.selectedAccount
-                    placeholderText: picker.creating || picker.migrating ? "New password (at least 12 characters)" : "Account password"
+                    placeholderText: picker.creating || picker.migrating ? "New password" : "Account password"
                     echoMode: TextInput.Password
                     inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
                     Layout.fillWidth: true
@@ -237,14 +236,9 @@ Pane {
                     id: allowWeak
                     Layout.fillWidth: true
                     visible: picker.creating || picker.migrating
-                    enabled: !picker.desktop.busy && Array.from(password.text).length >= 12
-                    text: "Allow a predictable password (12+ characters)"
-                }
-                CordsLabel {
-                    visible: picker.creating || picker.migrating
-                    text: "At least 12 characters are required. This checkbox only accepts warnings about common passwords, repeated characters, or your nickname."
-                    color: Theme.secondary
-                    Layout.fillWidth: true
+                    objectName: "ignoreWeakPasswords"
+                    enabled: !picker.desktop.busy
+                    text: "Ignore weak passwords"
                 }
                 CordsLabel {
                     visible: confirmation.visible && confirmation.text.length > 0 && confirmation.text !== password.text
@@ -258,7 +252,7 @@ Pane {
                     text: picker.desktop.busy ? "Working…" : picker.migrating ? "Migrate vault" : picker.creating ? "Create account" : "Log in"
                     primary: true
                     Layout.fillWidth: true
-                    enabled: !picker.desktop.busy && password.text.length > 0 && ((picker.creating || picker.migrating) ? nickname.text.trim().length > 0 && Array.from(password.text).length >= 12 && password.text === confirmation.text : picker.selectedAccount.length > 0)
+                    enabled: !picker.desktop.busy && ((picker.creating || picker.migrating) ? nickname.text.trim().length > 0 && (allowWeak.checked || Array.from(password.text).length >= 12) && password.text === confirmation.text : picker.selectedAccount.length > 0)
                     onClicked: {
                         if (!enabled)
                             return;

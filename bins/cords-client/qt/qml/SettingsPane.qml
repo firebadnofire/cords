@@ -341,8 +341,7 @@ Item {
                         }
                         CordsField {
                             id: newPassword
-                            onTextChanged: weak.checked = false
-                            placeholderText: "New password (at least 12 characters)"
+                            placeholderText: "New password"
                             echoMode: TextInput.Password
                             inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
                             Layout.fillWidth: true
@@ -365,22 +364,18 @@ Item {
                             id: weak
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            enabled: !page.desktop.busy && Array.from(newPassword.text).length >= 12
-                            text: "Allow a predictable password (12+ characters)"
-                        }
-                        CordsLabel {
-                            text: "At least 12 characters are required. This checkbox only accepts warnings about common passwords, repeated characters, or your nickname."
-                            color: Theme.secondary
-                            Layout.fillWidth: true
+                            enabled: !page.desktop.busy
+                            text: "Ignore weak passwords"
                         }
                         CordsButton {
                             text: "Change local password"
-                            enabled: !page.desktop.busy && currentPassword.text.length > 0 && Array.from(newPassword.text).length >= 12 && newPassword.text === confirmPassword.text
+                            enabled: !page.desktop.busy && (weak.checked || Array.from(newPassword.text).length >= 12) && newPassword.text === confirmPassword.text
                             onClicked: {
                                 page.desktop.changePassword(page.desktop.state.account, currentPassword.text, newPassword.text, weak.checked);
                                 currentPassword.clear();
                                 newPassword.clear();
                                 confirmPassword.clear();
+                                weak.checked = false;
                             }
                         }
                     }

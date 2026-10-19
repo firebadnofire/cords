@@ -55,7 +55,10 @@ impl Client {
         Ok(())
     }
 
-    async fn cached_profile_image(&self, image: &ProfileAvatar) -> Result<Option<Vec<u8>>> {
+    pub(super) async fn cached_profile_image(
+        &self,
+        image: &ProfileAvatar,
+    ) -> Result<Option<Vec<u8>>> {
         let sealed: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT sealed FROM profile_images WHERE hash=?1")
                 .bind(&image.sha256)
@@ -81,7 +84,11 @@ impl Client {
         Ok(Some(bytes.to_vec()))
     }
 
-    async fn cache_profile_image(&self, image: &ProfileAvatar, bytes: &[u8]) -> Result<()> {
+    pub(super) async fn cache_profile_image(
+        &self,
+        image: &ProfileAvatar,
+        bytes: &[u8],
+    ) -> Result<()> {
         ensure!(
             bytes.len() == image.bytes as usize
                 && bytes.len() <= 5_000_000
@@ -180,6 +187,12 @@ impl Client {
     /// Rejects incompatible servers, signature failures, missing ancestry, quota
     /// violations, stale identity state and unavailable authenticated transport.
     pub async fn account_profile(&mut self, account: &str) -> Result<ProfileView> {
+        if account == self.identity.authorization.value.account_id
+            && self.durable.session.is_none()
+            && self.durable.admission_state != "active"
+        {
+            return self.local_profile_view(account, Some("Saved on this device. Connect to an approved, compatible server to publish your profile.".into())).await;
+        }
         match self.synchronize_account_profile(account).await {
             Ok(view) => Ok(view),
             Err(error) if transport_unavailable(&error) => self.local_profile_view(account, Some(format!("Offline: showing verified cached profile. Synchronization will retry: {error:#}"))).await,

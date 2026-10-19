@@ -41,6 +41,13 @@ use zeroize::Zeroizing;
 #[derive(Default, Serialize, Deserialize)]
 struct Durable {
     #[serde(default)]
+    server_profiles: BTreeMap<String, cords_protocol::server_profile::ServerProfile>,
+    #[serde(default)]
+    server_names: BTreeMap<String, String>,
+    #[serde(default)]
+    server_features: BTreeMap<String, Vec<String>>,
+
+    #[serde(default)]
     account_profiles: BTreeMap<String, cords_protocol::profiles::ProfileGraph>,
     #[serde(default)]
     member_profiles: BTreeMap<String, Contact>,
@@ -84,6 +91,8 @@ struct Durable {
     #[serde(default)]
     channel_identities: BTreeMap<String, LocalChannel>,
 }
+#[path = "client_server_profile.rs"]
+mod server_profile;
 #[path = "client_profiles.rs"]
 mod profiles;
 #[derive(Clone, Serialize, Deserialize)]
@@ -154,6 +163,8 @@ struct PendingBurn {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct ServerListing {
+    pub name: String,
+    pub admission_state: String,
     pub origin: String,
     pub server_id: String,
     pub ownership_state: String,
@@ -290,15 +301,30 @@ impl Client {
         passphrase: &[u8],
         ca: Option<&Path>,
     ) -> Result<Self> {
+        Self::create_with_password_policy(directory, migrations, passphrase, ca, false).await
+    }
+
+    /// Create a vault with an explicit local password-strength override.
+    /// The override permits even an empty password; encryption and authentication are unchanged.
+    /// # Errors
+    /// Returns an error for an existing vault, a policy rejection, or failed durable storage.
+    pub async fn create_with_password_policy(
+        directory: &Path,
+        migrations: &Path,
+        passphrase: &[u8],
+        ca: Option<&Path>,
+        ignore_weak: bool,
+    ) -> Result<Self> {
         ensure!(
-            std::str::from_utf8(passphrase)?.chars().count() >= 12,
+            ignore_weak || std::str::from_utf8(passphrase)?.chars().count() >= 12,
             "use a password of at least 12 characters"
         );
         ensure!(
             !directory.join("client.db").exists(),
             "account vault already exists"
         );
-        Self::open(directory, migrations, Some(passphrase), ca).await
+        Self::open_with_password_policy(directory, migrations, Some(passphrase), ca, ignore_weak)
+            .await
     }
 
     /// Open an existing vault without creating identity material.
@@ -322,8 +348,19 @@ impl Client {
     /// # Errors
     /// Returns an error if the new password is invalid or the rewrap transaction fails.
     pub async fn rewrap_password(&mut self, passphrase: &[u8]) -> Result<()> {
+        self.rewrap_password_with_policy(passphrase, false).await
+    }
+
+    /// Rewrap legacy storage using the explicitly selected local password policy.
+    /// # Errors
+    /// Returns policy, key derivation, encryption or durable storage failures.
+    pub async fn rewrap_password_with_policy(
+        &mut self,
+        passphrase: &[u8],
+        ignore_weak: bool,
+    ) -> Result<()> {
         ensure!(
-            std::str::from_utf8(passphrase)?.chars().count() >= 12,
+            ignore_weak || std::str::from_utf8(passphrase)?.chars().count() >= 12,
             "use a password of at least 12 characters"
         );
         let salt = protection::random_key();
@@ -349,9 +386,22 @@ impl Client {
     /// Returns an error for a wrong current password, invalid new password, stale wrapper or
     /// failed storage write. A failed operation leaves the previous password usable.
     pub async fn change_password(&mut self, current: &[u8], new: &[u8]) -> Result<()> {
+        self.change_password_with_policy(current, new, false).await
+    }
+
+    /// Authenticate the current password and rewrap with an explicit strength override.
+    /// This override never skips current-password verification or stale-wrapper checks.
+    /// # Errors
+    /// Returns authentication, policy, concurrency or storage errors without changing the wrapper.
+    pub async fn change_password_with_policy(
+        &mut self,
+        current: &[u8],
+        new: &[u8],
+        ignore_weak: bool,
+    ) -> Result<()> {
         use subtle::ConstantTimeEq as _;
         ensure!(
-            std::str::from_utf8(new)?.chars().count() >= 12,
+            ignore_weak || std::str::from_utf8(new)?.chars().count() >= 12,
             "use a password of at least 12 characters"
         );
         let row = sqlx::query(
@@ -481,6 +531,16 @@ impl Client {
         passphrase: Option<&[u8]>,
         ca: Option<&Path>,
     ) -> Result<Self> {
+        Self::open_with_password_policy(directory, migrations, passphrase, ca, false).await
+    }
+
+    async fn open_with_password_policy(
+        directory: &Path,
+        migrations: &Path,
+        passphrase: Option<&[u8]>,
+        ca: Option<&Path>,
+        ignore_weak: bool,
+    ) -> Result<Self> {
         std::fs::create_dir_all(directory)?;
         let lock = OpenOptions::new()
             .create(true)
@@ -495,7 +555,7 @@ impl Client {
             SqliteStore::connect(&format!("sqlite://{}?mode=rwc", database.to_string_lossy()))
                 .await?;
         store.migrate(migrations).await?;
-        let (installation, key) = Self::unlock_storage(&store, passphrase).await?;
+        let (installation, key) = Self::unlock_storage(&store, passphrase, ignore_weak).await?;
         let encrypted: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT sealed FROM client_state WHERE singleton=1")
                 .fetch_optional(store.pool())
@@ -533,6 +593,7 @@ impl Client {
     async fn unlock_storage(
         store: &SqliteStore,
         passphrase: Option<&[u8]>,
+        ignore_weak: bool,
     ) -> Result<(String, Zeroizing<[u8; 32]>)> {
         let row = sqlx::query(
             "SELECT id,protection,salt,wrapped_key FROM installation WHERE singleton=1",
@@ -571,7 +632,10 @@ impl Client {
             let key = protection::random_key();
             let salt = protection::random_key();
             let (mode, wrapped) = if let Some(pass) = passphrase {
-                ensure!(pass.len() >= 12, "use a passphrase of at least 12 bytes");
+                ensure!(
+                    ignore_weak || pass.len() >= 12,
+                    "use a passphrase of at least 12 bytes"
+                );
                 let wrapping = protection::derive_wrapping_key(pass, salt.as_ref())?;
                 (
                     "passphrase",
@@ -744,6 +808,8 @@ impl Client {
             .servers
             .values()
             .map(|s| ServerListing {
+                name: self.server_name(&s.server_id),
+                admission_state: s.admission_state.clone(),
                 origin: s.origin.clone(),
                 server_id: s.server_id.clone(),
                 ownership_state: s.ownership_state.clone(),
@@ -754,6 +820,8 @@ impl Client {
             .collect();
         for s in self.durable.archived_servers.values() {
             result.push(ServerListing {
+                name: self.server_name(&s.server_id),
+                admission_state: "archived".into(),
                 origin: s.origin.clone(),
                 server_id: s.server_id.clone(),
                 ownership_state: String::new(),
@@ -932,6 +1000,7 @@ impl Client {
                 }
                 Some("CORDS_PERMISSION_DENIED") => "CORDS_PERMISSION_DENIED",
                 Some("CORDS_STATE_CONFLICT") => "CORDS_STATE_CONFLICT",
+                Some("CORDS_SERVER_PROFILE_CONFLICT") => "CORDS_SERVER_PROFILE_CONFLICT",
                 Some("CHANNEL_RETIRED") => "CHANNEL_RETIRED",
                 Some("CORDS_AUTH_CHALLENGE_EXPIRED") => "CORDS_AUTH_CHALLENGE_EXPIRED",
                 Some("CORDS_RATE_LIMITED") => "CORDS_RATE_LIMITED",
@@ -1401,6 +1470,8 @@ impl Client {
             self.clear_active_server()?;
         }
         self.durable.origin = origin.to_string();
+        self.durable.server_names.insert(discovered.clone(), signed.metadata.server_name.clone());
+        self.durable.server_features.insert(discovered.clone(), signed.metadata.features.clone());
         self.durable.server_id = discovered;
         self.durable.server_key = signed.metadata.server_signing_key;
         self.durable.join_policy = signed.metadata.join_policy;
@@ -1414,6 +1485,28 @@ impl Client {
     pub async fn authenticate(&mut self) -> Result<Status> {
         self.authenticate_with_rejoin(true).await
     }
+    /// Submit or check admission using the existing device possession challenge.
+    /// Pending requests are upserted by device by the server, never duplicated.
+    /// Expected pending/rejected responses are durable states, not transport failures.
+    /// # Errors
+    /// Returns genuine transport, authentication, trust or storage failures.
+    pub async fn request_admission(&mut self) -> Result<Status> {
+        match self.authenticate().await {
+            Ok(status) => Ok(status),
+            Err(error)
+                if error.downcast_ref::<ApiFailure>().is_some_and(|failure| {
+                    matches!(
+                        failure.code,
+                        "CORDS_APPROVAL_PENDING" | "CORDS_JOIN_REJECTED"
+                    )
+                }) =>
+            {
+                Ok(self.status())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     #[allow(clippy::too_many_lines)] // Keep challenge binding, explicit rejoin and credential validation together.
     async fn authenticate_with_rejoin(&mut self, allow_rejoin: bool) -> Result<Status> {
         ensure!(!self.durable.burned, "CORDS_IDENTITY_BURNED");
@@ -3077,6 +3170,19 @@ impl Client {
     /// # Errors
     /// Returns an error on invalid trust or protocol state, unavailable transport, or failed authenticated storage. Reload durable state after a failed operation.
     pub async fn synchronize(&mut self) -> Result<SyncResult> {
+        if self.durable.admission_state == "pending" {
+            self.request_admission().await?;
+        }
+        if matches!(
+            self.durable.admission_state.as_str(),
+            "pending" | "rejected"
+        ) {
+            return Ok(SyncResult {
+                fetched: 0,
+                messages: Vec::new(),
+                message_routes: Vec::new(),
+            });
+        }
         self.ensure_session().await?;
         self.flush().await?;
         // Discover retirement and successors even when this device was offline for the notice.

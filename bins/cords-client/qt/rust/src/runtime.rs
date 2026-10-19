@@ -54,6 +54,8 @@ pub(super) enum Command {
     Sync,
     Directory(String),
     Requests,
+    ServerProfile,
+    SaveServerProfile(cords_protocol::server_profile::ServerProfileChange),
     Approve(String),
     Reject(String),
     Add(String, String),
@@ -66,8 +68,13 @@ pub(super) enum Command {
     Profile(String),
     ProfileName(String, Vec<String>),
     PrepareAvatar(String),
+    PrepareServerIcon(String),
+    SaveServerIcon(String, f64, f64, f64, String),
+    CancelServerIcon,
+    RemoveServerIcon(u64, String),
     SaveAvatar(String, f64, f64, f64, String),
     CancelAvatar,
+    RemoveAvatar(Vec<String>),
     Preferences(ffi::Preferences),
     ActivateAlert(String),
     MuteServer(bool),
@@ -203,10 +210,13 @@ pub(super) fn empty_snapshot() -> ffi::Snapshot {
         people: Vec::new(),
         devices: Vec::new(),
         requests: Vec::new(),
+        requests_loaded: false,
+        server_profile: ffi::ServerPresentation::default(),
         roles: Vec::new(),
         audit: Vec::new(),
         profile: empty_profile(),
         avatar_draft: ffi::AvatarDraft::default(),
+        server_icon_draft: ffi::AvatarDraft::default(),
         preferences: default_preferences(),
         notifications: Vec::new(),
     }
@@ -231,6 +241,7 @@ pub(super) struct Worker {
     scope: Arc<Mutex<Scope>>,
     sync_cursor: usize,
     server_health: BTreeMap<String, (bool, String, bool)>,
+    admission_checks: BTreeMap<String, Instant>,
     lock: Arc<LockSignal>,
     environment: Arc<Environment>,
     alerts: Arc<Mutex<VecDeque<ffi::Alert>>>,
@@ -239,12 +250,14 @@ pub(super) struct Worker {
     directory_refresh: Option<DirectoryRefresh>,
     directory_due: Instant,
     metadata_retry: Instant,
+    server_profile_due: Instant,
     profile_attempts: BTreeMap<String, Instant>,
     people: BTreeMap<String, ffi::PersonRow>,
     history_scope: (String, String, String),
     history_end: Option<String>,
     history_limit: u32,
     avatar_draft: Option<Arc<crate::avatar::Draft>>,
+    server_icon_draft: Option<(Arc<crate::avatar::Draft>, u64)>,
 }
 impl Worker {
     #[allow(clippy::too_many_arguments)] // Explicit lifecycle inputs; no hidden global runtime.
@@ -284,6 +297,7 @@ impl Worker {
             scope,
             sync_cursor: 0,
             server_health: BTreeMap::new(),
+            admission_checks: BTreeMap::new(),
             lock: lock.clone(),
             environment,
             alerts,
@@ -292,12 +306,14 @@ impl Worker {
             directory_refresh: None,
             directory_due: Instant::now(),
             metadata_retry: Instant::now(),
+            server_profile_due: Instant::now(),
             profile_attempts: BTreeMap::new(),
             people: BTreeMap::new(),
             history_scope: (String::new(), String::new(), String::new()),
             history_end: None,
             history_limit: 100,
             avatar_draft: None,
+            server_icon_draft: None,
         };
         if let Err(error) = worker.refresh().await {
             worker.view.error = format!("{error:#}");
@@ -363,6 +379,15 @@ impl Worker {
     ) {
         self.view.error.clear();
         self.view.notice.clear();
+        if matches!(&envelope.command, Command::Authenticate) {
+            self.view.notice = match self.view.admission.as_str() {
+                "pending" => "Checking approval status…",
+                "active" => "Authenticating…",
+                _ => "Submitting membership request…",
+            }
+            .into();
+            self.publish();
+        }
         // Registry/filesystem transitions can span more than one
         // transaction. Complete them before dropping the account;
         // the native view is already hidden by the lock request.
@@ -484,12 +509,29 @@ impl Worker {
             return Ok(());
         }
         self.sync_cursor %= servers.len();
+        let pending = servers[self.sync_cursor].admission_state == "pending";
         let id = &servers[self.sync_cursor].server_id;
         self.sync_cursor = (self.sync_cursor + 1) % servers.len();
+        // Admission checks use possession challenges; bound their background rate.
+        if pending
+            && self
+                .admission_checks
+                .get(id)
+                .is_some_and(|next| Instant::now() < *next)
+        {
+            return Ok(());
+        }
+        self.admission_checks
+            .insert(id.clone(), Instant::now() + Duration::from_secs(30));
         let health = self.server_health.entry(id.clone()).or_default();
         match client.synchronize_server(id).await {
             Ok(result) => {
                 health.0 = true;
+                if id == &self.view.server
+                    && self.view.error == format!("Synchronization failed: {}", health.1)
+                {
+                    self.view.error.clear();
+                }
                 health.1.clear();
                 health.2 |= id != &self.view.server
                     && result
@@ -508,6 +550,10 @@ impl Worker {
         // profile per tick shares the existing 30-second scheduling budget.
         let budget = Duration::from_secs(30).saturating_sub(started.elapsed());
         if budget >= Duration::from_secs(1)
+            && self
+                .client
+                .as_ref()
+                .is_some_and(|c| c.status().admission_state == "active")
             && Instant::now() >= self.metadata_retry
             && self
                 .server_health
@@ -723,12 +769,15 @@ impl Worker {
         self.view.accounts = accounts;
         self.view.legacy = legacy;
         self.policy = None;
+        self.avatar_draft = None;
+        self.server_icon_draft = None;
         self.history_scope = (String::new(), String::new(), String::new());
         self.history_end = None;
         self.history_limit = 100;
         self.channel_by_server.clear();
         self.server_order.clear();
         self.server_health.clear();
+        self.admission_checks.clear();
         self.sync_cursor = 0;
         self.classifier = Classifier::default();
         self.alert_targets.clear();
@@ -839,7 +888,7 @@ impl Worker {
                     "Review the weak-password warning before continuing"
                 );
                 client
-                    .change_password(old.as_bytes(), password.as_bytes())
+                    .change_password_with_policy(old.as_bytes(), password.as_bytes(), weak)
                     .await?;
                 self.view.notice = "Local password changed".into();
             }
@@ -866,8 +915,8 @@ impl Worker {
                     .unwrap_or_default();
             }
             Command::Authenticate => {
-                client.authenticate().await?;
-                self.view.notice = "Authenticated".into();
+                let status = client.request_admission().await?;
+                self.view.notice = admission_notice(&status.admission_state).into();
             }
             Command::Claim(code) => {
                 client.claim_ownership(&code).await?;
@@ -984,11 +1033,30 @@ impl Worker {
                 let result = client.synchronize().await?;
                 let server = client.status().server_id;
                 self.classify(&server, &result)?;
-                self.view.connected = true;
-                self.view.notice = "Synchronized".into();
+                self.view.connected = self
+                    .client
+                    .as_ref()
+                    .is_some_and(|c| c.status().admission_state == "active");
+                self.view.notice = admission_notice(
+                    &self
+                        .client
+                        .as_ref()
+                        .context("Account locked")?
+                        .status()
+                        .admission_state,
+                )
+                .into();
             }
             Command::Directory(after) => {
                 self.directory(&after).await?;
+            }
+            Command::ServerProfile => {
+                client.server_profile().await?;
+                self.server_profile_due = Instant::now() + Duration::from_secs(30);
+            }
+            Command::SaveServerProfile(request) => {
+                client.save_server_profile(request).await?;
+                self.view.notice = "Server profile saved".into();
             }
             Command::Requests => {
                 self.requests().await?;
@@ -996,10 +1064,13 @@ impl Worker {
             Command::Approve(device) => {
                 client.approve_membership(&device).await?;
                 self.requests().await?;
+                self.view.notice =
+                    "Membership approved. The member can check status to connect.".into();
             }
             Command::Reject(device) => {
                 client.reject_membership(&device).await?;
                 self.requests().await?;
+                self.view.notice = "Membership request rejected.".into();
             }
             Command::Add(route, device) => {
                 client.add_member(&route, &device).await?;
@@ -1065,40 +1136,176 @@ impl Worker {
                 self.profile(&account).await?;
                 self.view.notice = "Signed profile saved".into();
             }
+            Command::PrepareServerIcon(path) => {
+                self.server_icon_draft = None;
+                self.view.server_icon_draft = ffi::AvatarDraft::default();
+                let profile = client.server_profile().await?;
+                ensure!(
+                    self.view.server_profile.can_edit,
+                    "Only authorized server staff can change the icon"
+                );
+                let (draft, preview) = tokio::task::spawn_blocking(move || {
+                    crate::avatar::prepare(std::path::Path::new(&path))
+                })
+                .await??;
+                use base64::{Engine as _, engine::general_purpose::STANDARD};
+                self.view.server_icon_draft = ffi::AvatarDraft {
+                    id: draft.id.clone(),
+                    image: format!("data:image/jxl;base64,{}", STANDARD.encode(preview)),
+                    width: draft.width,
+                    height: draft.height,
+                };
+                self.server_icon_draft = Some((Arc::new(draft), profile.revision));
+            }
+            Command::CancelServerIcon => {
+                self.server_icon_draft = None;
+                self.view.server_icon_draft = ffi::AvatarDraft::default();
+            }
+            Command::RemoveServerIcon(revision, request_id) => {
+                client
+                    .save_server_icon(cords_protocol::server_profile::ServerIconChange {
+                        request_id,
+                        expected_revision: revision,
+                        icon: None,
+                        image: None,
+                    })
+                    .await?;
+                self.view.notice = "Server icon removed".into();
+            }
+            Command::SaveServerIcon(id, x, y, zoom, shape) => {
+                let (draft, revision) = self
+                    .server_icon_draft
+                    .clone()
+                    .context("Choose a server icon first")?;
+                ensure!(
+                    draft.id == id,
+                    "Server icon changed; review the current crop"
+                );
+                ensure!(
+                    client
+                        .cached_server_profile()
+                        .is_some_and(|profile| profile.revision == revision),
+                    "Server profile changed. Cancel and reopen the icon editor"
+                );
+                let side = crate::avatar::crop(draft.width, draft.height, x, y, zoom)?
+                    .2
+                    .min(1024);
+                let encoding = draft.clone();
+                let image = tokio::task::spawn_blocking(move || {
+                    crate::avatar::encode(&encoding, x, y, zoom)
+                })
+                .await??;
+                use base64::{Engine as _, engine::general_purpose::STANDARD};
+                use cords_protocol::messaging::hash;
+                let request_id = hash(serde_json::to_vec(&(&id, x, y, zoom, &shape))?);
+                let icon = cords_protocol::profiles::ProfileAvatar {
+                    sha256: hash(&image),
+                    bytes: u32::try_from(image.len())?,
+                    width: u16::try_from(side)?,
+                    height: u16::try_from(side)?,
+                    shape,
+                };
+                client
+                    .save_server_icon(cords_protocol::server_profile::ServerIconChange {
+                        request_id,
+                        expected_revision: revision,
+                        icon: Some(icon),
+                        image: Some(STANDARD.encode(image)),
+                    })
+                    .await?;
+                self.server_icon_draft = None;
+                self.view.server_icon_draft = ffi::AvatarDraft::default();
+                self.view.notice = "Server icon saved".into();
+            }
             Command::PrepareAvatar(path) => {
                 self.avatar_draft = None;
                 self.view.avatar_draft = ffi::AvatarDraft::default();
                 let account = client.status().account_id;
                 let current = client.account_profile(&account).await?;
-                ensure!(current.state.conflicts.is_empty(), "Resolve profile conflicts before changing your picture");
-                let (mut draft, preview) = tokio::task::spawn_blocking(move || crate::avatar::prepare(std::path::Path::new(&path))).await??;
+                ensure!(
+                    current.state.conflicts.is_empty(),
+                    "Resolve profile conflicts before changing your picture"
+                );
+                let (mut draft, preview) = tokio::task::spawn_blocking(move || {
+                    crate::avatar::prepare(std::path::Path::new(&path))
+                })
+                .await??;
                 draft.heads = current.state.heads;
                 use base64::{Engine as _, engine::general_purpose::STANDARD};
-                self.view.avatar_draft = ffi::AvatarDraft { id: draft.id.clone(), image: format!("data:image/jxl;base64,{}", STANDARD.encode(preview)), width: draft.width, height: draft.height };
+                self.view.avatar_draft = ffi::AvatarDraft {
+                    id: draft.id.clone(),
+                    image: format!("data:image/jxl;base64,{}", STANDARD.encode(preview)),
+                    width: draft.width,
+                    height: draft.height,
+                };
                 self.avatar_draft = Some(Arc::new(draft));
+            }
+            Command::RemoveAvatar(heads) => {
+                let account = client.status().account_id;
+                let current = client.account_profile(&account).await?;
+                ensure!(
+                    current.state.conflicts.is_empty(),
+                    "Resolve profile conflicts before removing your picture"
+                );
+                let mut profile = current.state.agreed.context("No signed profile to edit")?;
+                profile.avatar = None;
+                client.save_account_profile(profile, None, heads).await?;
+                self.profile(&account).await?;
+                self.view.notice = "Profile picture removed".into();
             }
             Command::CancelAvatar => {
                 self.avatar_draft = None;
                 self.view.avatar_draft = ffi::AvatarDraft::default();
             }
             Command::SaveAvatar(id, x, y, zoom, shape) => {
-                ensure!(matches!(shape.as_str(), "circle" | "square"), "Invalid picture shape");
-                let draft = self.avatar_draft.clone().context("Choose a picture first")?;
+                ensure!(
+                    matches!(shape.as_str(), "circle" | "square"),
+                    "Invalid picture shape"
+                );
+                let draft = self
+                    .avatar_draft
+                    .clone()
+                    .context("Choose a picture first")?;
                 ensure!(draft.id == id, "Picture changed; review the current crop");
                 let encoding = draft.clone();
-                let image = tokio::task::spawn_blocking(move || crate::avatar::encode(&encoding, x, y, zoom)).await??;
+                let image = tokio::task::spawn_blocking(move || {
+                    crate::avatar::encode(&encoding, x, y, zoom)
+                })
+                .await??;
                 let account = client.status().account_id;
                 let current = client.account_profile(&account).await?;
-                ensure!(current.state.heads == draft.heads && current.state.conflicts.is_empty(), "Profile changed while editing. Cancel and reopen the picture editor to review it.");
-                let mut profile = current.state.agreed.unwrap_or(cords_protocol::profiles::AccountProfile { display_name: self.view.preferences.name.clone(), avatar: None });
-                use sha2::{Digest as _, Sha256};
+                ensure!(
+                    current.state.heads == draft.heads && current.state.conflicts.is_empty(),
+                    "Profile changed while editing. Cancel and reopen the picture editor to review it."
+                );
+                let mut profile =
+                    current
+                        .state
+                        .agreed
+                        .unwrap_or(cords_protocol::profiles::AccountProfile {
+                            display_name: self.view.preferences.name.clone(),
+                            avatar: None,
+                        });
                 use base64::{Engine as _, engine::general_purpose::STANDARD};
-                let side = crate::avatar::crop(draft.width, draft.height, x, y, zoom)?.2.min(1024);
+                use sha2::{Digest as _, Sha256};
+                let side = crate::avatar::crop(draft.width, draft.height, x, y, zoom)?
+                    .2
+                    .min(1024);
                 profile.avatar = Some(cords_protocol::profiles::ProfileAvatar {
-                    sha256: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(&image)),
-                    bytes: u32::try_from(image.len())?, width: u16::try_from(side)?, height: u16::try_from(side)?, shape,
+                    sha256: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(Sha256::digest(&image)),
+                    bytes: u32::try_from(image.len())?,
+                    width: u16::try_from(side)?,
+                    height: u16::try_from(side)?,
+                    shape,
                 });
-                client.save_account_profile(profile, Some(STANDARD.encode(image)), draft.heads.clone()).await?;
+                client
+                    .save_account_profile(
+                        profile,
+                        Some(STANDARD.encode(image)),
+                        draft.heads.clone(),
+                    )
+                    .await?;
                 self.avatar_draft = None;
                 self.view.avatar_draft = ffi::AvatarDraft::default();
                 self.profile(&account).await?;
@@ -1224,9 +1431,14 @@ impl Worker {
         self.view.members.clear();
         self.view.devices.clear();
         self.view.requests.clear();
+        self.view.requests_loaded = false;
+        self.view.server_profile = ffi::ServerPresentation::default();
+        self.server_profile_due = Instant::now();
         self.view.roles.clear();
         self.view.audit.clear();
         self.view.profile = empty_profile();
+        self.server_icon_draft = None;
+        self.view.server_icon_draft = ffi::AvatarDraft::default();
         self.avatar_draft = None;
         self.view.avatar_draft = ffi::AvatarDraft::default();
         self.view.directory_after.clear();
@@ -1286,6 +1498,12 @@ impl Worker {
     }
 
     async fn presentation(&mut self) -> Result<()> {
+        let client = self.client.as_mut().context("Account locked")?;
+        if client.supports_server_profile() && Instant::now() >= self.server_profile_due {
+            client.server_profile().await?;
+            self.server_profile_due = Instant::now() + Duration::from_secs(30);
+            return Ok(());
+        }
         if self.directory_refresh.is_none() && Instant::now() >= self.directory_due {
             self.directory_refresh = Some(DirectoryRefresh {
                 after: String::new(),
@@ -1396,6 +1614,7 @@ impl Worker {
     }
 
     async fn requests(&mut self) -> Result<()> {
+        self.view.requests_loaded = false;
         self.view.requests = self
             .client
             .as_mut()
@@ -1410,8 +1629,10 @@ impl Worker {
                     .user_card
                     .map_or_else(String::new, |card| card.value.nickname),
                 state: request.status,
+                requested_at: request.requested_at,
             })
             .collect();
+        self.view.requests_loaded = true;
         Ok(())
     }
     fn catalog(&mut self, catalog: RoleCatalog) -> Result<()> {
@@ -1550,14 +1771,49 @@ impl Worker {
                     .any(|value| value.as_str() == Some(capability))
             })
         };
+        let server_icon = client.cached_server_icon(&self.view.server).await?;
+        let presentation = client.cached_server_profile();
+        self.view.server_profile = ffi::ServerPresentation {
+            supported: client.supports_server_profile(),
+            loaded: presentation.is_some(),
+            can_edit: has("server.manage"),
+            revision: presentation.map_or(0, |p| p.revision),
+            name: client.server_name(&self.view.server),
+            description: presentation.map_or_else(String::new, |p| p.description.clone()),
+            background: presentation.map_or_else(|| "#314452".into(), |p| p.background.clone()),
+            image: server_icon.as_ref().map_or_else(String::new, |(image, _)| {
+                format!("data:image/jxl;base64,{image}")
+            }),
+            shape: server_icon
+                .as_ref()
+                .map_or_else(|| "circle".into(), |(_, shape)| shape.clone()),
+            has_icon: presentation.is_some_and(|profile| profile.icon.is_some()),
+        };
         self.view.can_create = has("channel.create");
-        self.view.can_approve = has("server.member.approve");
-        self.view.can_roles = has("server.roles.manage");
-        self.view.can_assign = has("server.roles.assign");
-        self.view.can_audit = has("server.audit.read");
+        self.view.can_approve = has("server.manage") || has("server.member.approve");
+        self.view.can_roles = has("server.manage") || has("server.roles.manage");
+        self.view.can_assign = has("server.manage") || has("server.roles.assign");
+        self.view.can_audit = has("server.manage") || has("server.audit.read");
         self.view.servers = server_rows(client, &self.server_health, &self.server_order);
+        // Bound copied Qt snapshot media independently of the 128 MiB disk cache.
+        // Prioritize the selected server; remaining rail entries retain initials
+        // when their full animated image would exceed this presentation budget.
+        let mut icon_budget = 16 * 1024 * 1024_usize;
+        let selected = self.view.server.clone();
+        let mut icon_order: Vec<usize> = (0..self.view.servers.len()).collect();
+        icon_order.sort_by_key(|index| self.view.servers[*index].id != selected);
+        for index in icon_order {
+            let server = &mut self.view.servers[index];
+            if let Some((image, shape)) = client.cached_server_icon(&server.id).await? {
+                if image.len() <= icon_budget {
+                    icon_budget -= image.len();
+                    server.image = format!("data:image/jxl;base64,{image}");
+                    server.shape = shape;
+                }
+            }
+        }
         if let Some((connected, error, _)) = self.server_health.get(&self.view.server) {
-            self.view.connected = *connected;
+            self.view.connected = *connected && self.view.admission == "active";
             if !error.is_empty() && self.view.error.is_empty() {
                 self.view.error = format!("Synchronization failed: {error}");
             }
@@ -1759,12 +2015,19 @@ fn server_rows(
         .map(|server| {
             let status = health.get(&server.server_id).cloned().unwrap_or_default();
             ffi::ServerRow {
+                name: server.name,
+                image: String::new(),
+                shape: "circle".into(),
                 id: server.server_id,
                 origin: server.origin,
-                state: server.ownership_state,
+                state: if server.ownership_state == "UNCLAIMED" {
+                    server.ownership_state
+                } else {
+                    server.admission_state.clone()
+                },
                 selected: server.active,
                 archived: server.archived,
-                connected: status.0,
+                connected: status.0 && server.admission_state == "active",
                 error: status.1,
                 unread: status.2,
             }
@@ -1915,5 +2178,16 @@ mod navigation_tests {
         assert!(second.servers().is_empty());
         second.shutdown().await;
         Ok(())
+    }
+}
+
+fn admission_notice(state: &str) -> &'static str {
+    match state {
+        "pending" => {
+            "Your membership request has been submitted. Waiting for administrator approval."
+        }
+        "rejected" => "Your membership request was denied. You may submit a new request.",
+        "active" => "Membership approved. Server access is available.",
+        _ => "Server status updated.",
     }
 }

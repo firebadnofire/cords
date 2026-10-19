@@ -138,3 +138,8 @@ persistent data is packaged. OCI uses `deploy/Dockerfile`, prefers Docker over
 Podman, loads locally and never pushes. Override its name/tag using
 `CORDS_IMAGE_NAME` and `CORDS_IMAGE_TAG`. Docker copies the Qt Rust workspace
 member for manifest resolution; building the server does not need a Qt SDK.
+
+Server tarball builders honor `CARGO_TARGET_DIR` for compilation and staging.
+On Unix, run `python3 scripts/test-server-builders.py` to check custom target
+paths, archive contents, checksums and repeated packaging with a fake compiler.
+This regression check does not establish native compilation or runtime acceptance.

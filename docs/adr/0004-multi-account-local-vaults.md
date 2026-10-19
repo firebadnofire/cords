@@ -27,9 +27,15 @@ Every new vault has its own random 256-bit master key, independent Argon2id salt
 device identity, MLS state, SQLite database, and file lock. The existing Cords Argon2id parameters
 (64 MiB memory, three iterations, one lane, version 1.3) derive a wrapping key. XChaCha20-Poly1305
 wraps the master key using the vault identifier as associated-data context. A password of at least
-12 Unicode scalar values is mandatory for new desktop accounts. Spaces, Unicode, and long
-passphrases remain valid. Local weak-password assessment may require an explicit warning override;
-the password is never sent or persisted.
+12 Unicode scalar values is the default policy for new desktop accounts. Spaces, Unicode, and long
+passphrases remain valid. As explicitly requested on 2026-10-17, selecting “Ignore weak passwords”
+bypasses all strength and length checks, including for an empty password. Matching confirmation
+is still required by the creation/change UI; changing an existing password still authenticates the
+current password. The override applies to creation, migration and password rewrap and is never
+selected implicitly. It does not change Argon2id parameters, random vault keys or authenticated
+encryption. Weak or empty passwords provide little or no resistance to offline guessing of a stolen
+vault; this is a deliberate local protection tradeoff, not a change to account/device identity or
+server admission. The password is never sent or persisted.
 
 Operating-system or hardware protection may later wrap an additional factor or protect the
 password-wrapped result, but it must not silently bypass or replace the mandatory account password.

@@ -35,6 +35,7 @@
   let nickname = '';
   let busy = false;
   let error = '';
+  let ignoreWeak = false;
   let warning: Assessment | null = null;
   let passwordInput: HTMLInputElement;
 
@@ -173,7 +174,7 @@
                     required
                   />
                 </label>
-                <button class="primary" disabled={busy || !password}>
+                <button class="primary" disabled={busy}>
                   <KeyRound size={17} />{busy ? 'Unlocking…' : 'Unlock'}
                 </button>
               </form>
@@ -188,7 +189,7 @@
           >Migrate existing installation</button
         >{/if}
     {:else}
-      <form class="account-form" on:submit|preventDefault={() => submitNew(false)}>
+      <form class="account-form" on:submit|preventDefault={() => submitNew(ignoreWeak)}>
         <header>
           <button type="button" on:click={() => resetForm('pick')}>Back</button>
           <div>
@@ -219,23 +220,17 @@
           >New local storage password<input
             bind:value={password}
             type="password"
-            minlength="12"
             autocomplete="new-password"
-            required
           /></label
         >
         <label
           >Confirm password<input
             bind:value={confirmation}
             type="password"
-            minlength="12"
             autocomplete="new-password"
-            required
           /></label
         >
-        <p class="hint">
-          Use at least 12 characters. Spaces, Unicode, and long passphrases are supported.
-        </p>
+        <label><input type="checkbox" bind:checked={ignoreWeak} />Ignore weak passwords</label>
         <button class="primary" disabled={busy}
           >{busy
             ? 'Protecting account…'

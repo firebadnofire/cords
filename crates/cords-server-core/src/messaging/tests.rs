@@ -580,6 +580,7 @@ async fn https_fixture_at(
                 .identity
                 .signed_metadata_with_policy("TLS acceptance", "moderator_approval")?,
         )
+        .with_identity(service.0.identity.clone())
         .with_store(service.0.store.clone()),
     )
     .merge(router(service.clone()));
@@ -2923,3 +2924,492 @@ async fn initial_binding_is_authenticated_durable_and_idempotent() -> Result<()>
 mod directory;
 mod enforced_roles;
 mod profiles;
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real TLS and PostgreSQL"]
+async fn admission_status_survives_restart_and_sync() -> Result<()> {
+    use cords_client_core::client::Client;
+    let (base, _server, code) = fixture_with_state(false).await?;
+    let service = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("test-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let pass = b"independent admission test vault";
+    let mut owner = Client::open(
+        &root.path().join("owner"),
+        &migrations,
+        Some(pass),
+        Some(&ca),
+    )
+    .await?;
+    let member_path = root.path().join("member");
+    let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    member.trust(&tls.origin).await?;
+    assert_eq!(member.request_admission().await?.admission_state, "pending");
+    let first = owner.membership_requests().await?;
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].account_id, member.status().account_id);
+    assert!(member.membership_requests().await.is_err());
+    assert!(member.account_directory("").await.is_err());
+    assert_eq!(member.request_admission().await?.admission_state, "pending");
+    let duplicate = owner.membership_requests().await?;
+    assert_eq!(duplicate.len(), 1);
+    assert_eq!(duplicate[0].requested_at, first[0].requested_at);
+    drop(member);
+    let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
+    assert_eq!(member.status().admission_state, "pending");
+    owner.reject_membership(&member.status().device_id).await?;
+    member.synchronize().await?;
+    assert_eq!(member.status().admission_state, "rejected");
+    drop(member);
+    let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
+    assert_eq!(member.status().admission_state, "rejected");
+    member.synchronize().await?;
+    assert_eq!(member.status().admission_state, "rejected");
+    assert_eq!(member.request_admission().await?.admission_state, "pending");
+    owner.approve_membership(&member.status().device_id).await?;
+    member.synchronize().await?;
+    assert_eq!(member.status().admission_state, "active");
+    assert_eq!(member.account_directory("").await?.accounts.len(), 2);
+    assert!(owner.membership_requests().await?.is_empty());
+    assert!(member.membership_requests().await.is_err());
+    assert!(
+        member
+            .approve_membership(&owner.status().device_id)
+            .await
+            .is_err()
+    );
+    drop(member);
+    let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
+    assert_eq!(member.status().admission_state, "active");
+    member.synchronize().await?;
+    drop(tls);
+    assert!(
+        member.request_admission().await.is_err(),
+        "network failure must remain an error"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real desktop workers, TLS and PostgreSQL"]
+async fn native_desktop_administrator_can_review_real_requests() -> Result<()> {
+    let (base, _server, code) = fixture_with_state(false).await?;
+    let service = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let origin = tls.origin.clone();
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("test-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        use cords_qt_bridge::{Desktop, ffi::Snapshot, start_desktop};
+        fn wait(desktop: &Desktop, completed: u64) -> Result<Snapshot> {
+            let deadline = std::time::Instant::now() + Duration::from_secs(40);
+            while std::time::Instant::now() < deadline {
+                for view in desktop.take_updates()? {
+                    if view.completed >= completed {
+                        anyhow::ensure!(
+                            view.error.is_empty(),
+                            "Desktop operation failed: {}",
+                            view.error
+                        );
+                        return Ok(view);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            anyhow::bail!("Desktop operation timed out")
+        }
+        let migrations =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+        let open = |name: &str| {
+            start_desktop(
+                root.path().join(name).to_string_lossy().into(),
+                migrations.to_string_lossy().into(),
+                ca.to_string_lossy().into(),
+            )
+        };
+        let owner = open("owner")?;
+        let member = open("member")?;
+        wait(&owner, 0)?;
+        wait(&member, 0)?;
+        let password = "Native network acceptance passphrase 42";
+        owner.create_account("Owner".into(), password.into(), false)?;
+        wait(&owner, 1)?;
+        member.create_account("Applicant".into(), password.into(), false)?;
+        let identity = wait(&member, 1)?.account;
+        owner.trust_server(origin.clone())?;
+        wait(&owner, 2)?;
+        owner.claim_ownership(code.to_string())?;
+        let claimed = wait(&owner, 3)?;
+        assert!(
+            claimed.can_approve && claimed.can_roles && claimed.can_assign && claimed.can_audit
+        );
+        member.trust_server(origin)?;
+        wait(&member, 2)?;
+        member.authenticate()?;
+        let pending = wait(&member, 3)?;
+        assert_eq!(pending.admission, "pending");
+        assert!(!pending.can_approve && !pending.connected);
+        owner.load_requests()?;
+        let requests = wait(&owner, 4)?;
+        assert!(requests.requests_loaded);
+        assert_eq!(requests.requests.len(), 1);
+        assert_eq!(requests.requests[0].account, identity);
+        assert_eq!(requests.requests[0].name, "Applicant");
+        assert!(requests.requests[0].requested_at > 0);
+        owner.approve_request(requests.requests[0].id.clone())?;
+        assert!(wait(&owner, 5)?.requests.is_empty());
+        member.synchronize()?;
+        assert_eq!(wait(&member, 4)?.admission, "active");
+        member.load_directory(String::new())?;
+        assert_eq!(wait(&member, 5)?.members.len(), 2);
+        owner.load_server_profile()?;
+        let profile = wait(&owner, 6)?.server_profile;
+        assert!(profile.supported && profile.loaded && profile.can_edit);
+        owner.save_server_profile(
+            "Native community".into(),
+            "Edited through the typed desktop bridge".into(),
+            "#521b60".into(),
+            profile.revision,
+            uuid::Uuid::now_v7().to_string(),
+        )?;
+        let saved = wait(&owner, 7)?;
+        assert_eq!(saved.server_profile.name, "Native community");
+        assert_eq!(saved.servers[0].name, "Native community");
+        member.load_server_profile()?;
+        let observed = wait(&member, 6)?;
+        assert_eq!(observed.server_profile.name, "Native community");
+        assert_eq!(observed.server_profile.background, "#521b60");
+        assert!(!observed.server_profile.can_edit);
+        drop(member);
+        let member = open("member")?;
+        wait(&member, 0)?;
+        member.unlock_account(identity.clone(), password.into())?;
+        let restored = wait(&member, 1)?;
+        assert_eq!(restored.admission, "active");
+        assert!(!restored.can_approve);
+        assert_eq!(restored.server_profile.name, "Native community");
+        assert_eq!(restored.server_profile.background, "#521b60");
+        owner.prepare_server_icon(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../bins/cords-client/qt/assets/128x128.png")
+                .to_string_lossy()
+                .into(),
+        )?;
+        let draft = wait(&owner, 8)?.server_icon_draft;
+        assert!(!draft.id.is_empty());
+        owner.save_server_icon(draft.id, 0.5, 0.5, 1.0, "circle".into())?;
+        let branded = wait(&owner, 9)?;
+        assert!(branded.server_profile.has_icon);
+        assert!(
+            branded
+                .server_profile
+                .image
+                .starts_with("data:image/jxl;base64,")
+        );
+        assert_eq!(branded.servers[0].image, branded.server_profile.image);
+        member.load_server_profile()?;
+        assert_eq!(
+            wait(&member, 2)?.server_profile.image,
+            branded.server_profile.image
+        );
+        drop(member);
+        let member = open("member")?;
+        wait(&member, 0)?;
+        member.unlock_account(identity, password.into())?;
+        assert_eq!(
+            wait(&member, 1)?.server_profile.image,
+            branded.server_profile.image
+        );
+        owner.remove_server_icon(
+            branded.server_profile.revision,
+            uuid::Uuid::now_v7().to_string(),
+        )?;
+        assert!(!wait(&owner, 10)?.server_profile.has_icon);
+        member.load_server_profile()?;
+        let removed = wait(&member, 2)?;
+        assert!(
+            !removed.server_profile.has_icon
+                && removed.server_profile.image.is_empty()
+                && removed.servers[0].image.is_empty()
+        );
+        Ok(())
+    })
+    .await??;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real TLS and PostgreSQL"]
+async fn server_profile_revisions_authorization_and_discovery() -> Result<()> {
+    use cords_client_core::client::Client;
+    use cords_protocol::server_profile::ServerProfileChange;
+    let (base, _server, code) = fixture_with_state(false).await?;
+    let service = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("test-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let password = b"Independent server presentation vault";
+    let owner_path = root.path().join("owner");
+    let mut owner = Client::open(&owner_path, &migrations, Some(password), Some(&ca)).await?;
+    let mut member = Client::open(
+        &root.path().join("member"),
+        &migrations,
+        Some(password),
+        Some(&ca),
+    )
+    .await?;
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    member.trust(&tls.origin).await?;
+    member.request_admission().await?;
+    owner.approve_membership(&member.status().device_id).await?;
+    member.synchronize().await?;
+    assert_eq!(owner.server_profile().await?.revision, 0);
+    let change = ServerProfileChange {
+        request_id: uuid::Uuid::now_v7().to_string(),
+        expected_revision: 0,
+        name: "A real community".into(),
+        description: "A durable description.\nSecond line.".into(),
+        background: "#20485a".into(),
+    };
+    let saved = owner.save_server_profile(change.clone()).await?;
+    assert_eq!(saved.background, "#20485a");
+    assert_eq!(saved.revision, 1);
+    assert_eq!(owner.save_server_profile(change.clone()).await?, saved);
+    let mut stale = change.clone();
+    stale.request_id = uuid::Uuid::now_v7().to_string();
+    assert!(owner.save_server_profile(stale).await.is_err());
+    let mut collision = change.clone();
+    collision.name = "Another name".into();
+    assert!(owner.save_server_profile(collision).await.is_err());
+    let mut unauthorized = change.clone();
+    unauthorized.request_id = uuid::Uuid::now_v7().to_string();
+    unauthorized.expected_revision = 1;
+    assert!(member.save_server_profile(unauthorized).await.is_err());
+    assert_eq!(member.server_profile().await?, saved);
+    assert_eq!(member.server_name(&member.status().server_id), saved.name);
+    let http = reqwest::Client::builder()
+        .add_root_certificate(reqwest::Certificate::from_pem(
+            certificate.cert.pem().as_bytes(),
+        )?)
+        .build()?;
+    let metadata: cords_protocol::SignedServerMetadataV1 = http
+        .get(format!("{}/.well-known/cords/server", tls.origin))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    metadata.metadata.verify(&metadata.signature)?;
+    assert_eq!(metadata.metadata.server_name, saved.name);
+    assert_eq!(metadata.metadata.join_policy, vec!["moderator_approval"]);
+    let audits: i64 = sqlx::query_scalar("SELECT count(*) FROM server_profile_audit")
+        .fetch_one(service.0.store.pool())
+        .await?;
+    assert_eq!(audits, 1);
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use cords_protocol::{profiles::ProfileAvatar, server_profile::ServerIconChange};
+    let image = include_bytes!("../../../cords-avatar-codec/tests/fixtures/looping-a.jxl");
+    let info = cords_avatar_codec::validate(image)?;
+    assert_eq!(info.width, info.height);
+    let change = ServerIconChange {
+        request_id: uuid::Uuid::now_v7().to_string(),
+        expected_revision: saved.revision,
+        icon: Some(ProfileAvatar {
+            sha256: hash(image),
+            bytes: u32::try_from(image.len())?,
+            width: u16::try_from(info.width)?,
+            height: u16::try_from(info.height)?,
+            shape: "circle".into(),
+        }),
+        image: Some(STANDARD.encode(image)),
+    };
+    assert!(member.save_server_icon(change.clone()).await.is_err());
+    let mut corrupt = change.clone();
+    corrupt.image = Some(STANDARD.encode(b"not an image"));
+    if let Some(icon) = corrupt.icon.as_mut() {
+        icon.sha256 = hash(b"not an image");
+        icon.bytes = 12;
+    }
+    assert!(owner.save_server_icon(corrupt).await.is_err());
+    let saved = owner.save_server_icon(change.clone()).await?;
+    assert_eq!(owner.save_server_icon(change.clone()).await?, saved);
+    let mut stale_icon = change;
+    stale_icon.request_id = uuid::Uuid::now_v7().to_string();
+    assert!(owner.save_server_icon(stale_icon).await.is_err());
+    assert_eq!(member.server_profile().await?, saved);
+    assert_eq!(
+        member
+            .cached_server_icon(&saved.server_id)
+            .await?
+            .context("Missing cached icon")?
+            .0,
+        STANDARD.encode(image)
+    );
+    drop(owner);
+    let mut owner = Client::open(&owner_path, &migrations, Some(password), Some(&ca)).await?;
+    assert_eq!(owner.cached_server_profile(), Some(&saved));
+    let port = tls
+        .origin
+        .rsplit(':')
+        .next()
+        .context("missing port")?
+        .to_owned();
+    drop(tls);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let restarted = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let _tls = https_fixture_at(&restarted, &certificate, &format!("127.0.0.1:{port}")).await?;
+    assert_eq!(owner.server_profile().await?, saved);
+    let removed = owner
+        .save_server_icon(ServerIconChange {
+            request_id: uuid::Uuid::now_v7().to_string(),
+            expected_revision: saved.revision,
+            icon: None,
+            image: None,
+        })
+        .await?;
+    assert!(removed.icon.is_none());
+    member.server_profile().await?;
+    assert!(member.cached_server_icon(&saved.server_id).await?.is_none());
+    let bytes: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT icon_image FROM server_profile WHERE singleton=TRUE")
+            .fetch_one(base.0.store.pool())
+            .await?;
+    assert!(bytes.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real concurrent PostgreSQL transactions"]
+async fn approval_does_not_deadlock_with_pending_status_refresh() -> Result<()> {
+    let (base, _directory, code) = fixture_with_state(false).await?;
+    let s = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let (owner, owner_contact) = identity()?;
+    let owner_session = claim_ownership(
+        State(s.clone()),
+        Json(ownership_request(&s, &owner, owner_contact, &code).await?),
+    )
+    .await?
+    .0;
+    let (applicant, mut contact) = identity()?;
+    assert!(join(&s, &applicant, contact.clone()).await.is_err());
+    let device = applicant.authorization.value.device_id.clone();
+    // A pending status refresh holds the account lock while persisting its contact,
+    // then locks the admission row. Approval must take those locks in the same order.
+    let mut refreshing = s.0.store.pool().begin().await?;
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *refreshing)
+        .await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(&applicant.authorization.value.account_id)
+        .execute(&mut *refreshing)
+        .await?;
+    let service = s.clone();
+    let target = device.clone();
+    let actor_headers = headers(&owner_session)?;
+    let approving = tokio::spawn(async move {
+        approve_membership(State(service), actor_headers, Path(target)).await
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(pid)
+        .fetch_one(s.0.store.pool())
+        .await?;
+        if blocked {
+            break;
+        }
+        anyhow::ensure!(
+            tokio::time::Instant::now() < deadline,
+            "Approval did not reach the held account lock"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    contact.user_card = Some(applicant.sign_device(cords_protocol::messaging::UserCard {
+        version: 1,
+        account_id: applicant.authorization.value.account_id.clone(),
+        device_id: device.clone(),
+        nickname: "Updated while waiting".into(),
+        avatar: None,
+        issued_at: now()?,
+    })?);
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        sqlx::query("UPDATE membership_requests SET contact=$2 WHERE device_id=$1")
+            .bind(&device)
+            .bind(json(&contact)?)
+            .execute(&mut *refreshing),
+    )
+    .await
+    .context("Pending status refresh blocked behind approval")??;
+    refreshing.commit().await?;
+    let approved = tokio::time::timeout(Duration::from_secs(10), approving)
+        .await???
+        .0;
+    assert_eq!(approved.value.device_id, device);
+    let persisted: String =
+        sqlx::query_scalar("SELECT contact FROM device_contacts WHERE device_id=$1")
+            .bind(&device)
+            .fetch_one(s.0.store.pool())
+            .await?;
+    assert_eq!(
+        parse::<Contact>(&persisted)?
+            .user_card
+            .context("Missing refreshed card")?
+            .value
+            .nickname,
+        "Updated while waiting"
+    );
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM membership_requests WHERE device_id=$1")
+            .bind(device)
+            .fetch_one(s.0.store.pool())
+            .await?;
+    assert_eq!(status, "approved");
+    Ok(())
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include <QUrl>
 #include "rows.h"
 #include "cords-qt-bridge/src/lib.rs.h"
 #include <QTimer>
@@ -62,6 +63,8 @@ public:
     Q_INVOKABLE void sendMessage(QString channel, QString body);
     Q_INVOKABLE void synchronize();
     Q_INVOKABLE void loadDirectory(QString after = {});
+    Q_INVOKABLE void loadServerProfile();
+    Q_INVOKABLE void saveServerProfile(QString name, QString description, QString background, quint64 revision, QString requestId);
     Q_INVOKABLE void loadRequests();
     Q_INVOKABLE void approveRequest(QString device);
     Q_INVOKABLE void rejectRequest(QString device);
@@ -75,6 +78,14 @@ public:
     Q_INVOKABLE void assignRole(QString account, QString role, bool remove, quint64 revision, QString requestId);
     Q_INVOKABLE void loadAudit(quint64 after = 0);
     Q_INVOKABLE void loadProfile(QString account);
+    Q_INVOKABLE void prepareAvatar(QUrl file);
+    Q_INVOKABLE void prepareServerIcon(QUrl file);
+    Q_INVOKABLE void saveServerIcon(QString id, double x, double y, double zoom, QString shape);
+    Q_INVOKABLE void cancelServerIcon();
+    Q_INVOKABLE void removeServerIcon(quint64 revision, QString requestId);
+    Q_INVOKABLE void saveAvatar(QString id, double x, double y, double zoom, QString shape);
+    Q_INVOKABLE void cancelAvatar();
+    Q_INVOKABLE void removeAvatar(QStringList heads);
     Q_INVOKABLE void saveProfileName(QString name, QStringList heads);
     Q_INVOKABLE void savePreferences(QVariantMap preferences);
     Q_INVOKABLE void copy(QString text);

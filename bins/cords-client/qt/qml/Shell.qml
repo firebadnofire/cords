@@ -21,10 +21,8 @@ Item {
     function closeSettings() {
         if (showSettings)
             settingsPane.requestClose();
-        else if (!adminPane.modalOpen) {
-            showAdmin = false;
-            composer.forceActiveFocus();
-        }
+        else
+            adminPane.requestClose();
     }
     Shortcut {
         sequence: "Escape"
@@ -113,8 +111,16 @@ Item {
                         required property var row
                         width: serverList.width
                         height: 48
-                        text: row.origin.replace("https://", "").slice(0, 2).toUpperCase()
+                        text: (row.name || row.origin.replace("https://", "")).slice(0, 2).toUpperCase()
                         primary: row.selected
+                        contentItem: CordsAvatar {
+                            objectName: "serverRailIcon"
+                            name: serverButton.text
+                            account: shell.desktop.state.account || ""
+                            source: serverButton.row.image || ""
+                            shape: serverButton.row.shape || "circle"
+                            playing: serverButton.visible
+                        }
                         background: Rectangle {
                             radius: serverButton.row.selected || serverButton.hovered ? 13 : width / 2
                             color: serverButton.row.selected ? Theme.accent : serverButton.hovered ? Theme.hover : Theme.elevated
@@ -136,7 +142,7 @@ Item {
                             visible: serverButton.row.selected || serverButton.hovered
                             color: Theme.text
                         }
-                        help: row.origin + (row.archived ? " (archived)" : row.error ? " · " + row.error : row.connected ? " · Connected" : " · Connecting")
+                        help: row.origin + (row.archived ? " (archived)" : row.error ? " · " + row.error : row.state === "pending" ? " · Waiting for administrator approval" : row.state === "rejected" ? " · Membership denied" : row.connected ? " · Connected" : " · Not connected")
                         Rectangle {
                             visible: serverButton.row.unread
                             width: 7
@@ -224,7 +230,7 @@ Item {
                 anchors.margins: 12
                 spacing: 10
                 CordsButton {
-                    text: shell.desktop.state.origin ? shell.desktop.state.origin.replace("https://", "") : "Choose a server"
+                    text: (shell.desktop.state.serverProfile || {}).name || (shell.desktop.state.origin ? shell.desktop.state.origin.replace("https://", "") : "Choose a server")
                     quiet: true
                     font.bold: true
                     implicitHeight: 44
@@ -259,12 +265,16 @@ Item {
                     }
                 }
                 CordsLabel {
-                    text: shell.desktop.state.ownership === "UNCLAIMED" ? "Unclaimed server · owner setup required" : shell.desktop.state.admission || "No server selected"
+                    text: shell.desktop.state.ownership === "UNCLAIMED" ? "Unclaimed server · owner setup required" : ({
+                            pending: "Waiting for administrator approval",
+                            rejected: "Membership request denied",
+                            active: "Membership approved"
+                        })[shell.desktop.state.admission] || "Not authenticated"
                     color: Theme.secondary
                     font.pixelSize: Theme.captionSize
                 }
                 CordsButton {
-                    text: "Authenticate / request admission"
+                    text: shell.desktop.state.admission === "pending" ? "Check approval status" : shell.desktop.state.admission === "rejected" ? "Submit a new request" : "Authenticate / request admission"
                     visible: !!shell.desktop.state.server && !shell.desktop.state.connected
                     Layout.fillWidth: true
                     enabled: !shell.desktop.busy
@@ -486,6 +496,10 @@ Item {
             }
             AdminPane {
                 id: adminPane
+                onCloseRequested: {
+                    shell.showAdmin = false;
+                    composer.forceActiveFocus();
+                }
                 visible: shell.showAdmin
                 desktop: shell.desktop
                 route: shell.route
@@ -643,7 +657,7 @@ Item {
                             width: Math.min(300, parent.width - 30)
                             horizontalAlignment: Text.AlignHCenter
                             visible: messages.count === 0
-                            text: shell.route ? "No locally available messages. Synchronize or join this channel to receive new content." : "Select a server and channel to start a conversation."
+                            text: shell.desktop.state.admission === "pending" ? "Waiting for administrator approval\n\n" + shell.desktop.state.origin + "\nYour request has been submitted. An administrator must approve your membership before you can access channels. Use Check approval status to refresh." : shell.desktop.state.admission === "rejected" ? "Your request to join " + shell.desktop.state.origin + " was denied. You may submit a new request from the server sidebar." : shell.route ? "No locally available messages. Synchronize or join this channel to receive new content." : "Select a server and channel to start a conversation."
                             color: Theme.secondary
                         }
                     }
@@ -689,7 +703,7 @@ Item {
                                     wrapMode: TextEdit.Wrap
                                     selectByMouse: true
                                     inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhSensitiveData
-                                    enabled: !!shell.route && !shell.channel.retired && !shell.channel.acknowledgement && !shell.desktop.state.revoked && !shell.desktop.state.burned
+                                    enabled: shell.desktop.state.admission === "active" && !!shell.route && !shell.channel.retired && !shell.channel.acknowledgement && !shell.desktop.state.revoked && !shell.desktop.state.burned
                                     font.pixelSize: Theme.bodySize
                                     background: null
                                     Accessible.name: "Message composer"

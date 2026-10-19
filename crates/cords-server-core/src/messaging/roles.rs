@@ -39,7 +39,7 @@ impl From<runtime::Error> for ApiError {
     }
 }
 
-async fn administrative_subject(
+pub(super) async fn administrative_subject(
     service: &Service,
     tx: &mut Tx<'_>,
     member: &Membership,

@@ -108,6 +108,7 @@
     error = '';
   }
 
+  let ignoreWeak = false;
   async function updatePassword(allowWeak = false) {
     if (busy) return;
     error = '';
@@ -396,8 +397,7 @@
               <label
                 >Successor account fingerprint<input
                   bind:value={successorAccount}
-                  required
-                /></label
+                  /></label
               >
               <button disabled={busy || !successorAccount}>Designate successor</button>
             </form>
@@ -599,13 +599,12 @@
             Protects this account on this installation. Identity, device keys, messages and archives
             stay the same. Existing backups retain their previous password protection.
           </p>
-          <form on:submit|preventDefault={() => void updatePassword()}>
+          <form on:submit|preventDefault={() => void updatePassword(ignoreWeak)}>
             <label
               >Current password<input
                 type="password"
                 autocomplete="current-password"
                 bind:value={currentPassword}
-                required
               /></label
             >
             <label
@@ -614,7 +613,6 @@
                 autocomplete="new-password"
                 bind:value={newPassword}
                 on:input={() => (passwordWarning = [])}
-                required
               /></label
             >
             <label
@@ -622,10 +620,9 @@
                 type="password"
                 autocomplete="new-password"
                 bind:value={confirmation}
-                required
               /></label
             >
-            <p>Use at least 12 characters.</p>
+            <label><input type="checkbox" bind:checked={ignoreWeak} />Ignore weak passwords</label>
             <button disabled={busy}>Change local password</button>
           </form>
           {#if passwordWarning.length}

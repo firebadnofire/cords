@@ -34,7 +34,7 @@ TestCase {
         const password = findChild(removal, "localRemovalPassword");
         const confirm = findChild(removal, "confirmRemoval");
         verify(password !== null && confirm !== null);
-        verify(!confirm.enabled);
+        verify(confirm.enabled);
         password.text = "public-test-only-local-password";
         verify(confirm.enabled);
         mouseClick(confirm);
@@ -42,7 +42,7 @@ TestCase {
         compare(requests.signalArguments[0][0], "synthetic-local-account");
         compare(requests.signalArguments[0][1], "public-test-only-local-password");
         compare(password.text, "");
-        verify(!confirm.enabled);
+        verify(confirm.enabled);
         verify(removal.width <= test.width - 32);
         verify(removal.height <= test.height - 32);
     }
@@ -60,5 +60,18 @@ TestCase {
         tryCompare(removal, "opened", false);
         compare(password.text, "");
         compare(requests.count, 0);
+    }
+    function test_empty_password_is_submitted_for_vault_authentication() {
+        const password = findChild(removal, "localRemovalPassword");
+        const confirm = findChild(removal, "confirmRemoval");
+        compare(password.text, "");
+        verify(confirm.enabled);
+        mouseClick(confirm);
+        compare(requests.count, 1);
+        compare(requests.signalArguments[0][0], "synthetic-local-account");
+        compare(requests.signalArguments[0][1], "");
+        removal.account = "";
+        verify(!confirm.enabled);
+        removal.account = "synthetic-local-account";
     }
 }

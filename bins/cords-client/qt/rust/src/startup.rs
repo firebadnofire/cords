@@ -25,8 +25,8 @@ fn read_password(input: impl std::io::BufRead) -> Result<Zeroizing<String>> {
         }
     }
     ensure!(
-        !bytes.is_empty() && bytes.len() <= 4096,
-        "Password stdin line must contain 1–4096 UTF-8 bytes"
+        bytes.len() <= 4096,
+        "Password stdin line must contain 0–4096 UTF-8 bytes"
     );
     let value = std::str::from_utf8(&bytes).context("Password stdin line must be UTF-8")?;
     ensure!(
@@ -42,12 +42,8 @@ mod tests {
     #[test]
     fn credentials_are_bounded_and_preserved_exactly() -> Result<()> {
         assert_eq!(*read_password(&b"  secret  \r\nignored"[..])?, "  secret  ");
-        for bad in [
-            b"\n".to_vec(),
-            vec![0xff],
-            b"secret\0\n".to_vec(),
-            vec![b'x'; 4097],
-        ] {
+        assert_eq!(*read_password(&b"\n"[..])?, "");
+        for bad in [vec![0xff], b"secret\0\n".to_vec(), vec![b'x'; 4097]] {
             assert!(read_password(bad.as_slice()).is_err());
         }
         assert_eq!(read_password(vec![b'x'; 4096].as_slice())?.len(), 4096);

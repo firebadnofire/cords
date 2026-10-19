@@ -3,8 +3,8 @@
 //! There are no `QObject` pointers in Rust and no JSON command dispatcher. Snapshots
 //! contain verified presentation data only. Short exchanges do not span I/O awaits.
 
-mod media;
 mod avatar;
+mod media;
 mod runtime;
 mod startup;
 use anyhow::{Context as _, Result};
@@ -48,6 +48,9 @@ pub mod ffi {
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct ServerRow {
+        name: String,
+        image: String,
+        shape: String,
         id: String,
         origin: String,
         state: String,
@@ -99,6 +102,7 @@ pub mod ffi {
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct RequestRow {
+        requested_at: u64,
         id: String,
         account: String,
         name: String,
@@ -138,6 +142,19 @@ pub mod ffi {
         image: String,
         width: u32,
         height: u32,
+    }
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    struct ServerPresentation {
+        supported: bool,
+        loaded: bool,
+        can_edit: bool,
+        revision: u64,
+        name: String,
+        description: String,
+        background: String,
+        image: String,
+        shape: String,
+        has_icon: bool,
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct Preferences {
@@ -205,10 +222,13 @@ pub mod ffi {
         people: Vec<PersonRow>,
         devices: Vec<DeviceRow>,
         requests: Vec<RequestRow>,
+        requests_loaded: bool,
         roles: Vec<RoleRow>,
         audit: Vec<AuditRow>,
         profile: Profile,
         avatar_draft: AvatarDraft,
+        server_icon_draft: AvatarDraft,
+        server_profile: ServerPresentation,
         preferences: Preferences,
         notifications: Vec<Alert>,
     }
@@ -279,6 +299,15 @@ pub mod ffi {
         fn send_message(self: &Desktop, channel: String, body: String) -> Result<()>;
         fn synchronize(self: &Desktop) -> Result<()>;
         fn load_directory(self: &Desktop, after: String) -> Result<()>;
+        fn load_server_profile(self: &Desktop) -> Result<()>;
+        fn save_server_profile(
+            self: &Desktop,
+            name: String,
+            description: String,
+            background: String,
+            revision: u64,
+            request_id: String,
+        ) -> Result<()>;
         fn load_requests(self: &Desktop) -> Result<()>;
         fn approve_request(self: &Desktop, device: String) -> Result<()>;
         fn reject_request(self: &Desktop, device: String) -> Result<()>;
@@ -307,8 +336,27 @@ pub mod ffi {
         fn load_profile(self: &Desktop, account: String) -> Result<()>;
         fn save_profile_name(self: &Desktop, name: String, heads: Vec<String>) -> Result<()>;
         fn prepare_avatar(self: &Desktop, path: String) -> Result<()>;
-        fn save_avatar(self: &Desktop, id: String, x: f64, y: f64, zoom: f64, shape: String) -> Result<()>;
+        fn prepare_server_icon(self: &Desktop, path: String) -> Result<()>;
+        fn save_server_icon(
+            self: &Desktop,
+            id: String,
+            x: f64,
+            y: f64,
+            zoom: f64,
+            shape: String,
+        ) -> Result<()>;
+        fn cancel_server_icon(self: &Desktop) -> Result<()>;
+        fn remove_server_icon(self: &Desktop, revision: u64, request_id: String) -> Result<()>;
+        fn save_avatar(
+            self: &Desktop,
+            id: String,
+            x: f64,
+            y: f64,
+            zoom: f64,
+            shape: String,
+        ) -> Result<()>;
         fn cancel_avatar(self: &Desktop) -> Result<()>;
+        fn remove_avatar(self: &Desktop, heads: Vec<String>) -> Result<()>;
         fn save_preferences(self: &Desktop, preferences: Preferences) -> Result<()>;
     }
 }
@@ -672,6 +720,31 @@ impl Desktop {
     }
     /// # Errors
     /// Returns a worker submission or input validation error.
+    pub fn load_server_profile(&self) -> Result<()> {
+        self.submit(Command::ServerProfile)
+    }
+    /// # Errors
+    /// Returns a scoped command submission error.
+    pub fn save_server_profile(
+        &self,
+        name: String,
+        description: String,
+        background: String,
+        revision: u64,
+        request_id: String,
+    ) -> Result<()> {
+        self.submit(Command::SaveServerProfile(
+            cords_protocol::server_profile::ServerProfileChange {
+                request_id,
+                expected_revision: revision,
+                name,
+                description,
+                background,
+            },
+        ))
+    }
+    /// # Errors
+    /// Returns a worker submission error.
     pub fn load_requests(&self) -> Result<()> {
         self.submit(Command::Requests)
     }
@@ -794,7 +867,36 @@ impl Desktop {
     /// Stage a bounded local image without publication.
     /// # Errors
     /// Reports a locked runtime or full command queue.
-    pub fn prepare_avatar(&self, path: String) -> Result<()> { self.submit(Command::PrepareAvatar(path)) }
+    pub fn prepare_avatar(&self, path: String) -> Result<()> {
+        self.submit(Command::PrepareAvatar(path))
+    }
+    /// # Errors
+    /// Returns a scoped command submission error.
+    pub fn prepare_server_icon(&self, path: String) -> Result<()> {
+        self.submit(Command::PrepareServerIcon(path))
+    }
+    /// # Errors
+    /// Returns a scoped command submission error.
+    pub fn save_server_icon(
+        &self,
+        id: String,
+        x: f64,
+        y: f64,
+        zoom: f64,
+        shape: String,
+    ) -> Result<()> {
+        self.submit(Command::SaveServerIcon(id, x, y, zoom, shape))
+    }
+    /// # Errors
+    /// Returns a scoped command submission error.
+    pub fn cancel_server_icon(&self) -> Result<()> {
+        self.submit(Command::CancelServerIcon)
+    }
+    /// # Errors
+    /// Returns a scoped command submission error.
+    pub fn remove_server_icon(&self, revision: u64, request_id: String) -> Result<()> {
+        self.submit(Command::RemoveServerIcon(revision, request_id))
+    }
     /// Sign and save a reviewed crop of the active account's staged image.
     /// # Errors
     /// Reports a locked runtime or full command queue.
@@ -804,7 +906,14 @@ impl Desktop {
     /// Discard transient staged image data.
     /// # Errors
     /// Reports a locked runtime or full command queue.
-    pub fn cancel_avatar(&self) -> Result<()> { self.submit(Command::CancelAvatar) }
+    pub fn remove_avatar(&self, heads: Vec<String>) -> Result<()> {
+        self.submit(Command::RemoveAvatar(heads))
+    }
+    /// # Errors
+    /// Returns a worker submission error.
+    pub fn cancel_avatar(&self) -> Result<()> {
+        self.submit(Command::CancelAvatar)
+    }
     /// # Errors
     /// Returns a worker submission or input validation error.
     pub fn save_preferences(&self, preferences: ffi::Preferences) -> Result<()> {

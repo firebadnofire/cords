@@ -412,7 +412,11 @@ pub(crate) async fn change_local_password(
         return Err("Review the weak-password warning before continuing".into());
     }
     client
-        .change_password(current_password.as_bytes(), new_password.as_bytes())
+        .change_password_with_policy(
+            current_password.as_bytes(),
+            new_password.as_bytes(),
+            allow_weak,
+        )
         .await
         .map_err(|error| format!("{error:#}"))?;
     runtime.last_activity = Some(Instant::now());

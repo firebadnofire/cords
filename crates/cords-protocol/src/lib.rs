@@ -4,6 +4,7 @@ pub mod directory;
 pub mod messaging;
 pub mod profiles;
 pub mod roles;
+pub mod server_profile;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, VerifyingKey};

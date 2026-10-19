@@ -11,6 +11,14 @@ ColumnLayout {
     signal profileRequested(string account)
     property string selectedAccount: ""
     property var selectedMember: ({})
+    readonly property string scope: JSON.stringify([desktop.state.account || "", desktop.state.server || ""])
+    onScopeChanged: {
+        selectedAccount = "";
+        selectedMember = ({});
+        search.text = "";
+        roleChoice.currentIndex = 0;
+        assignments.close();
+    }
     function selectMember(member) {
         selectedAccount = member.id;
         selectedMember = member;

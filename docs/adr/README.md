@@ -8,4 +8,6 @@ ADRs record changes or selections that affect Cords trust boundaries, cryptograp
 - [0008: Account roles and server policy](0008-server-role-policy.md)
 - [0009: Embedded lossless static and animated JXL avatars](0009-embedded-jxl-avatars.md)
 - [0010: Canonical account profiles and shared presentation media](0010-canonical-account-profiles.md)
+- [0011: Native Qt desktop](0011-native-qt-desktop.md)
+- [0012: Server-owned presentation](0012-server-presentation.md)
 

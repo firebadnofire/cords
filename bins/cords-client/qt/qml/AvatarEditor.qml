@@ -19,9 +19,11 @@ CordsDialog {
     objectName: "avatarEditor"
     title: "Adjust profile picture"
     width: Math.min(520, parent ? parent.width - 32 : 520)
+    height: Math.min(640, parent ? parent.height - 16 : 640)
     contentHeight: Math.min(editorContent.implicitHeight, parent ? parent.height - 150 : 520)
     closePolicy: editor.operationBusy ? Popup.NoAutoClose : Popup.CloseOnEscape
-    onClosed: if (draftId) cancelRequested()
+    onClosed: if (draftId)
+        cancelRequested()
     function resetCrop() {
         centerX = 0.5;
         centerY = 0.5;
@@ -90,11 +92,29 @@ CordsDialog {
                     }
                     activeFocusOnTab: true
                     Accessible.name: "Crop position; use arrow keys to move the picture"
-                    Keys.onLeftPressed: { editor.centerX -= 0.02; editor.constrain(); }
-                    Keys.onRightPressed: { editor.centerX += 0.02; editor.constrain(); }
-                    Keys.onUpPressed: { editor.centerY -= 0.02; editor.constrain(); }
-                    Keys.onDownPressed: { editor.centerY += 0.02; editor.constrain(); }
+                    Keys.onLeftPressed: {
+                        editor.centerX -= 0.02;
+                        editor.constrain();
+                    }
+                    Keys.onRightPressed: {
+                        editor.centerX += 0.02;
+                        editor.constrain();
+                    }
+                    Keys.onUpPressed: {
+                        editor.centerY -= 0.02;
+                        editor.constrain();
+                    }
+                    Keys.onDownPressed: {
+                        editor.centerY += 0.02;
+                        editor.constrain();
+                    }
                 }
+            }
+            CordsLabel {
+                text: "Loading picture preview…"
+                visible: !cropPreview.ready && !cropPreview.imageError
+                color: Theme.secondary
+                Layout.fillWidth: true
             }
             CordsLabel {
                 text: "Zoom · " + editor.zoom.toFixed(1) + "×"
@@ -113,10 +133,28 @@ CordsDialog {
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                CordsButton { text: "Circle"; selected: editor.shape === "circle"; enabled: !editor.operationBusy; onClicked: editor.shape = "circle" }
-                CordsButton { text: "Square"; selected: editor.shape === "square"; enabled: !editor.operationBusy; onClicked: editor.shape = "square" }
-                CordsButton { text: "Reset crop"; enabled: !editor.operationBusy; onClicked: editor.resetCrop() }
-                CordsButton { text: "Choose another picture…"; enabled: !editor.operationBusy; onClicked: editor.chooseRequested() }
+                CordsButton {
+                    text: "Circle"
+                    selected: editor.shape === "circle"
+                    enabled: !editor.operationBusy
+                    onClicked: editor.shape = "circle"
+                }
+                CordsButton {
+                    text: "Square"
+                    selected: editor.shape === "square"
+                    enabled: !editor.operationBusy
+                    onClicked: editor.shape = "square"
+                }
+                CordsButton {
+                    text: "Reset crop"
+                    enabled: !editor.operationBusy
+                    onClicked: editor.resetCrop()
+                }
+                CordsButton {
+                    text: "Choose another picture…"
+                    enabled: !editor.operationBusy
+                    onClicked: editor.chooseRequested()
+                }
             }
             CordsLabel {
                 text: "Animations keep all frames; this preview shows the first frame. Nothing is published until you save."
@@ -138,12 +176,14 @@ CordsDialog {
             enabled: !editor.operationBusy
             onClicked: editor.close()
         }
-        Item { Layout.fillWidth: true }
+        Item {
+            Layout.fillWidth: true
+        }
         CordsButton {
             objectName: "saveAvatarCrop"
             text: editor.operationBusy ? "Working…" : "Save picture"
             primary: true
-            enabled: !editor.operationBusy && !!editor.draft.id
+            enabled: !editor.operationBusy && !!editor.draft.id && cropPreview.ready
             onClicked: editor.saveRequested(editor.draft.id, editor.centerX, editor.centerY, editor.zoom, editor.shape)
         }
     }

@@ -198,7 +198,7 @@ impl AccountRegistry {
         );
         let assessment = assess_password(password, nickname);
         ensure!(
-            password.chars().count() >= 12,
+            allow_weak || password.chars().count() >= 12,
             "use a password of at least 12 characters"
         );
         ensure!(
@@ -209,14 +209,21 @@ impl AccountRegistry {
         let directory = self.root.join("accounts").join(&local_id);
         std::fs::create_dir_all(&directory)?;
         let secret = Zeroizing::new(password.as_bytes().to_vec());
-        let mut client =
-            match Client::create(&directory, &self.migrations, &secret, self.ca.as_deref()).await {
-                Ok(client) => client,
-                Err(error) => {
-                    let _ = std::fs::remove_dir(&directory);
-                    return Err(error);
-                }
-            };
+        let mut client = match Client::create_with_password_policy(
+            &directory,
+            &self.migrations,
+            &secret,
+            self.ca.as_deref(),
+            allow_weak,
+        )
+        .await
+        {
+            Ok(client) => client,
+            Err(error) => {
+                let _ = std::fs::remove_dir(&directory);
+                return Err(error);
+            }
+        };
         if let Err(error) = client
             .save_ui_preferences(serde_json::json!({"version":1,"displayName":nickname}))
             .await
@@ -340,7 +347,7 @@ impl AccountRegistry {
     ) -> Result<Client> {
         ensure!(self.legacy_vault_exists(), "legacy vault not found");
         ensure!(
-            new_password.chars().count() >= 12,
+            allow_weak || new_password.chars().count() >= 12,
             "use a password of at least 12 characters"
         );
         ensure!(
@@ -376,7 +383,9 @@ impl AccountRegistry {
                 return Err(error);
             }
         };
-        copied.rewrap_password(new_password.as_bytes()).await?;
+        copied
+            .rewrap_password_with_policy(new_password.as_bytes(), allow_weak)
+            .await?;
         copied.shutdown().await;
         let verified = Box::pin(Client::open_existing(
             &directory,

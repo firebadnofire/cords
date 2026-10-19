@@ -149,6 +149,7 @@ fn sync_directory(_path: &Path) -> Result<(), std::io::Error> {
 #[derive(Clone, Debug)]
 pub struct AppState {
     metadata: SignedServerMetadataV1,
+    identity: Option<ServerIdentity>,
     store: Option<cords_storage::PostgresStore>,
 }
 
@@ -157,8 +158,15 @@ impl AppState {
     pub fn new(metadata: SignedServerMetadataV1) -> Self {
         Self {
             metadata,
+            identity: None,
             store: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_identity(mut self, identity: ServerIdentity) -> Self {
+        self.identity = Some(identity);
+        self
     }
 
     #[must_use]
@@ -197,8 +205,33 @@ async fn ready(State(state): State<AppState>) -> StatusCode {
         _ => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
-async fn metadata(State(state): State<AppState>) -> Json<SignedServerMetadataV1> {
-    Json(state.metadata)
+async fn metadata(
+    State(state): State<AppState>,
+) -> Result<Json<SignedServerMetadataV1>, StatusCode> {
+    if let (Some(store), Some(identity)) = (&state.store, &state.identity) {
+        let name: String =
+            sqlx::query_scalar("SELECT name FROM server_profile WHERE singleton=TRUE")
+                .fetch_one(store.pool())
+                .await
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        if !name.is_empty() {
+            let mut metadata = state.metadata.metadata.clone();
+            metadata.server_name = name;
+            let signature = identity
+                .signing_key
+                .sign(
+                    &metadata
+                        .signing_bytes()
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                )
+                .to_bytes();
+            return Ok(Json(SignedServerMetadataV1 {
+                metadata,
+                signature: URL_SAFE_NO_PAD.encode(signature),
+            }));
+        }
+    }
+    Ok(Json(state.metadata))
 }
 async fn capabilities() -> Json<CapabilitiesV1> {
     Json(CapabilitiesV1 {
@@ -221,6 +254,7 @@ fn server_features() -> Vec<String> {
         "member-pages-v1",
         "account-directory-v1",
         cords_protocol::profiles::FEATURE,
+        cords_protocol::server_profile::FEATURE,
     ]
     .into_iter()
     .map(str::to_owned)

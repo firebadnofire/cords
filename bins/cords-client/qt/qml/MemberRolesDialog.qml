@@ -9,6 +9,7 @@ CordsDialog {
     required property Controller desktop
     property string account: ""
     property string serverId: ""
+    property string localAccount: ""
     property var assigned: []
     property var catalog: []
     property var reviewedRevision: 0
@@ -19,8 +20,14 @@ CordsDialog {
     title: "Member roles"
     height: Math.min(580, parent ? parent.height - 32 : 580)
     closePolicy: desktop.busy ? Popup.NoAutoClose : Popup.CloseOnEscape
+    onClosed: {
+        confirm.close();
+        confirm.operation = function () {};
+        stage = "";
+    }
     function inspect(member) {
         serverId = desktop.state.server || "";
+        localAccount = desktop.state.account || "";
         account = member.id;
         assigned = [];
         catalog = [];
@@ -46,7 +53,7 @@ CordsDialog {
     Connections {
         target: dialog.desktop
         function onStateChanged() {
-            if (dialog.visible && dialog.serverId !== (dialog.desktop.state.server || "")) {
+            if (dialog.visible && (dialog.serverId !== (dialog.desktop.state.server || "") || dialog.localAccount !== (dialog.desktop.state.account || ""))) {
                 dialog.close();
                 return;
             }

@@ -295,13 +295,13 @@ async fn main() -> Result<()> {
                 .context("failed to sign server metadata")?;
             let service = cords_server_core::messaging::Service::with_policy(
                 store.clone(),
-                identity,
+                identity.clone(),
                 settings.authentication.challenge_seconds,
                 settings.authentication.session_seconds,
                 settings.server.join_policy,
             )
             .map_err(|_| anyhow::anyhow!("authentication lifetime configuration is invalid"))?;
-            let app = router(AppState::new(metadata).with_store(store))
+            let app = router(AppState::new(metadata).with_identity(identity).with_store(store))
                 .merge(cords_server_core::messaging::router(service));
             let listener = TcpListener::bind(settings.server.listen)
                 .await

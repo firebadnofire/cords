@@ -20,8 +20,9 @@ package_root="${staging_root}/${package_name}"
 mkdir -p "${package_root}"
 
 log "Building Cords Linux server ${version} for ${architecture}"
-cargo build --locked --release --manifest-path "${REPO_ROOT}/Cargo.toml" --bin cords-server
-stage_server_distribution "${REPO_ROOT}/target/release/cords-server" "${package_root}"
+cargo_target="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}"
+cargo build --locked --release --target-dir "${cargo_target}" --manifest-path "${REPO_ROOT}/Cargo.toml" --bin cords-server
+stage_server_distribution "${cargo_target}/release/cords-server" "${package_root}"
 
 artifact="${DIST_DIR}/cords-server-linux-${architecture}-${version}.tar.gz"
 log "Packaging ${artifact}"

@@ -13,6 +13,7 @@ Rectangle {
     property real centerY: 0.5
     property real zoom: 1
     readonly property bool animated: nativeImage.animated
+    readonly property bool ready: nativeImage.ready
     readonly property string imageError: nativeImage.error
     width: 36
     height: width

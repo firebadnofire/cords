@@ -3,6 +3,7 @@ import Cords
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 CordsDialog {
     id: popup
@@ -25,6 +26,56 @@ CordsDialog {
     objectName: "expandedProfile"
     title: "Account profile"
     width: Math.min(440, parent ? parent.width - 32 : 440)
+    closePolicy: Popup.NoAutoClose
+    function requestClose() {
+        if (desktop.busy || avatarEditor.visible)
+            return;
+        if (nameDirty)
+            discard.open();
+        else
+            close();
+    }
+    Shortcut {
+        sequence: "Escape"
+        enabled: popup.visible && !avatarEditor.visible && !discard.visible && !removePicture.visible && !pictureFile.visible
+        onActivated: popup.requestClose()
+    }
+    FileDialog {
+        id: pictureFile
+        title: "Choose a profile picture"
+        nameFilters: ["Pictures (*.jxl *.png *.jpg *.jpeg *.gif *.webp *.apng)"]
+        onAccepted: popup.desktop.prepareAvatar(selectedFile)
+    }
+    AvatarEditor {
+        id: avatarEditor
+        parent: Overlay.overlay
+        draft: popup.desktop.state.avatarDraft || ({})
+        operationBusy: popup.desktop.busy
+        errorText: popup.desktop.state.error || ""
+        onChooseRequested: pictureFile.open()
+        onSaveRequested: (id, x, y, zoom, shape) => popup.desktop.saveAvatar(id, x, y, zoom, shape)
+        onCancelRequested: if (!popup.desktop.busy)
+            popup.desktop.cancelAvatar()
+    }
+    ConfirmDialog {
+        id: discard
+        title: "Discard profile name edits?"
+        explanation: "Your unsaved name will be lost."
+        confirmText: "Discard"
+        operation: function () {
+            popup.nameDirty = false;
+            popup.close();
+        }
+    }
+    ConfirmDialog {
+        id: removePicture
+        title: "Remove profile picture?"
+        explanation: "Publish a signed profile update without a picture. Recipients may retain previously delivered images."
+        confirmText: "Remove picture"
+        operation: function () {
+            popup.desktop.removeAvatar(popup.reviewedHeads);
+        }
+    }
     onOpened: {
         nameDirty = false;
         nameSaving = false;
@@ -72,7 +123,8 @@ CordsDialog {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.margins: 12
-            onClicked: popup.close()
+            enabled: !popup.desktop.busy && !avatarEditor.visible
+            onClicked: popup.requestClose()
         }
     }
     contentHeight: Math.min(profileContent.implicitHeight, parent ? parent.height - 210 : 520)
@@ -93,6 +145,7 @@ CordsDialog {
             }
             CordsAvatar {
                 id: profileAvatar
+                objectName: "publicProfileAvatar"
                 Layout.topMargin: -44
                 Layout.leftMargin: 16
                 account: popup.account
@@ -170,6 +223,28 @@ CordsDialog {
                     popup.nameSaving = true;
                     popup.desktop.saveProfileName(name.text, popup.reviewedHeads);
                 }
+            }
+            Flow {
+                visible: name.visible
+                Layout.fillWidth: true
+                spacing: 8
+                CordsButton {
+                    text: "Change picture…"
+                    enabled: !popup.desktop.busy && !popup.nameDirty && (popup.profile.conflicts || []).length === 0
+                    onClicked: pictureFile.open()
+                }
+                CordsButton {
+                    text: "Remove picture…"
+                    visible: !!popup.profile.image
+                    enabled: !popup.desktop.busy && !popup.nameDirty && (popup.profile.conflicts || []).length === 0
+                    onClicked: removePicture.open()
+                }
+            }
+            CordsLabel {
+                visible: popup.nameDirty
+                text: "Save or discard your name edit before changing the picture."
+                color: Theme.secondary
+                Layout.fillWidth: true
             }
             CordsLabel {
                 text: popup.desktop.state.error || ""

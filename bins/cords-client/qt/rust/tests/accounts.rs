@@ -221,3 +221,107 @@ fn platform_lock_obeys_verified_account_preferences() -> Result<()> {
     assert!(!locked.unlocked && locked.account.is_empty());
     Ok(())
 }
+
+#[test]
+fn explicit_password_override_survives_restart_and_rewrap() -> Result<()> {
+    for password in ["", "x", "password", "aaaaaaaaaaaa", "Native acceptance"] {
+        let state = tempfile::tempdir()?;
+        let desktop = open(state.path())?;
+        wait(&desktop, |_| true)?;
+        desktop.create_account("Native acceptance".into(), password.into(), false)?;
+        let denied = wait(&desktop, |v| v.completed == 1)?;
+        assert!(!denied.unlocked && !denied.error.is_empty());
+        desktop.create_account("Native acceptance".into(), password.into(), true)?;
+        let created = wait(&desktop, |v| v.completed == 2)?;
+        assert!(created.error.is_empty(), "{}", created.error);
+        let account = created.account;
+        let device = created.device;
+        desktop.change_password(account.clone(), "wrong".into(), "q".into(), true)?;
+        assert!(!wait(&desktop, |v| v.completed == 3)?.error.is_empty());
+        desktop.change_password(account.clone(), password.into(), "q".into(), false)?;
+        assert!(!wait(&desktop, |v| v.completed == 4)?.error.is_empty());
+        desktop.change_password(account.clone(), password.into(), "q".into(), true)?;
+        assert!(wait(&desktop, |v| v.completed == 5)?.error.is_empty());
+        drop(desktop);
+        let desktop = open(state.path())?;
+        wait(&desktop, |_| true)?;
+        desktop.unlock_account(account.clone(), "q".into())?;
+        let reopened = wait(&desktop, |v| v.completed == 1)?;
+        assert!(reopened.error.is_empty(), "{}", reopened.error);
+        assert_eq!(reopened.account, account);
+        assert_eq!(reopened.device, device);
+        desktop.change_password(account.clone(), "q".into(), "".into(), true)?;
+        assert!(wait(&desktop, |v| v.completed == 2)?.error.is_empty());
+        drop(desktop);
+        let desktop = open(state.path())?;
+        wait(&desktop, |_| true)?;
+        desktop.unlock_account(account, "".into())?;
+        assert!(wait(&desktop, |v| v.completed == 1)?.unlocked);
+    }
+    Ok(())
+}
+
+#[test]
+fn native_avatar_edit_persists_signed_profile_and_removal() -> Result<()> {
+    use base64::Engine as _;
+    let state = tempfile::tempdir()?;
+    let desktop = open(state.path())?;
+    wait(&desktop, |_| true)?;
+    let password = "Local profile image acceptance phrase 73";
+    desktop.create_account("Profile tester".into(), password.into(), false)?;
+    let created = wait(&desktop, |v| v.completed == 1)?;
+    assert!(created.error.is_empty(), "{}", created.error);
+    let account = created.account;
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../crates/cords-avatar-codec/tests/fixtures/animated.gif.jxl");
+    let original = cords_avatar_codec::validate(&std::fs::read(&source)?)?;
+    desktop.prepare_avatar(source.to_string_lossy().into())?;
+    let prepared = wait(&desktop, |v| v.completed == 2)?;
+    assert!(prepared.error.is_empty(), "{}", prepared.error);
+    assert!(!prepared.avatar_draft.id.is_empty());
+    desktop.save_avatar(prepared.avatar_draft.id, 0.5, 0.5, 1.5, "square".into())?;
+    let saved = wait(&desktop, |v| v.completed == 3)?;
+    assert!(saved.error.is_empty(), "{}", saved.error);
+    assert!(saved.avatar_draft.id.is_empty());
+    assert_eq!(saved.profile.shape, "square");
+    let encoded = saved.profile.image.strip_prefix("data:image/jxl;base64,").context("missing JXL image")?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+    let output = cords_avatar_codec::validate(&bytes)?;
+    assert_eq!(output.frames, original.frames);
+    assert_eq!(output.loops, original.loops);
+    for (before, after) in original.durations.iter().zip(&output.durations) {
+        assert_eq!(u64::from(*before) * u64::from(original.ticks_per_second_denominator) * u64::from(output.ticks_per_second_numerator),
+            u64::from(*after) * u64::from(output.ticks_per_second_denominator) * u64::from(original.ticks_per_second_numerator));
+    }
+    drop(desktop);
+    let desktop = open(state.path())?;
+    wait(&desktop, |_| true)?;
+    desktop.unlock_account(account.clone(), password.into())?;
+    wait(&desktop, |v| v.completed == 1)?;
+    desktop.load_profile(account.clone())?;
+    let reopened = wait(&desktop, |v| v.completed == 2)?;
+    assert_eq!(reopened.profile.image, saved.profile.image);
+    desktop.remove_avatar(reopened.profile.heads)?;
+    let removed = wait(&desktop, |v| v.completed == 3)?;
+    assert!(removed.error.is_empty(), "{}", removed.error);
+    assert!(removed.profile.image.is_empty());
+    assert!(!removed.profile.heads.is_empty());
+    drop(desktop);
+    let desktop = open(state.path())?;
+    wait(&desktop, |_| true)?;
+    desktop.unlock_account(account.clone(), password.into())?;
+    wait(&desktop, |v| v.completed == 1)?;
+    desktop.load_profile(account)?;
+    let reopened = wait(&desktop, |v| v.completed == 2)?;
+    assert!(reopened.profile.image.is_empty());
+    assert_eq!(reopened.profile.heads, removed.profile.heads);
+    let png = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/128x128.png");
+    desktop.prepare_avatar(png.to_string_lossy().into())?;
+    let prepared = wait(&desktop, |v| v.completed == 3)?;
+    assert!(prepared.error.is_empty(), "{}", prepared.error);
+    desktop.save_avatar(prepared.avatar_draft.id, 0.5, 0.5, 1.0, "circle".into())?;
+    let png_saved = wait(&desktop, |v| v.completed == 4)?;
+    assert!(png_saved.error.is_empty(), "{}", png_saved.error);
+    assert!(png_saved.profile.image.starts_with("data:image/jxl;base64,"));
+    Ok(())
+}

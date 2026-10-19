@@ -17,6 +17,34 @@ ScrollView {
     ColumnLayout {
         width: info.availableWidth
         spacing: 12
+        CordsAvatar {
+            Layout.preferredWidth: 56
+            Layout.preferredHeight: 56
+            visible: !!info.desktop.state.serverProfile && !!info.desktop.state.serverProfile.hasIcon
+            source: info.desktop.state.serverProfile && info.desktop.state.serverProfile.image || ""
+            shape: info.desktop.state.serverProfile && info.desktop.state.serverProfile.shape || "circle"
+            account: info.desktop.state.account || ""
+            playing: info.visible
+        }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 64
+            radius: Theme.radius
+            visible: !!info.desktop.state.serverProfile && !!info.desktop.state.serverProfile.loaded
+            color: info.desktop.state.serverProfile && info.desktop.state.serverProfile.background || "#314452"
+        }
+        CordsLabel {
+            text: info.desktop.state.serverProfile && info.desktop.state.serverProfile.name || ""
+            visible: !!text
+            font.bold: true
+            Layout.fillWidth: true
+        }
+        CordsLabel {
+            text: info.desktop.state.serverProfile && info.desktop.state.serverProfile.description || ""
+            visible: !!text
+            color: Theme.secondary
+            Layout.fillWidth: true
+        }
         CordsLabel {
             text: "Conversation details"
             font.bold: true

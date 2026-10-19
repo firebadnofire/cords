@@ -43,13 +43,20 @@ private slots:
         const auto imageData = "data:image/jxl;base64," + fixture.readAll().toBase64();
         // Presentation-only fixture: no account/server or delivery claim.
         const QVariantMap person{{"image", QString::fromLatin1(imageData)}, {"shape", "circle"}};
-        controller.m_state = {{"account", "local-test"}, {"route", "test-channel"},
-            {"origin", "https://presentation.invalid"}, {"directoryLoaded", true},
+        controller.m_state = {{"account", "local-test"}, {"route", "test-channel"}, {"admission", "active"},
+            {"origin", "https://presentation.invalid"}, {"directoryLoaded", true}, {"canApprove", true}, {"requestsLoaded", true}, {"serverProfile", QVariantMap{{"supported", true}, {"loaded", true}, {"canEdit", true}, {"revision", 3}, {"name", "Cords community"}, {"description", "A signed community profile with durable server-owned presentation."}}},
             {"people", QVariantMap{{"test-person", person}}},
             {"profile", QVariantMap{{"account", "test-person"}, {"name", "Test person"}, {"image", QString::fromLatin1(imageData)}}}};
         controller.m_busy = true; // prevents fixture UI from submitting operations
+        auto serverProfile = controller.m_state.value("serverProfile").toMap();
+        serverProfile.insert("image", QString::fromLatin1(imageData));
+        serverProfile.insert("shape", "circle");
+        serverProfile.insert("hasIcon", true);
+        controller.m_state.insert("serverProfile", serverProfile);
+        controller.servers()->replace({{{"id", "test-server"}, {"name", "Cords community"}, {"origin", "https://presentation.invalid"}, {"selected", true}, {"state", "active"}, {"image", QString::fromLatin1(imageData)}, {"shape", "circle"}}});
         controller.channels()->replace({{{"id", "test-channel"}, {"name", "general"}, {"mode", "encrypted"}, {"joined", true}}});
         controller.messages()->replace({{{"id", "test-message"}, {"account", "test-person"}, {"author", "Test person"}, {"body", "Local presentation fixture. Hover anywhere in this message to play its avatar."}, {"timestamp", 1700000000}}});
+        controller.requests()->replace({{{"id", "verified-device"}, {"account", "verified-account"}, {"name", "Applicant"}, {"status", "pending"}, {"requestedAt", 1700000000}}});
         controller.members()->replace({{{"id", "test-person"}, {"name", "Test person"}, {"group", "Members"}}});
         QQmlEngine engine;
         QQmlComponent component(&engine, QUrl::fromLocalFile(qmlPath + "/Shell.qml"));
@@ -69,6 +76,11 @@ private slots:
             return nullptr;
         };
         auto *message = findVisible(item, "messageRow");
+        auto *serverIcon = findVisible(item, "serverRailIcon");
+        QVERIFY(serverIcon);
+        auto *serverImage = serverIcon->findChild<JxlImage *>("avatarPlayback");
+        QVERIFY(serverImage);
+        QTRY_VERIFY_WITH_TIMEOUT(serverImage->ready(), 90000);
         auto *member = findVisible(item, "memberRow");
         QVERIFY(message && member);
         auto *messageImage = message->findChild<JxlImage *>("avatarPlayback");
@@ -93,7 +105,9 @@ private slots:
         QVERIFY(profile);
         profile->setProperty("account", "test-person");
         QVERIFY(QMetaObject::invokeMethod(profile, "open"));
-        auto *profileImage = profile->findChild<JxlImage *>("avatarPlayback");
+        auto *profileAvatar = profile->findChild<QObject *>("publicProfileAvatar");
+        QVERIFY(profileAvatar);
+        auto *profileImage = profileAvatar->findChild<JxlImage *>("avatarPlayback");
         QVERIFY(profileImage);
         QTRY_VERIFY(profileImage->playing());
         QTRY_VERIFY_WITH_TIMEOUT(profileImage->frameNumber() >= 2, 15000);
@@ -137,7 +151,7 @@ private slots:
         controller.roles()->replace({{{"id", "fixture-role"}, {"name", "Community guides"}, {"color", "#8dc4e7"}, {"priority", 1}}});
         for (const auto size : {QSize(1920, 1080), QSize(680, 520)}) {
             window.resize(size); item->setSize(size);
-            for (int section : {0, 1, 3, 6, 7}) {
+            for (int section : {0, 1, 2, 3, 6, 7}) {
                 admin->setProperty("page", section);
                 QTest::qWait(100);
                 QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT)
@@ -145,6 +159,17 @@ private slots:
             }
             QVERIFY(admin->property("width").toReal() >= size.width() - 1);
         }
+        admin->setProperty("page", 0);
+        controller.m_state["serverIconDraft"] = QVariantMap{{"id", "server-icon-fixture"}, {"image", QString::fromLatin1(imageData)}, {"width", 100}, {"height", 100}};
+        emit controller.stateChanged();
+        auto *iconEditor = admin->findChild<QObject *>("serverIconEditor");
+        QVERIFY(iconEditor);
+        QTRY_VERIFY(iconEditor->property("visible").toBool());
+        QVERIFY(iconEditor->property("height").toReal() <= window.height() - 16);
+        QVERIFY(admin->property("modalOpen").toBool());
+        controller.m_state.remove("serverIconDraft");
+        emit controller.stateChanged();
+        QTRY_VERIFY(!iconEditor->property("visible").toBool());
         QTest::keyClick(&window, Qt::Key_Escape);
         QTRY_VERIFY(!item->property("showAdmin").toBool());
         item->setParentItem(nullptr);
@@ -207,7 +232,136 @@ private slots:
         search->setProperty("text", "Person 1999");
         QTRY_COMPARE(list->property("count").toInt(), 1);
         QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-polish-members.png"));
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "selectMember", Q_ARG(QVariant, members.last())));
+        QCOMPARE(workspace->property("selectedAccount").toString(), QString("1999"));
+        controller.m_state["server"] = "another-server";
+        emit controller.stateChanged();
+        QVERIFY(workspace->property("selectedAccount").toString().isEmpty());
+        QCOMPARE(search->property("text").toString(), QString());
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "selectMember", Q_ARG(QVariant, members.last())));
+        controller.m_state["account"] = "another-local-account";
+        emit controller.stateChanged();
+        QVERIFY(workspace->property("selectedAccount").toString().isEmpty());
         item->setParentItem(nullptr);
+        QQmlComponent requestsComponent(&engine, QUrl::fromLocalFile(path + "/RequestsWorkspace.qml"));
+        QScopedPointer<QObject> requests(requestsComponent.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(requests, qPrintable(requestsComponent.errorString()));
+        auto *requestsItem = qobject_cast<QQuickItem *>(requests.data());
+        requestsItem->setParentItem(window.contentItem());
+        requestsItem->setSize(window.size());
+        auto *rejection = requests->findChild<QObject *>("rejectMembershipRequest");
+        QVERIFY(rejection);
+        QVERIFY(QMetaObject::invokeMethod(rejection, "open"));
+        QTRY_VERIFY(requests->property("modalOpen").toBool());
+        controller.m_state["account"] = "third-local-account";
+        emit controller.stateChanged();
+        QTRY_VERIFY(!requests->property("modalOpen").toBool());
+        requestsItem->setParentItem(nullptr);
+    }
+    void administrationDraftsFollowReviewedContext() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_state = {{"account", "first-account"}, {"server", "first-server"}};
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/AdminPane.qml"));
+        QScopedPointer<QObject> admin(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(admin, qPrintable(component.errorString()));
+        QQuickWindow window; window.resize(1180, 760); window.show();
+        auto *item = qobject_cast<QQuickItem *>(admin.data());
+        item->setParentItem(window.contentItem()); item->setSize(window.size());
+        auto *confirmation = admin->findChild<QObject *>("serverAdministrationConfirmation");
+        QVERIFY(confirmation);
+        const QStringList fields{"ownerCode", "successorAccount", "designation", "targetDevice", "replacementName"};
+        for (const auto &scopeKey : {QString("server"), QString("account")}) {
+            for (const auto &field : fields) {
+                auto *input = admin->findChild<QObject *>(field);
+                QVERIFY(input);
+                input->setProperty("text", "private-reviewed-value");
+            }
+            QVERIFY(QMetaObject::invokeMethod(confirmation, "open"));
+            QTRY_VERIFY(admin->property("modalOpen").toBool());
+            controller.m_state[scopeKey] = "changed-" + scopeKey;
+            emit controller.stateChanged();
+            QTRY_VERIFY(!admin->property("modalOpen").toBool());
+            for (const auto &field : fields)
+                QCOMPARE(admin->findChild<QObject *>(field)->property("text").toString(), QString());
+        }
+        auto *target = admin->findChild<QObject *>("targetDevice");
+        target->setProperty("text", "previous-channel-device");
+        QVERIFY(QMetaObject::invokeMethod(confirmation, "open"));
+        admin->setProperty("route", "different-channel");
+        QTRY_VERIFY(!admin->property("modalOpen").toBool());
+        QCOMPARE(target->property("text").toString(), QString());
+        item->setParentItem(nullptr);
+    }
+    void serverProfileDraftSurvivesConcurrentRefresh() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        QVariantMap profile{{"supported", true}, {"loaded", true}, {"canEdit", true}, {"revision", 3}, {"name", "Community"}, {"description", "Original"}};
+        controller.m_state = {{"server", "test-server"}, {"admission", "active"}, {"serverProfile", profile}};
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/ServerProfileForm.qml"));
+        QScopedPointer<QObject> form(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(form, qPrintable(component.errorString()));
+        auto *name = form->findChild<QObject *>("serverProfileName");
+        auto *background = form->findChild<QObject *>("serverProfileBackground");
+        auto *save = form->findChild<QQuickItem *>("saveServerProfile");
+        QVERIFY(name && save && background);
+        background->setProperty("text", "#12345g");
+        QVERIFY(form->property("dirty").toBool());
+        QVERIFY(!save->isEnabled());
+        background->setProperty("text", "#205566");
+        QVERIFY(save->isEnabled());
+        name->setProperty("text", "Draft name");
+        QVERIFY(form->property("dirty").toBool());
+        QVERIFY(save->isEnabled());
+        profile["revision"] = 4;
+        profile["name"] = "Remote name";
+        controller.m_state["serverProfile"] = profile;
+        emit controller.stateChanged();
+        QCOMPARE(name->property("text").toString(), QString("Draft name"));
+        QCOMPARE(background->property("text").toString(), QString("#205566"));
+        QVERIFY(!save->isEnabled());
+        QVERIFY(QMetaObject::invokeMethod(form.data(), "reset"));
+        QCOMPARE(name->property("text").toString(), QString("Remote name"));
+        QVERIFY(!form->property("dirty").toBool());
+        QCOMPARE(background->property("text").toString(), QString("#314452"));
+        name->setProperty("text", "Private unsaved draft");
+        controller.m_state["account"] = "different-local-account";
+        emit controller.stateChanged();
+        QCOMPARE(name->property("text").toString(), QString("Remote name"));
+        QVERIFY(!form->property("dirty").toBool());
+    }
+    void nativeAvatarCropPreview() {
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/AvatarEditor.qml"));
+        QScopedPointer<QObject> editor(component.create());
+        QVERIFY2(editor, qPrintable(component.errorString()));
+        QQuickWindow window; window.resize(680, 640); window.show();
+        QVERIFY(editor->setProperty("parent", QVariant::fromValue(window.contentItem())));
+        QFile fixture(QStringLiteral(CORDS_TEST_IMAGE));
+        QVERIFY(fixture.open(QIODevice::ReadOnly));
+        const QString image = "data:image/jxl;base64," + QString::fromLatin1(fixture.readAll().toBase64());
+        editor->setProperty("draft", QVariantMap{{"id", "local-crop-fixture"}, {"image", image}, {"width", 100}, {"height", 100}});
+        QTRY_VERIFY(editor->property("visible").toBool());
+        auto *zoom = editor->findChild<QObject *>("avatarCropZoom");
+        auto *preview = editor->findChild<QObject *>("avatarCropPreview");
+        QVERIFY(zoom && preview);
+        zoom->setProperty("value", 2.0);
+        QCOMPARE(preview->property("zoom").toDouble(), 2.0);
+        editor->setProperty("centerX", 0.0);
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "constrain"));
+        QCOMPARE(editor->property("centerX").toDouble(), 0.25);
+        auto *decoded = preview->findChild<JxlImage *>("avatarPlayback");
+        QVERIFY(decoded);
+        QTRY_VERIFY_WITH_TIMEOUT(decoded->ready(), 90000);
+        QVERIFY(decoded->error().isEmpty());
+        QTest::qWait(100);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-polish-avatar-crop.png"));
     }
     void accountPickerUsesRealVaultAuthentication() {
         QTemporaryDir state;
@@ -235,6 +389,21 @@ private slots:
         password->setProperty("text", "Mango Lantern selector acceptance 83");
         auto *confirmation = picker->findChild<QObject *>("accountConfirmation");
         QVERIFY(confirmation);
+        auto *overridePolicy = picker->findChild<QObject *>("ignoreWeakPasswords");
+        QVERIFY(overridePolicy);
+        QCOMPARE(overridePolicy->property("text").toString(), QString("Ignore weak passwords"));
+        for (const QString &weak : {QString(), QString("x"), QString("password")}) {
+            password->setProperty("text", weak);
+            confirmation->setProperty("text", weak);
+            overridePolicy->setProperty("checked", false);
+            QVERIFY(!submit->isEnabled());
+            overridePolicy->setProperty("checked", true);
+            QVERIFY(submit->isEnabled());
+            confirmation->setProperty("text", weak + "mismatch");
+            QVERIFY(!submit->isEnabled());
+        }
+        overridePolicy->setProperty("checked", false);
+        password->setProperty("text", "Mango Lantern selector acceptance 83");
         confirmation->setProperty("text", "Mango Lantern selector acceptance 83");
         QVERIFY(submit->isEnabled());
         QVERIFY(QMetaObject::invokeMethod(submit, "clicked"));

@@ -9,15 +9,58 @@ Item {
     objectName: "serverSettings"
     required property Controller desktop
     property string route: ""
+    readonly property string scope: JSON.stringify([desktop.state.account || "", desktop.state.server || ""])
+    onScopeChanged: {
+        ownerCode.clear();
+        successorAccount.clear();
+        designation.clear();
+        navigationSearch.clear();
+        clearChannelDraft();
+    }
+    onRouteChanged: clearChannelDraft()
+    function clearChannelDraft() {
+        targetDevice.clear();
+        replacementName.clear();
+        replacementPublic.checked = false;
+        confirmation.close();
+        confirmation.operation = null;
+    }
+    function scopedOperation(action) {
+        const reviewedScope = scope;
+        const reviewedRoute = route;
+        return function () {
+            if (admin.scope === reviewedScope && admin.route === reviewedRoute)
+                action();
+        };
+    }
     signal profileRequested(string account)
+    signal closeRequested
+    function requestClose() {
+        if (modalOpen || (desktop.busy && serverProfileForm.dirty))
+            return;
+        if (serverProfileForm.dirty) {
+            confirmation.title = "Discard server profile edits?";
+            confirmation.explanation = "Your unsaved changes will be lost.";
+            confirmation.operation = admin.scopedOperation(function () {
+                serverProfileForm.reset();
+                admin.closeRequested();
+            });
+            confirmation.open();
+        } else
+            closeRequested();
+    }
     signal claimRequested
     property int page: 0
-    readonly property bool modalOpen: rolesWorkspace.modalOpen || membersWorkspace.modalOpen || confirmation.visible
+    onVisibleChanged: if (visible && !desktop.busy && !serverProfileForm.dirty)
+        selectPage(page)
+    readonly property bool modalOpen: serverProfileForm.modalOpen || requestsWorkspace.modalOpen || rolesWorkspace.modalOpen || membersWorkspace.modalOpen || confirmation.visible
     function selectPage(index) {
         page = index;
         if (desktop.busy)
             return;
-        if (page === 1)
+        if (page === 0 && desktop.state.admission === "active")
+            desktop.loadServerProfile();
+        else if (page === 1)
             desktop.loadDirectory("");
         else if (page === 2 && desktop.state.canApprove)
             desktop.loadRequests();
@@ -64,7 +107,7 @@ Item {
                         text: modelData
                         quiet: true
                         selected: admin.page === index
-                        enabled: !admin.desktop.busy
+                        enabled: !admin.desktop.busy && !serverProfileForm.dirty
                         visible: !navigationSearch.text || modelData.toLowerCase().includes(navigationSearch.text.toLowerCase())
                         Layout.fillWidth: true
                         onClicked: admin.selectPage(index)
@@ -84,7 +127,7 @@ Item {
         }
         ScrollView {
             id: adminScroll
-            visible: admin.page !== 1 && admin.page !== 3
+            visible: admin.page !== 1 && admin.page !== 2 && admin.page !== 3
             Layout.fillWidth: true
             Layout.fillHeight: true
             contentWidth: availableWidth
@@ -95,109 +138,11 @@ Item {
                 width: Math.min(740, adminScroll.availableWidth - 48)
                 x: 24
                 spacing: 20
-                ColumnLayout {
+                ServerProfileForm {
+                    id: serverProfileForm
+                    desktop: admin.desktop
                     visible: admin.page === 0
                     Layout.fillWidth: true
-                    CordsLabel {
-                        text: "Server profile"
-                        font.pixelSize: Theme.headingSize
-                    }
-                    CordsLabel {
-                        text: "Manage this community’s members, roles, channels and ownership."
-                        color: Theme.secondary
-                        Layout.fillWidth: true
-                    }
-                    CordsLabel {
-                        text: "SERVER ADDRESS"
-                        font.pixelSize: Theme.captionSize
-                        font.bold: true
-                    }
-                    CordsField {
-                        text: admin.desktop.state.origin || ""
-                        readOnly: true
-                        Layout.fillWidth: true
-                        Accessible.name: "Server HTTPS origin"
-                    }
-                    CordsLabel {
-                        text: "PINNED SIGNING IDENTITY"
-                        font.pixelSize: Theme.captionSize
-                        font.bold: true
-                    }
-                    CordsField {
-                        text: admin.desktop.state.server || ""
-                        readOnly: true
-                        Layout.fillWidth: true
-                        Accessible.name: "Pinned server signing identity"
-                    }
-                    CordsButton {
-                        text: "Copy signing identity"
-                        onClicked: admin.desktop.copy(admin.desktop.state.server)
-                    }
-                    CordsLabel {
-                        text: "Ownership: " + (admin.desktop.state.ownership || "No server") + "\nAdmission: " + (admin.desktop.state.admission || "Not authenticated")
-                        Layout.fillWidth: true
-                    }
-                    CordsButton {
-                        text: admin.desktop.state.ownership === "UNCLAIMED" ? "Claim this server" : "Authenticate / refresh admission"
-                        enabled: !admin.desktop.busy && !!admin.desktop.state.server
-                        onClicked: {
-                            if (admin.desktop.state.ownership === "UNCLAIMED")
-                                admin.claimRequested();
-                            else
-                                admin.desktop.authenticate();
-                        }
-                    }
-                    CordsLabel {
-                        text: "Server name, icon and banner editing are not available yet."
-                        color: Theme.secondary
-                        Layout.fillWidth: true
-                    }
-                }
-                ColumnLayout {
-                    visible: admin.page === 2
-                    Layout.fillWidth: true
-                    CordsLabel {
-                        text: "Membership requests"
-                        font.pixelSize: Theme.headingSize
-                    }
-                    CordsButton {
-                        text: "Refresh requests"
-                        enabled: !admin.desktop.busy
-                        onClicked: admin.desktop.loadRequests()
-                        visible: !!admin.desktop.state.canApprove
-                    }
-                    Repeater {
-                        model: admin.page === 2 ? admin.desktop.requests : null
-                        delegate: ColumnLayout {
-                            id: request
-                            required property var row
-                            Layout.fillWidth: true
-                            CordsLabel {
-                                text: request.row.name + " · " + request.row.status + "\nAccount: " + request.row.account + "\nDevice: " + request.row.id
-                                Layout.fillWidth: true
-                            }
-                            RowLayout {
-                                CordsButton {
-                                    text: "Approve device"
-                                    enabled: !admin.desktop.busy && !!admin.desktop.state.canApprove && request.row.status === "pending"
-                                    onClicked: admin.desktop.approveRequest(request.row.id)
-                                }
-                                CordsButton {
-                                    text: "Reject…"
-                                    destructive: true
-                                    enabled: !admin.desktop.busy && !!admin.desktop.state.canApprove && request.row.status === "pending"
-                                    onClicked: {
-                                        confirmation.title = "Reject membership request";
-                                        confirmation.explanation = "Reject the verified request for device " + request.row.id + ". The device may submit a fresh request.";
-                                        confirmation.operation = function () {
-                                            admin.desktop.rejectRequest(request.row.id);
-                                        };
-                                        confirmation.open();
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
                 ColumnLayout {
                     visible: admin.page === 4
@@ -214,6 +159,7 @@ Item {
                     }
                     CordsField {
                         id: targetDevice
+                        objectName: "targetDevice"
                         placeholderText: "Exact authorized device ID"
                         Layout.fillWidth: true
                     }
@@ -232,9 +178,9 @@ Item {
                                 confirmation.explanation = "Remove " + targetDevice.text + " from channel " + admin.route + ". New keys require a successful MLS commit.";
                                 const route = admin.route;
                                 const device = targetDevice.text;
-                                confirmation.operation = function () {
+                                confirmation.operation = admin.scopedOperation(function () {
                                     admin.desktop.removeDevice(route, device);
-                                };
+                                });
                                 confirmation.open();
                             }
                         }
@@ -246,12 +192,14 @@ Item {
                     }
                     CordsField {
                         id: replacementName
+                        objectName: "replacementName"
                         placeholderText: "Successor channel name"
                         maximumLength: 100
                         Layout.fillWidth: true
                     }
                     CordsCheck {
                         id: replacementPublic
+                        objectName: "replacementPublic"
                         text: "Successor is public (server can read messages)"
                     }
                     CordsButton {
@@ -263,9 +211,9 @@ Item {
                             const route = admin.route;
                             const name = replacementName.text;
                             const isPublic = replacementPublic.checked;
-                            confirmation.operation = function () {
+                            confirmation.operation = admin.scopedOperation(function () {
                                 admin.desktop.replaceChannel(route, name, isPublic);
-                            };
+                            });
                             confirmation.open();
                         }
                     }
@@ -277,9 +225,9 @@ Item {
                             confirmation.title = "Retire channel";
                             confirmation.explanation = "Retire channel " + admin.route + ". Its identity and local archive remain distinct from future channels.";
                             const route = admin.route;
-                            confirmation.operation = function () {
+                            confirmation.operation = admin.scopedOperation(function () {
                                 admin.desktop.retireChannel(route);
-                            };
+                            });
                             confirmation.open();
                         }
                     }
@@ -377,6 +325,7 @@ Item {
                     }
                     CordsField {
                         id: ownerCode
+                        objectName: "ownerCode"
                         placeholderText: "One-time claim or operator recovery code"
                         echoMode: TextInput.Password
                         inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
@@ -397,16 +346,17 @@ Item {
                             onClicked: {
                                 confirmation.title = "Recover ownership";
                                 confirmation.explanation = "Use the operator recovery code to recover ownership for this authenticated identity.";
-                                confirmation.operation = function () {
+                                confirmation.operation = admin.scopedOperation(function () {
                                     admin.desktop.recoverOwnership(ownerCode.text);
                                     ownerCode.clear();
-                                };
+                                });
                                 confirmation.open();
                             }
                         }
                     }
                     CordsField {
                         id: successorAccount
+                        objectName: "successorAccount"
                         placeholderText: "Successor account ID"
                         Layout.fillWidth: true
                     }
@@ -417,14 +367,15 @@ Item {
                             confirmation.title = "Designate owner successor";
                             confirmation.explanation = "Designate " + successorAccount.text + " as successor for this server.";
                             const account = successorAccount.text;
-                            confirmation.operation = function () {
+                            confirmation.operation = admin.scopedOperation(function () {
                                 admin.desktop.designateSuccessor(account);
-                            };
+                            });
                             confirmation.open();
                         }
                     }
                     CordsField {
                         id: designation
+                        objectName: "designation"
                         placeholderText: "Verified designation hash"
                         Layout.fillWidth: true
                     }
@@ -435,6 +386,14 @@ Item {
                     }
                 }
             }
+        }
+        RequestsWorkspace {
+            id: requestsWorkspace
+            desktop: admin.desktop
+            visible: admin.page === 2
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.margins: 24
         }
         MemberWorkspace {
             id: membersWorkspace
@@ -456,5 +415,6 @@ Item {
     }
     ConfirmDialog {
         id: confirmation
+        objectName: "serverAdministrationConfirmation"
     }
 }

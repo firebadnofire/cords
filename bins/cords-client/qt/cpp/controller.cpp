@@ -37,12 +37,12 @@ void Controller::apply(const cords::Snapshot &s) {
     if (m_locking && s.unlocked) return;
     if (!s.unlocked) m_locking = false;
     m_accounts.replace(rows(s.accounts, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"avatar", qs(r.avatar)}, {"shape", qs(r.shape)}, {"xMilli", r.x_milli}, {"yMilli", r.y_milli}, {"zoomMilli", r.zoom_milli}}; }));
-    m_servers.replace(rows(s.servers, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.origin)}, {"origin", qs(r.origin)}, {"state", qs(r.state)}, {"selected", r.selected}, {"archived", r.archived}, {"connected", r.connected}, {"error", qs(r.error)}, {"unread", r.unread}}; }));
+    m_servers.replace(rows(s.servers, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", r.name.empty() ? qs(r.origin) : qs(r.name)}, {"origin", qs(r.origin)}, {"image", qs(r.image)}, {"shape", qs(r.shape)}, {"state", qs(r.state)}, {"selected", r.selected}, {"archived", r.archived}, {"connected", r.connected}, {"error", qs(r.error)}, {"unread", r.unread}}; }));
     m_channels.replace(rows(s.channels, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"mode", qs(r.mode)}, {"epoch", QVariant::fromValue(r.epoch)}, {"joined", r.joined}, {"retired", r.retired}, {"acknowledgement", r.acknowledgement}, {"canManage", r.can_manage}}; }));
     m_messages.replace(rows(s.messages, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"author", qs(r.author)}, {"body", qs(r.body)}, {"timestamp", QVariant::fromValue(r.timestamp)}}; }));
     m_members.replace(rows(s.members, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"roles", strings(r.roles)}, {"group", qs(r.group)}, {"color", qs(r.color)}}; }));
     m_devices.replace(rows(s.devices, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"name", qs(r.name)}, {"generation", QVariant::fromValue(r.generation)}}; }));
-    m_requests.replace(rows(s.requests, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"name", qs(r.name)}, {"status", qs(r.state)}}; }));
+    m_requests.replace(rows(s.requests, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"name", qs(r.name)}, {"status", qs(r.state)}, {"requestedAt", QVariant::fromValue(r.requested_at)}}; }));
     m_roles.replace(rows(s.roles, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"color", qs(r.color)}, {"description", qs(r.description)}, {"priority", r.priority}, {"permissions", strings(r.permissions)}, {"mentionable", r.mentionable}}; }));
     m_audit.replace(rows(s.audit, [](const auto &r) -> QVariantMap { return {{"id", QVariant::fromValue(r.revision)}, {"actor", qs(r.actor)}, {"operation", qs(r.operation)}, {"target", qs(r.target)}, {"timestamp", QVariant::fromValue(r.timestamp)}}; }));
     m_notifications.replace(rows(s.notifications, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"label", qs(r.label)}, {"body", qs(r.body)}}; }));
@@ -53,9 +53,12 @@ void Controller::apply(const cords::Snapshot &s) {
         {"unlocked", s.unlocked}, {"legacy", s.legacy}, {"account", qs(s.account)}, {"device", qs(s.device)},
         {"server", qs(s.server)}, {"origin", qs(s.origin)}, {"ownership", qs(s.ownership)}, {"admission", qs(s.admission)}, {"joinPolicy", strings(s.join_policy)},
         {"route", qs(s.route)}, {"error", qs(s.error)}, {"notice", qs(s.notice)}, {"connected", s.connected},
-        {"canCreate", s.can_create}, {"canApprove", s.can_approve}, {"canRoles", s.can_roles}, {"canAssign", s.can_assign},
+        {"canCreate", s.can_create}, {"canApprove", s.can_approve}, {"requestsLoaded", s.requests_loaded}, {"canRoles", s.can_roles}, {"canAssign", s.can_assign},
         {"canAudit", s.can_audit}, {"revoked", s.revoked}, {"burned", s.burned}, {"revision", QVariant::fromValue(s.revision)},
         {"rolesActive", s.roles_active}, {"directoryAfter", qs(s.directory_after)}, {"auditAfter", QVariant::fromValue(s.audit_after)},
+        {"serverIconDraft", QVariantMap{{"id", qs(s.server_icon_draft.id)}, {"image", qs(s.server_icon_draft.image)}, {"width", s.server_icon_draft.width}, {"height", s.server_icon_draft.height}}},
+        {"avatarDraft", QVariantMap{{"id", qs(s.avatar_draft.id)}, {"image", qs(s.avatar_draft.image)}, {"width", s.avatar_draft.width}, {"height", s.avatar_draft.height}}},
+        {"serverProfile", QVariantMap{{"supported", s.server_profile.supported}, {"loaded", s.server_profile.loaded}, {"canEdit", s.server_profile.can_edit}, {"revision", QVariant::fromValue(s.server_profile.revision)}, {"name", qs(s.server_profile.name)}, {"description", qs(s.server_profile.description)}, {"background", qs(s.server_profile.background)}, {"image", qs(s.server_profile.image)}, {"shape", qs(s.server_profile.shape)}, {"hasIcon", s.server_profile.has_icon}}},
         {"profile", profile(s.profile)}, {"preferences", preferences(s.preferences)}, {"platformWarning", m_platformWarning},
         {"serverMuted", s.server_muted}, {"routeMuted", s.route_muted}, {"notificationStatus", m_notificationStatus}};
     m_state.insert("historyOlder", s.history_older);
@@ -71,7 +74,7 @@ void Controller::unlockStdin(QString account) { m_desktop->unlock_stdin(rs(accou
 #define TWO(camel, snake) void Controller::camel(QString first, QString second) { submit([&] { m_desktop->snake(rs(first), rs(second)); }); }
 SIMPLE(refresh, refresh) SIMPLE(authenticate, authenticate) SIMPLE(burnIdentity, burn_identity)
 SIMPLE(retryBurns, retry_burns) SIMPLE(publishKeys, publish_keys) SIMPLE(synchronize, synchronize)
-SIMPLE(loadRequests, load_requests) SIMPLE(revokeDevice, revoke_device) SIMPLE(loadRoles, load_roles)
+SIMPLE(loadServerProfile, load_server_profile) SIMPLE(loadRequests, load_requests) SIMPLE(revokeDevice, revoke_device) SIMPLE(loadRoles, load_roles)
 ONE(trustServer, trust_server) ONE(selectServer, select_server) ONE(claimOwnership, claim_ownership)
 ONE(recoverOwnership, recover_ownership) ONE(designateSuccessor, designate_successor) ONE(acceptSuccessor, accept_successor)
 ONE(archiveServer, archive_server) ONE(selectChannel, select_channel) ONE(retireChannel, retire_channel)
@@ -146,3 +149,27 @@ void Controller::savePreferences(QVariantMap p) {
 void Controller::copy(QString text) { QGuiApplication::clipboard()->setText(text); }
 QString Controller::newId() const { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 void Controller::recordActivity() { m_desktop->activity(); }
+
+void Controller::prepareAvatar(QUrl file) {
+    submit([&] {
+        if (!file.isLocalFile()) throw std::runtime_error("Choose a local picture file");
+        m_desktop->prepare_avatar(rs(file.toLocalFile()));
+    });
+}
+void Controller::saveAvatar(QString id, double x, double y, double zoom, QString shape) {
+    submit([&] { m_desktop->save_avatar(rs(id), x, y, zoom, rs(shape)); });
+}
+void Controller::cancelAvatar() { submit([&] { m_desktop->cancel_avatar(); }); }
+void Controller::removeAvatar(QStringList heads) { submit([&] { m_desktop->remove_avatar(rustStrings(heads)); }); }
+
+void Controller::saveServerProfile(QString name, QString description, QString background, quint64 revision, QString requestId) { submit([&] { m_desktop->save_server_profile(rs(name), rs(description), rs(background), revision, rs(requestId)); }); }
+
+void Controller::prepareServerIcon(QUrl file) {
+    submit([&] {
+        if (!file.isLocalFile()) throw std::runtime_error("Choose a local picture file");
+        m_desktop->prepare_server_icon(rs(file.toLocalFile()));
+    });
+}
+void Controller::saveServerIcon(QString id, double x, double y, double zoom, QString shape) { submit([&] { m_desktop->save_server_icon(rs(id), x, y, zoom, rs(shape)); }); }
+void Controller::cancelServerIcon() { submit([&] { m_desktop->cancel_server_icon(); }); }
+void Controller::removeServerIcon(quint64 revision, QString requestId) { submit([&] { m_desktop->remove_server_icon(revision, rs(requestId)); }); }

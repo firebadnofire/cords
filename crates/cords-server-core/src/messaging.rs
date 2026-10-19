@@ -457,6 +457,14 @@ pub fn router(service: Service) -> Router {
             "/api/v1/account-profiles/{account}/images/{image}",
             get(profiles::image),
         )
+        .route(
+            "/api/v1/server-profile",
+            get(server_profile::read).post(server_profile::update),
+        )
+        .route(
+            "/api/v1/server-profile/images/{image}",
+            get(server_profile::image),
+        )
         .route("/api/v1/membership-requests", get(membership_requests))
         .route(
             "/api/v1/membership-requests/{device}/approve",
@@ -498,6 +506,10 @@ pub fn router(service: Service) -> Router {
         .merge(
             Router::new()
                 .route("/api/v1/account-profiles", post(profiles::publish))
+                .route(
+                    "/api/v1/server-profile/icon",
+                    post(server_profile::update_icon),
+                )
                 .layer(tower_http::limit::RequestBodyLimitLayer::new(
                     8 * 1024 * 1024,
                 )),
@@ -1131,13 +1143,12 @@ async fn approve_membership(
     let mut tx = s.0.store.pool().begin().await?;
     s.authorize_mutation(&mut tx, &headers, &actor, None)
         .await?;
-    let row = sqlx::query(
-        "SELECT account_id,contact,status FROM membership_requests WHERE device_id=$1 FOR UPDATE",
-    )
-    .bind(&device)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(denied)?;
+    let row =
+        sqlx::query("SELECT account_id,contact,status FROM membership_requests WHERE device_id=$1")
+            .bind(&device)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(denied)?;
     if !matches!(
         row.try_get::<String, _>("status")?.as_str(),
         "pending" | "rejected"
@@ -1153,7 +1164,36 @@ async fn approve_membership(
         return Err(denied());
     }
     // Revalidate revocation and the current account head at the approval boundary.
+    // Session/status refresh takes the identity lock before the request row. Keep
+    // that order here, then recheck the unlocked request read before accepting it.
     persist_contact(&mut tx, &contact).await?;
+    let reviewed = sqlx::query(
+        "SELECT account_id,contact,status FROM membership_requests WHERE device_id=$1 FOR UPDATE",
+    )
+    .bind(&device)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(conflict)?;
+    if reviewed.try_get::<String, _>("account_id")? != account
+        || !matches!(
+            reviewed.try_get::<String, _>("status")?.as_str(),
+            "pending" | "rejected"
+        )
+    {
+        return Err(conflict());
+    }
+    // A refresh may replace its signed presentation card while approval waits.
+    // Review the latest evidence under the already-held identity lock rather
+    // than rejecting a harmless timestamp/name update. Identity is never inferred
+    // from that presentation label, and current generation/revocation still apply.
+    let latest: Contact = parse(reviewed.try_get("contact")?)?;
+    validate_contact(&latest, now()?)?;
+    if latest.authorization.value.account_id != account
+        || latest.authorization.value.device_id != device
+    {
+        return Err(denied());
+    }
+    persist_contact(&mut tx, &latest).await?;
     let time = now()?;
     let old: Option<String> =
         sqlx::query_scalar("SELECT credential FROM memberships WHERE device_id=$1 FOR UPDATE")
@@ -2085,5 +2125,6 @@ mod directory;
 mod lifecycle;
 mod profiles;
 mod roles;
+mod server_profile;
 #[cfg(test)]
 mod tests;

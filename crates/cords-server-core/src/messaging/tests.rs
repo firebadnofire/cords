@@ -1692,6 +1692,89 @@ async fn desktop_role_acceptance_fixture() -> Result<()> {
     Ok(())
 }
 
+/// Explicit, disposable real-service fixture for native approval interaction tests.
+/// No production binary gains test identities, passwords or protocol shortcuts.
+#[tokio::test]
+#[ignore = "manual native admission acceptance; requires a new fixture directory and stop file"]
+async fn desktop_admission_acceptance_fixture() -> Result<()> {
+    use cords_client_core::accounts::AccountRegistry;
+    let root = std::path::PathBuf::from(std::env::var("CORDS_ROLE_DESKTOP_FIXTURE")?);
+    anyhow::ensure!(
+        root.is_absolute() && !root.exists(),
+        "fixture directory must be new and absolute"
+    );
+    std::fs::create_dir(&root)?;
+    let (base, _server, code) = fixture_with_state(false).await?;
+    let service = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let ca = root.join("fixture-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let owner_registry = AccountRegistry::open(&root.join("owner"), &migrations, Some(&ca)).await?;
+    let applicant_registry =
+        AccountRegistry::open(&root.join("applicant"), &migrations, Some(&ca)).await?;
+    let password = "Native admission fixture only 7319!";
+    let mut owner = owner_registry
+        .create("Admission owner", password, false)
+        .await?;
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    let mut applicant = applicant_registry
+        .create("Admission applicant", password, false)
+        .await?;
+    applicant.trust(&tls.origin).await?;
+    assert_eq!(
+        applicant.request_admission().await?.admission_state,
+        "pending"
+    );
+    let owner_id = owner.status().account_id;
+    let applicant_id = applicant.status().account_id;
+    owner.shutdown().await;
+    applicant.shutdown().await;
+    std::fs::write(
+        root.join("ready.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "fixture": "native-admission-v1", "origin": tls.origin, "ca": ca,
+            "owner_state": root.join("owner"), "applicant_state": root.join("applicant"),
+            "owner_account": owner_id, "applicant_account": applicant_id
+        }))?,
+    )?;
+    println!("Native admission fixture ready at {}", root.display());
+    tokio::time::timeout(Duration::from_mins(30), async {
+        while !root.join("stop").exists() {
+            anyhow::ensure!(
+                !tls.task.is_finished(),
+                "admission fixture TLS listener stopped"
+            );
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .context("admission fixture timed out")??;
+    let mut applicant = applicant_registry.unlock(&applicant_id, password).await?;
+    applicant.synchronize().await?;
+    anyhow::ensure!(
+        applicant.status().admission_state == "active",
+        "native interaction did not approve applicant"
+    );
+    anyhow::ensure!(
+        applicant.account_directory("").await?.accounts.len() == 2,
+        "approved applicant directory did not contain both accounts"
+    );
+    applicant.shutdown().await;
+    verify_untouched_role_defaults(&service).await?;
+    Ok(())
+}
+
 async fn seed_desktop_member(
     registry: &cords_client_core::accounts::AccountRegistry,
     owner: &mut cords_client_core::client::Client,

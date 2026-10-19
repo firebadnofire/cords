@@ -6,4 +6,11 @@ CordsCheck 1.0 CordsCheck.qml
 CordsLabel 1.0 CordsLabel.qml
 CordsAvatar 1.0 CordsAvatar.qml
 CordsDialog 1.0 CordsDialog.qml
+CordsIcon 1.0 CordsIcon.qml
+CordsIconButton 1.0 CordsIconButton.qml
+CordsMenu 1.0 CordsMenu.qml
+CordsMenuItem 1.0 CordsMenuItem.qml
+CordsEmptyState 1.0 CordsEmptyState.qml
+AccountCard 1.0 AccountCard.qml
+CordsRoleChip 1.0 CordsRoleChip.qml
 ConfirmDialog 1.0 ConfirmDialog.qml

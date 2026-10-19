@@ -7,6 +7,7 @@ Dialog {
     focus: true
     anchors.centerIn: Overlay.overlay
     width: Math.min(500, parent ? parent.width - 32 : 500)
+    height: Math.min(implicitHeight, parent ? parent.height - 32 : implicitHeight)
     padding: 20
     font.pixelSize: Theme.bodySize
     palette.windowText: Theme.text
@@ -21,8 +22,8 @@ Dialog {
         bottomPadding: 8
     }
     background: Rectangle {
-        color: Theme.navigation
+        color: Theme.elevated
         border.color: Theme.border
-        radius: Theme.radius
+        radius: Theme.popoverRadius
     }
 }

@@ -166,17 +166,17 @@ ColumnLayout {
                     actions.popup();
                 }
             }
-            Menu {
+            CordsMenu {
                 id: actions
-                MenuItem {
+                CordsMenuItem {
                     text: "View profile"
                     onTriggered: workspace.profileRequested(member.row.id)
                 }
-                MenuItem {
+                CordsMenuItem {
                     text: "Copy account ID"
                     onTriggered: workspace.desktop.copy(member.row.id)
                 }
-                MenuItem {
+                CordsMenuItem {
                     text: "Read role assignments"
                     enabled: !workspace.desktop.busy
                     onTriggered: workspace.desktop.loadAccountRoles(member.row.id)

@@ -191,6 +191,22 @@ Item {
                             checked: !!page.draft.compact
                             onToggled: page.change("compact", checked)
                         }
+                        CordsLabel { text: "Text size"; font.weight: Font.DemiBold }
+                        CordsComboBox {
+                            objectName: "textSizePreference"
+                            model: ["100%", "125%", "150%", "175%", "200%"]
+                            currentIndex: Math.max(0, Math.round(((page.draft.textScalePercent || 100) - 100) / 25))
+                            Accessible.name: "Text size"
+                            onActivated: page.change("textScalePercent", 100 + currentIndex * 25)
+                        }
+                        CordsLabel { text: "Server icon size"; font.weight: Font.DemiBold }
+                        CordsComboBox {
+                            objectName: "serverIconPreference"
+                            model: ["Small", "Standard", "Large"]
+                            currentIndex: [40, 48, 56].indexOf(page.draft.serverIconSize || 48)
+                            Accessible.name: "Server icon size, independent of text size"
+                            onActivated: page.change("serverIconSize", [40, 48, 56][currentIndex])
+                        }
                         CordsCheck {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0

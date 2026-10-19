@@ -33,6 +33,7 @@ def main():
         env['PATH'] = '/usr/bin:/bin'
     env['CORDS_CLIENT_STATE'] = ready['state']
     env['QT_FORCE_STDERR_LOGGING'] = '1'
+    env['QML_DISK_CACHE_PATH'] = str(output / 'qml-cache')
     env['CORDS_CLIENT_CA'] = ready['ca']
     listing = subprocess.run([str(executable), '--list-accounts'], env=env,
                              cwd=fixture, capture_output=True, text=True,
@@ -40,7 +41,8 @@ def main():
     accounts = json.loads(listing.stdout)
     account = next(row['account_id'] for row in accounts
                    if row['label'] == 'Role acceptance')
-    for size, scale, label in [('1180x760', '1', 'wide'),
+    for size, scale, label in [('1440x900', '1', 'wide'),
+                               ('1024x768', '1', 'standard'),
                                ('680x520', '1', 'narrow'),
                                ('900x650', '1.5', 'scaled')]:
         env['QT_SCALE_FACTOR'] = scale

@@ -40,6 +40,8 @@ ApplicationWindow {
             if (prefs) {
                 Theme.appearance = prefs.theme;
                 Theme.compact = prefs.compact;
+                Theme.textScale = (prefs.textScalePercent || 100) / 100;
+                Theme.serverIconSize = prefs.serverIconSize || 48;
                 Theme.reducedMotion = prefs.reducedMotion;
                 Theme.disableAnimations = prefs.disableAnimations;
             }

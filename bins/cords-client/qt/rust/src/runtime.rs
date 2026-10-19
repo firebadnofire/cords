@@ -144,6 +144,8 @@ pub(super) fn default_preferences() -> ffi::Preferences {
         name: "You".into(),
         theme: "dark".into(),
         compact: false,
+        text_scale_percent: 100,
+        server_icon_size: 48,
         reduced_motion: false,
         disable_animations: false,
         show_members: true,
@@ -1312,6 +1314,14 @@ impl Worker {
                 self.view.notice = "Profile picture saved".into();
             }
             Command::Preferences(preferences) => {
+                ensure!(
+                    (100..=200).contains(&preferences.text_scale_percent),
+                    "Text size must be between 100% and 200%"
+                );
+                ensure!(
+                    [40, 48, 56].contains(&preferences.server_icon_size),
+                    "Choose a supported server icon size"
+                );
                 // Preserve unrecognized and existing frontend preferences rather
                 // than replacing the encrypted preferences document.
                 let mut value = client.ui_preferences();
@@ -1322,6 +1332,14 @@ impl Worker {
                     ("displayName", serde_json::json!(preferences.name)),
                     ("theme", serde_json::json!(preferences.theme)),
                     ("compact", serde_json::json!(preferences.compact)),
+                    (
+                        "qtTextScalePercent",
+                        serde_json::json!(preferences.text_scale_percent),
+                    ),
+                    (
+                        "qtServerIconSize",
+                        serde_json::json!(preferences.server_icon_size),
+                    ),
                     (
                         "reducedMotion",
                         serde_json::json!(preferences.reduced_motion),
@@ -2050,6 +2068,16 @@ fn preferences(value: &serde_json::Value) -> ffi::Preferences {
         result.theme = theme.into();
     }
     result.compact = value["compact"].as_bool().unwrap_or(false);
+    result.text_scale_percent = value["qtTextScalePercent"]
+        .as_u64()
+        .and_then(|size| u32::try_from(size).ok())
+        .filter(|size| (100..=200).contains(size))
+        .unwrap_or(100);
+    result.server_icon_size = value["qtServerIconSize"]
+        .as_u64()
+        .and_then(|size| u32::try_from(size).ok())
+        .filter(|size| [40, 48, 56].contains(size))
+        .unwrap_or(48);
     result.reduced_motion = value["reducedMotion"].as_bool().unwrap_or(false);
     result.disable_animations = value["disableAvatarAnimations"].as_bool().unwrap_or(false);
     result.show_members = value["showMembers"].as_bool().unwrap_or(true);

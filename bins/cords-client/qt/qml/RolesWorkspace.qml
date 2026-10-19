@@ -118,13 +118,13 @@ ColumnLayout {
                 acceptedButtons: Qt.RightButton
                 onTapped: menu.popup()
             }
-            Menu {
+            CordsMenu {
                 id: menu
-                MenuItem {
+                CordsMenuItem {
                     text: "Inspect role"
                     onTriggered: editor.edit(role.row, true)
                 }
-                MenuItem {
+                CordsMenuItem {
                     text: "Copy role ID"
                     onTriggered: workspace.desktop.copy(role.row.id)
                 }

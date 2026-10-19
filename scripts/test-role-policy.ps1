@@ -6,7 +6,8 @@ param(
     [string]$TestExecutable = '',
     [switch]$SeedAudit,
     [switch]$DefaultsOnly,
-    [switch]$ProfilePictures
+    [switch]$ProfilePictures,
+    [switch]$AdmissionFixture
 )
 # Disposable acceptance only. The caller must authorize Docker use on SshHost.
 # Credentials exist only in memory/process environment and container metadata.
@@ -15,6 +16,7 @@ $ErrorActionPreference = 'Stop'
 if ($SeedAudit -and !$DesktopFixtureDirectory) { throw 'SeedAudit requires a disposable desktop fixture' }
 if ($ProfilePictures -and !$DesktopFixtureDirectory) { throw 'ProfilePictures requires a disposable desktop fixture' }
 if ($DefaultsOnly -and (!$DesktopFixtureDirectory -or $SeedAudit)) { throw 'DefaultsOnly requires a desktop fixture without SeedAudit' }
+if ($AdmissionFixture -and (!$DesktopFixtureDirectory -or $SeedAudit -or $ProfilePictures)) { throw 'AdmissionFixture requires a desktop fixture without audit/image seeding' }
 if ($TestExecutable) {
     if (!$DesktopFixtureDirectory -or ![IO.Path]::IsPathFullyQualified($TestExecutable) -or !(Test-Path -LiteralPath $TestExecutable -PathType Leaf)) {
         throw 'TestExecutable requires a desktop fixture and an existing absolute executable path'
@@ -64,19 +66,20 @@ try {
     Push-Location (Split-Path $PSScriptRoot -Parent)
     try {
         if ($DesktopFixtureDirectory) {
+            $fixtureTest = if ($AdmissionFixture) { 'desktop_admission_acceptance_fixture' } else { 'desktop_role_acceptance_fixture' }
             $env:CORDS_ROLE_DESKTOP_SEED_AUDIT = if ($SeedAudit) { '1' } else { $null }
             $env:CORDS_ROLE_DESKTOP_DEFAULTS_ONLY = if ($DefaultsOnly) { '1' } else { $null }
             $env:CORDS_ROLE_DESKTOP_PROFILE_PICTURES = if ($ProfilePictures) { '1' } else { $null }
             $env:CORDS_ROLE_DESKTOP_FIXTURE = [IO.Path]::GetFullPath($DesktopFixtureDirectory)
             if ($TestExecutable) {
-                & $TestExecutable desktop_role_acceptance_fixture --ignored --nocapture
+                & $TestExecutable $fixtureTest --ignored --nocapture
             } else {
-                cargo test --release -p cords-server-core --locked desktop_role_acceptance_fixture -- --ignored --nocapture
+                cargo test --release -p cords-server-core --locked $fixtureTest -- --ignored --nocapture
             }
         } elseif ($TestFilter) {
-            cargo test --release -p cords-server-core --locked $TestFilter -- --include-ignored
+            cargo test --release -p cords-server-core --locked $TestFilter -- --include-ignored --skip desktop_role_acceptance_fixture --skip desktop_admission_acceptance_fixture
         } else {
-            cargo test --release -p cords-server-core --locked -- --include-ignored --skip desktop_role_acceptance_fixture
+            cargo test --release -p cords-server-core --locked -- --include-ignored --skip desktop_role_acceptance_fixture --skip desktop_admission_acceptance_fixture
         }
         $fixtureExit = $LASTEXITCODE
     } finally { Pop-Location }

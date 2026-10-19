@@ -1,573 +1,480 @@
-# Cords UI Design Contract
+# Cords Human Interface Guidelines
 
-> **Status:** Living product and implementation design contract  
-> **Primary UI:** Qt 6 Quick / QML, with a custom Cords style and no embedded WebView  
-> **Platforms:** Windows, Linux, macOS; adaptable to Android and other supported form factors  
-> **Application core:** Existing Rust client core, connected to Qt through a narrow, typed bridge  
-> **Reviewed:** 2026-10-15  
-> **Location:** Repository root, `UI-DESIGN.md`
+> **Canonical file:** `UI-DESIGN.md` at the repository root  
+> **Status:** Adopted authoritative HIG revision, 2026-10-19  
+> **Product:** Cords, *Right on the wire*  
+> **Target:** Native Qt 6 Quick / QML with a custom Cords design system  
+> **Scope:** The visual, interaction, accessibility, and user-facing behavior contract for Cords
 
-## 0. How to use this document
+## 0. Authority and how to use this HIG
 
-This document defines **what Cords looks like, how its interface works, and how the native Qt client implements those decisions**. It is a standing contract for design, implementation, code review, and regression tests. Read it before making user-facing changes; update it when a conscious design decision changes.
+**This is the master document for how Cords looks, feels, reads, and responds.** Every user-facing feature, screen, reusable control, and design change MUST follow it. It is not a sprint plan, a migration ledger, or a substitute for backend specifications.
 
-- **MUST** is a release-blocking requirement for an applicable implemented feature.
-- **SHOULD** is the default choice; deviations require an explicit reason in the decision log.
-- **MAY** allows a deliberate option, not a mandatory feature.
-- **NOT YET** identifies an intended capability; it MUST NOT appear as a working action.
+Read it before planning or implementing UI changes. If the implementation disagrees with the HIG, correct the implementation unless an intentional product decision has been approved and recorded here. Update this document when the *design decision* changes, not because the current implementation happens to be deficient.
 
-**Precedence:** Protocol, cryptographic, server-authentication, MLS, and RBAC specifications determine what the client *may* do. This document governs what the user *sees and can attempt*. Never weaken security to imitate Discord. If a conflict appears, correct the interface and record the conflict. Follow ADR 0008 and the current role-policy specifications for Cords-specific semantics.
+The terms are normative:
 
-**Reality check:** A planned or written API is not evidence of a completed implementation. Every screen must be audited against the actual core/server before being marked functional.
+- **MUST:** required for any applicable implemented feature.
+- **SHOULD:** default; deviations require a documented reason.
+- **MAY:** optional and deliberate.
+- **NOT YET:** an intended capability that MUST NOT be shown as operational before implementation and verification.
 
-**Definition of done:** A screen is complete only when its visible interactions work through real authorized operations, display truthful results, respond properly to loading/offline/error states, and pass keyboard, accessibility, and layout checks. A pretty QML scene with dead buttons is not finished.
+**Order of authority:** Protocol, cryptographic, identity, authentication, MLS, and RBAC specifications determine which actions are possible and authorized. This HIG determines how those actions are presented and performed. `AGENTS.md`, relevant ADRs (including ADR 0008), and current role-policy contracts remain binding in their domains. No design decision can waive a security boundary.
+
+**A feature is not complete when it renders.** Completion requires an appropriate view, a working accessible interaction, an authorized core/server operation (or clearly designated local action), truthful feedback, persistence when applicable, and verification in a running native app.
+
+This HIG deliberately does **not** carry dated implementation-progress tables, build machine inventories, or milestone estimates. Keep those in `docs/plans/qt-desktop-migration.md` or the current implementation ledger. Plans must cite this HIG, not rewrite it per session.
 
 ---
 
-## 1. Product thesis: familiar because familiar works
+## 1. Product identity and design direction
 
-**Cords: Right on the wire.** Self-hosted communication should feel natural to people who know Discord, while protecting Cords' independent-server, account/device, and encryption model.
+### 1.1 The target feeling
 
-### 1.1 The reference is Discord's interaction grammar, not its trademarks
+**Discord-familiar, unmistakably Cords.** A Discord user should understand the interface immediately, while recognizing Cords as an independent, self-hosted communications product with its own identity and conventions.
 
-Default to these recognizable conventions unless Cords has a concrete reason to diverge:
+The desired first impression is a mature, dense-but-readable desktop messenger, **not an application assembled from stock Qt controls**. It has strong navigation, recognizable people, restrained chrome, rich contextual interaction, and purpose-built administration screens.
 
-1. **Server rail** at far left: visual server identities and obvious selected/unread states.
-2. **Channel tree** beside it: categories, text channels, collapsible sections, and a predictable server menu.
-3. **Conversation** as the dominant center: fixed channel header, messages in chronological reading order, composer at bottom.
-4. **Right member rail**: member names, avatars, and role groupings; optional, not replaced by permanent diagnostics.
-5. **Profile popouts** on clicking a name/avatar, with roles and contextual actions.
-6. **Context menus** for common message/member/channel actions; **dedicated settings** for persistent management.
-7. **Roles** as visible social labels and administrative capabilities, with separate member/role-management flows.
-8. **Clear unread/muted/selected states**, instant-feeling navigation, and an unambiguous active conversation.
+The basic visual grammar is:
 
-Do **not** copy Discord's logo, branded colors, proprietary assets, Nitro-style upsells, activity games, or unavailable voice/DM features. Do **not** copy every modern Discord redesign merely because it is newer.
+1. Server identities in a narrow, dark rail on the far left.
+2. A channel and server-navigation column immediately to its right.
+3. The dominant conversation area with a compact header and anchored composer.
+4. An optional right rail for actual admitted server members, or a mutually exclusive Info surface.
+5. Consistent profile popouts, contextual menus, hover tools, and management workspaces.
 
-### 1.2 What user feedback actually suggests
+**Borrow Discord's interaction quality and information architecture, not its trademarks, proprietary art, upsells, or protocol semantics.** Do not copy every redesign merely because it is newer. The supplied reference screenshots are concrete visual/interaction targets; they are not authorization to invent unsupported product features.
 
-These are **qualitative signals, not representative polling**. Preserve the stable conventions described by beginner guides and repeatedly raised in user feedback:
+### 1.2 Intentional Cords differences are not bugs
 
-| Repeated observation | Cords design response |
+- Users are referenced with `@`; **roles are referenced with `$`**. Preserve `$role`, `$default`, `$admin`, and the documented role model rather than rewriting role references into Discord-like `@role` mentions. Autocomplete, token display, chips, previews, notifications, and documentation MUST respect the distinction. Resolve mentions to stable IDs when the underlying feature is implemented; do not derive authority from display text.
+- Cords servers are **independently hosted servers**. The rail is not a list of rooms on one central service.
+- Account identity and device identity are distinct. A public member is one verified account, not an individual device connection.
+- Server roles, channel access, MLS enrollment, and encryption state are distinct. Visual grouping cannot imply cryptographic access.
+- Server/community administration is not machine/SSH administration. Keep both the permissions and navigation boundaries explicit.
+- Account switching changes the selected identity and its own remembered server bar, credentials, drafts, and applicable local preferences. Never merge state across vaults.
+
+### 1.3 Product-wide non-goals
+
+Do not introduce fake friends, direct messages, voice calls, presence, activity games, attachment controls, integrations, Nitro, subscriptions, boosts, or monetization merely to fill space. Do not show server-administration items whose backend behavior is absent. Do not expose MLS epochs, key packages, device fingerprints, UUIDs, or raw HTTP errors as ordinary chat chrome.
+
+No WebView, Electron, Tauri, browser DOM, or CSS renderer is used for the target native application. The intended UI is Qt Quick/QML.
+
+---
+
+## 2. Visual design system
+
+### 2.1 Principle: quiet structure, strong content
+
+Conversation and people receive visual emphasis; infrastructure is available but not constantly demanding attention. Structure should emerge from surface relationships, typography, alignment, and transient interaction states, not permanent thick borders around every rectangle.
+
+**Avoid:** a uniform navy sheet with slightly different rectangles, raw default Qt buttons, large empty gutters, bright outlines on every surface, random control heights, naked device identifiers, and permanent debugging/status labels in high-value navigation areas.
+
+**Prefer:** layered charcoal surfaces, narrow separators, clear active states, compact rows, restrained accent usage, and controls revealed at the moment they are relevant.
+
+### 2.2 Dark appearance baseline
+
+The following palette is a **proposed concrete baseline** for the default charcoal appearance. Validate colors in real Qt renders against the approved Cords branding and reference captures before treating the values as final. Colors MUST be defined centrally as semantic QML theme tokens, never scattered across individual screens.
+
+| Semantic token | Starting value | Use |
+| --- | --- | --- |
+| `window` | `#232429` | Outer/background frame |
+| `serverRail` | `#202127` | Deepest left rail |
+| `navigation` | `#2B2D33` | Channel and settings sidebars |
+| `conversation` | `#32343B` | Message surface and primary content |
+| `memberRail` | `#2B2D33` | Right context/member rail |
+| `elevated` | `#3B3D46` | Popovers, menus, selected settings surfaces |
+| `input` | `#262830` | Text entry and search |
+| `hover` | `#3E414A` | Transient hover background |
+| `selected` | `#454954` | Persistent selection background |
+| `divider` | `#42454D` | Subtle structural lines |
+| `textPrimary` | `#F2F3F5` | Main labels, messages |
+| `textSecondary` | `#C6C9D0` | Secondary details |
+| `textMuted` | `#9DA2AC` | Hints and timestamps |
+| `accent` | `#83BDD9` | Proposed Cords accent; selected/primary actions |
+| `danger` | `#EE777D` | Destructive controls and genuine errors |
+| `success` | `#78C99A` | Confirmed success, not generic links |
+| `warning` | `#E8BC70` | Warnings and pending attention |
+
+Check actual text/background pairs for WCAG AA contrast (4.5:1 for ordinary text, 3:1 for large text and discernible control boundaries); adjust token values before shipping. Role-selected colors MUST be transformed or supplemented as needed for readable text on the active surface. Do not use color alone to communicate permissions, connectivity, or failure.
+
+Dark, midnight, and light variants share **semantic token names and layout geometry**. A different theme must not rearrange common navigation. Theme choices and user density settings are separate.
+
+### 2.3 Typography
+
+Use a legible, properly licensed local/system sans-serif font; never require network font downloads. Adopt one coherent scale, tuned by platform font metrics rather than arbitrarily mixing point and pixel sizes:
+
+| Purpose | Starting Qt logical size | Treatment |
+| --- | --- | --- |
+| App/section title | 20–22 px | Semibold |
+| Page title | 18–20 px | Semibold |
+| Section header | 15–16 px | Semibold |
+| Body/message | 14 px | Regular; user-scalable |
+| Navigation/member name | 13–14 px | Medium where needed |
+| Buttons/fields | 13–14 px | Medium or regular |
+| Timestamp/helper text | 11–12 px | Muted, still readable |
+| Technical ID/code | 12–13 px | Monospace only when meaningful |
+
+Avoid all-caps body labels. Short all-caps category headings are acceptable in navigation when they improve scanning. Do not squeeze legibility merely to match a screenshot. Support user text scaling independently from OS device-pixel ratio.
+
+### 2.4 Spacing, shape, and density
+
+Use a documented spacing scale: **4, 8, 12, 16, 24, 32 logical px**, with 2 or 6 px optical adjustment only in shared components. Consistent alignment is more important than an exact token everywhere.
+
+| Element | Starting geometry |
 | --- | --- |
-| Users recognize the left-to-right server → channel → chat → member organization. | Keep this four-region mental map; do not replace it with a novel dashboard. |
-| Dense, legible conversation space is important; toolbars can consume too much of it. | Keep chat primary, controls compact, and panels independently resizable/collapsible. |
-| People object to smaller, less distinguishable server icons and inconsistent alignment. | Favor recognizable icons; offer icon-size/density controls; align rails, header, composer, and account strip. |
-| Fixed layout changes disrupt muscle memory. | Keep frequent controls stable; make optional customization additive and remember preferences. |
-| Extra outlines and spacing can distract from messages. | Use subtle boundaries, disciplined spacing, and limited accent colors. |
-| Some users welcome dark-theme options, adjustable lists, and calmer layouts. | Offer meaningful appearance/density settings without abandoning familiar navigation. |
-| Hidden or clipped controls make even attractive layouts unusable. | Test minimum windows, display scaling, dialogs, and keyboard paths in packaged apps. |
+| Primary/secondary control height | 32–36 px |
+| Compact icon-only action | 28–32 px with usable hit area |
+| Search field | 32–36 px |
+| Channel row | 32–36 px |
+| Member row | 38–44 px |
+| Message avatar | 36–40 px |
+| Member avatar | 30–32 px |
+| Server icon | 44–48 px in a 64–72 px rail |
+| Compact window/channel header | 48–52 px |
+| Composer minimum / maximum | ~40 px / bounded 5–6 lines |
+| Settings form content width | ~680–760 px, not stretched to fill a huge monitor |
+| Common control corner radius | 6–8 px |
+| Popover/dialog corner radius | 8–12 px |
 
-**Research anchors (read as background, not binding API specifications):**
+These are **design targets, not unbreakable fixed widths**. Prefer intrinsic sizing and adaptive constraints. Compact and comfortable density variants SHOULD be supported. An explicit server-icon size preference MUST be independent of global text scale.
 
-- [WIRED, How to Use Discord](https://www.wired.com/story/how-to-use-discord): describes the recognizable server, channel, chat, and member-list structure.
-- [Discord community feedback, March 2025 desktop layout](https://support.discord.com/hc/en-us/community/posts/30941505914007-Horrible-new-discord-desktop-app-layout): complaints about icon size, alignment, composer proximity, and unnecessary bars.
-- [Discord community feedback, refreshed desktop interface](https://support.discord.com/hc/en-us/community/posts/30927878600215-Refreshed-Desktop-GUI-Interface): reports legibility/density tradeoffs and appreciates resizable channel lists.
-- [r/discordapp accessibility feedback](https://www.reddit.com/r/discordapp/comments/1jmfb2s/the_new_ui_presents_many_accessibility_issues/): clipping, unreachable controls, and server-icon sizing.
-- [r/discordapp discussion of UI variants](https://www.reddit.com/r/discordapp/comments/1i97ddy): some positive responses to darker themes and changed placements.
-- [Discord Members Page](https://support.discord.com/hc/en-us/articles/15946797617431-Members-Page) and [Discord Roles and Permissions](https://support.discord.com/hc/en-us/articles/214836687-Discord-Roles-and-Permissions): public-facing reference for familiar administration patterns.
+### 2.5 Hierarchy and iconography
 
-**Decision rule:** When choosing between an established, understandable Discord-style interaction and a more inventive one, choose the established interaction unless tests or a Cords requirement support the change. Familiarity is a usability feature.
+Use a consistent, legally redistributable icon family with matching stroke, size, baseline, and optical weight. Do not mix emoji, platform glyphs, ASCII symbols, and multiple unrelated icon sets to represent adjacent actions. Every icon-only action needs an accessible name and a tooltip.
 
-### 1.3 Non-goals
+The accent indicates primary action or selection; danger marks destructive action; role colors identify people/roles. Never use a single bright status color for everything clickable. An active element must be visibly different from merely hovered or focused elements.
 
-- Pixel-for-pixel Discord replication; identical CSS colors, shadows, or proprietary assets.
-- A marketing landing page masquerading as a chat client.
-- Exposing device generations, MLS epochs, key packages, or raw UUIDs in normal conversation.
-- Conflating role labels with cryptographic group membership or presence.
-- Inventing placeholder friends, DMs, voice calls, bios, activity statuses, attachments, or integrations.
-- Using visual hiding or disabled buttons as security enforcement.
-- Using the browser DOM, HTML/CSS, Electron, Tauri, or an embedded WebView to implement the target native client.
+Dividers should be quiet and purposeful. Avoid bordered-card nesting for basic settings rows. Dense admin tables should not be styled as a stack of enormous cards.
 
----
+### 2.6 Motion
 
-## 2. Native cross-platform UI technology contract
-
-### 2.1 Chosen toolkit
-
-**MUST:** The target native Cords client uses **Qt 6 Quick/QML** for its application shell, views, controls, scene graph, and interaction logic. Its design language is **Cords**, not the host operating system's default widget theme. Qt Widgets are not the main application UI, and no WebView is required to render chat/settings.
-
-- Use Qt Quick Controls and **Qt Quick Templates / a custom `Cords` style**, with the cross-platform **Basic style** as a deliberate fallback where helpful. Do not customize Qt's native Windows/macOS styles; their rendering and metrics are platform-specific.
-- Use QML for presentation, layout, animation, focus, and simple presentation state. Keep application protocol, authorization, key handling, MLS, persistence, and synchronization in the **Rust client core**.
-- Prefer a narrowly scoped, typed **CXX-Qt / QObject bridge** for Rust–QML interoperation. The concrete bridge/API, build tooling, and version pins belong in a separate architecture decision record; do not introduce a second application-logic core in QML or C++.
-- Use Qt's native desktop infrastructure for windows, accessibility, clipboard, file selection, menus/dialogs where appropriate, and notifications via a documented native integration. Platform hooks may differ; the Cords interaction semantics MUST remain consistent.
-- The app is **native compiled with a custom-rendered UI**. This does **not** mean every control is a native OS widget. Do not market custom Qt Quick controls as literal Win32/Cocoa widgets.
-- Before distribution, review applicable **Qt and bridge licensing, plugin/module licenses, and static/dynamic linking obligations**. Do not assume all Qt modules share identical terms.
-
-### 2.2 Architecture boundary
-
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│ Qt 6 Quick / QML                                               │
-│ Cords style, shell, message/list delegates, dialogs, profile  │
-│ popouts, editor forms, focus/keyboard, responsive layouts      │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ typed models / commands / signals
-┌──────────────────────────────▼──────────────────────────────────┐
-│ Narrow Qt ↔ Rust integration                                    │
-│ QObject models, immutable IDs, revisioned commands, async      │
-│ results, errors, cancellation, platform event presentation     │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────────┐
-│ Existing Rust client core                                      │
-│ Accounts, signed profiles, devices, RBAC views, MLS, sync,     │
-│ message state, notifications, encrypted storage, media codecs  │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ authorized network protocol
-                        Independent Cords servers
-```
-
-**Rules:**
-
-- NEVER store private keys, authentication secrets, decrypted MLS state, or server-authoritative permission evaluators in QML properties or UI models.
-- A view receives the **minimum verified presentation data** and authorized actions needed to render it.
-- Long-running I/O, image decoding, crypto, and network operations MUST NOT block Qt's UI thread. Use queued signals/slots and cancellable asynchronous tasks; marshal view-model updates onto the correct Qt thread.
-- Use stable account/server/channel/message IDs and revisioned changes, not QML delegate indices, as action targets.
-- Server selection changes which conversation is **visible**, not which unlocked joined servers synchronize.
-- An OS notification is emitted only after client-core classification of an authenticated, authorized, newly synchronized message.
-- Do not duplicate effective RBAC evaluation or profile-conflict resolution in QML bindings.
-
-### 2.3 QML module and component conventions
-
-Use one coherent Cords component library, for example:
-
-```text
-Cords.UI /
-  Theme /           Palette, Typography, Spacing, Motion, Density
-  Controls /        Button, IconButton, TextField, Menu, Popover,
-                    Dialog, SearchField, Toggle, RoleChip, Tooltip
-  Navigation /      ServerRail, ChannelTree, ChannelHeader, RightRail
-  Conversation /    MessageList, MessageRow, Composer, MessageMenu
-  People /          MemberList, MemberRow, ProfilePopout, RolePicker
-  Administration /  SettingsShell, RolesEditor, MembersPage,
-                    ChannelEditor, ModerationPage, ServerOverview
-  Media /           Avatar, ServerIcon, Banner, AnimatedImage
-```
-
-Names illustrate ownership; the repository may choose a different directory structure, but MUST keep components reusable and styling centralized. Prefer controls built on `QtQuick.Templates` or customizable Basic-based controls over repeated ad hoc `Rectangle + MouseArea` buttons.
-
-- Theme primitives SHOULD be QML singletons or equivalent typed, testable objects; avoid unrelated hard-coded color strings in screens.
-- QML files MUST expose stable accessible names, roles, and object identifiers for tests where appropriate.
-- Complex, long lists SHOULD use Qt models (`QAbstractListModel` or equivalent appropriate bridge) and `ListView`/similar virtualized views; enable delegate reuse where beneficial and reset ephemeral state on reuse.
-- Keep account/server-specific identifiers, permission decisions, and request lifetimes out of delegate-local state.
-- Use asynchronous image providers/decoders for avatars, icons, and banners. A successful stored JPEG XL file does not prove that Qt renders its animation; build and test the actual decode-to-scene-graph path.
-- Avoid runtime QML downloads from servers, dynamic untrusted scripts, or treating remote HTML as UI components.
-- Do not treat Qt Labs Technology Preview styling components as the stability foundation without an explicit reviewed exception.
-
-### 2.4 Cross-OS consistency and platform adaptation
-
-**Windows, Linux, macOS:** same Cords layout vocabulary, component metrics, navigation positions, colors, and actions by default. Adapt only OS conventions such as title-bar integration, window management, system dialogs, shortcuts, notifications, accessibility backends, and packaging.
-
-**Android/future mobile:** preserve the same server → channels → conversation → members mental model, but use drawers/stacked screens and touch-sized interactions. Never force a desktop four-column arrangement onto a phone. Android compatibility is an architectural target, not proof that an Android client already exists.
-
-A platform is supported only after a packaged build passes functional, accessibility, visual, media, and notification validation on that OS. Qt portability alone does not constitute completed support.
+Use short, unobtrusive hover/focus transitions (roughly 80–150 ms) and popover/panel transitions (roughly 120–200 ms), tuned in native captures. Motion SHOULD explain state, not delay tasks. Obey reduced-motion preference and provide effectively immediate alternatives. Animated JXL avatars follow the specific per-instance playback contract in §6.
 
 ---
 
-## 3. The desktop shell: recognizable before anything else
+## 3. The desktop shell
 
-### 3.1 Layout
+### 3.1 Canonical desktop anatomy
 
 ```text
-┌────────┬────────────────────────┬────────────────────────────────────────┬────────────────────────┐
-│ SERVER │ SERVER + CHANNELS      │ #channel         Search  Members Info │ MEMBERS                │
-│ RAIL   │ ────────────────────── │────────────────────────────────────────│                        │
-│        │ Categories             │                                        │ Role headings          │
-│ icons  │  # text-channels       │ Messages and timestamps                │   avatar + name        │
-│        │  # another-channel     │ Replies, embeds when supported         │   avatar + name        │
-│        │                        │                                        │                        │
-│        │                        │                                        │                        │
-│        │ Current account        │ Message composer                       │                        │
-└────────┴────────────────────────┴────────────────────────────────────────┴────────────────────────┘
+┌────────┬────────────────────────┬──────────────────────────────────────┬───────────────────────┐
+│ SERVER │ SERVER / CHANNEL TREE  │ #channel        Search Members Info │ MEMBERS               │
+│ RAIL   │ ────────────────────── │──────────────────────────────────────│                       │
+│        │ Category               │ avatar  Name            timestamp   │ ROLE GROUP            │
+│ icons  │   # channel            │         Message text                 │   avatar Name         │
+│        │   # another            │                                      │   avatar Name         │
+│        │                        │ More conversation                    │                       │
+│        │ Current account strip  │ Message composer                     │                       │
+└────────┴────────────────────────┴──────────────────────────────────────┴───────────────────────┘
 ```
 
-**Hierarchy:** conversation area has first claim on horizontal space; the rest are navigation and context. Keep a stable channel header and composer. Avoid unnecessary full-width top bars, oversized empty gutters, or competing bottom bars.
+Desktop default: **four conceptual areas**, with conversation owning flexible remaining width. Suggested rail widths: **64–72 / ~240 / flexible / ~240 logical px**. Header, account strip, and composer align; side panels scroll independently. Do not add a redundant full-width app toolbar or permanently display technical diagnostic panels where people should appear.
 
-Suggested starting metrics (Qt logical pixels, not physical monitor pixels; tune with actual screenshots):
-
-| Region | Initial size / rule |
-| --- | --- |
-| Server rail | 64–72 dp wide; icon size preference independent from global UI scale |
-| Channel/navigation rail | ~240 dp preferred, user-resizable within sensible bounds |
-| Member rail | ~240 dp preferred, toggleable; can be resized if practical |
-| Conversation | flexible remainder; protect minimum readable width |
-| Channel header | compact one-line row, consistent vertical alignment |
-| Composer | anchored at bottom; multiline growth bounded without hiding history |
-
-Do not use fixed widths that clip on small laptop windows or high scaling. Persist optional panel visibility and user-adjusted sizes per application/workspace as appropriate.
+At narrower widths, collapse the member rail first; expose Members and Info as mutually exclusive drawers when needed. Next permit collapsing/reducing channel navigation. Never make the composer or conversation unusably narrow to retain four simultaneous columns. Save panel visibility/size choices where appropriate.
 
 ### 3.2 Server rail
 
-- Show each joined server with its actual image/icon or a deterministic letter fallback; clear active and unread indicators. The server rail represents **real separately hosted Cords servers**, not Discord-style channels masquerading as servers.
-- Clicking selects a server and restores the last selected eligible channel; double-clicking must not trigger surprising actions.
-- Hover/focus reveals a helpful tooltip with the server's display name; URL/signing identity remain available through details.
-- Joining/connecting to a server is a discoverable functional action. Do not expose a fake Home/Friends area until appropriate features exist.
-- Provide **compact/comfortable density** and server-icon sizing. Keep icons large enough to distinguish without zooming the entire application.
-- Context menu MAY offer supported rename/display, disconnect/archive/drop, and server settings actions, distinguishing destructive and security-sensitive operations.
-- Switching servers MUST NOT suspend background synchronization of other eligible joined servers.
+- Server identity appears as a real icon (preferably recognizably large) or a deterministic, polished letter fallback. No mock servers.
+- Use a clear active indicator at the rail edge; unread and selected states are distinguishable. A hover state MAY smoothly modify icon shape or highlight, but does not masquerade as selection.
+- Server tooltips show display name. Host URL, verified signing identity, and trust pin belong in details, not as the dominant list label.
+- Clicking selects the server and restores the last eligible channel. Do not suspend eligible background sync on other unlocked joined servers.
+- Provide supported Add/Join, ordering, contextual actions, and a sensible disabled reason where necessary. Destructive Disconnect/Drop controls are clearly distinguished from normal selection.
+- A selected account shows **only that account's remembered servers**. Switching vaults must immediately clear stale avatars, members, channels, drafts, and delayed results from the former account.
 
-### 3.3 Channel tree
+### 3.3 Channel and server navigation
 
-- Server name/header at top opens a practical menu. Below: ordered categories, collapsible sections, and text channels with familiar `#` visual cues.
-- Indicate selected channel, unread content, muted state, inaccessible channels (only if visibility policy allows), and temporarily read-only states distinctly. No invented voice-channel controls.
-- Channel row click selects channel; context menu gives only supported actions. Creation/edit controls visible to authorized accounts.
-- Keep expand/collapse state across navigation. Channel list scrolls independently from the conversation.
-- Do not turn a channel permission change into a silent MLS enrollment promise.
-- Bottom account strip shows the current account/avatar and access to account/settings/lock; keep it aligned with neighboring pane and composer.
+- A compact server-name header opens a real menu with relevant supported actions (server settings, invite, connection/details, etc.).
+- Below it: searchable ordered text channels, expandable/collapsible categories where supported, role/permission-aware creation controls, and stable `#` channel cues.
+- Indicate selected, unread, muted, inaccessible (when visibility policy permits), and temporarily read-only channels differently. Do not infer unread from arbitrary cached list order.
+- Selected rows use a persistent surface treatment; hover actions appear contextually. Align icons and labels across categories.
+- Keep the channel tree scrollable independent of chat, and preserve expanded state and last selection appropriately.
+- Bottom strip contains the selected account avatar/name and compact actionable settings, profile, lock, and account-switch entries. Routine sync completion is not a permanent navigation headline.
 
-### 3.4 Conversation workspace
+### 3.4 Channel header and conversation
 
-- Header identifies selected channel and provides **member-list toggle**, **Info**, and real search/settings actions where supported. Header controls keep stable positions between channel changes.
-- Messages read top-to-bottom; newest near bottom, with thoughtful auto-scroll only while at/near the bottom. Preserve reading position when history arrives above or new messages arrive below.
-- Show author avatar, account display name, time, grouping of consecutive messages by same author, role-colored names where readable, and clear mention/reply styling only when backed by data.
-- Clicking a sender opens the same profile popout as clicking a member row. Right-click/long-press opens contextual message actions that the user can actually perform.
-- Contextual message actions may include copy, reply, own deletion, authorized moderation deletion, and other **implemented** operations. No fictional reactions/edit/threads/attachments.
-- Composer stays visible, supports multiline input, keyboard send behavior and user preference where applicable, and makes permission/connection/MLS restrictions intelligible. A disabled composer MUST state whether the cause is RBAC, timeout, device approval, connection, lock, or pending cryptographic transition.
-- Initial history loads without flooding the user with messages marked as new notifications. Visible chat updates and unread counters must not depend on native notification permission.
+- Keep a **48–52 px** compact header identifying the selected channel with stable search, Members toggle, and Info affordances where supported. Avoid shuffling controls on each channel change.
+- Read messages in chronological order with thoughtful bottom anchoring. Scrolling upward to history MUST NOT cause unwanted snap-to-bottom when new events arrive.
+- Each message retains its unique ID and available timestamp. Group consecutive messages by **same verified author within approximately five minutes**, breaking at date changes and system events. Do not merge away independently selectable messages.
+- A grouped first row shows avatar, author display name, and timestamp. Continuations are visually tighter; their individual timestamp can appear on hover/focus. Preserve accessibility of each message.
+- Role color may affect readable display-name styling, not permission claims. Do not present raw device UUIDs as preferred sender names.
+- Hover/focus reveals a compact action toolbar without reserving permanent blank space for it. Right-click opens a context menu with **only supported** copy/reply/edit/delete/moderation actions, based on actual capability data.
+- Sender avatar or name opens the same account profile popout used by the member rail and admin directory.
+- Treat loading, no local history, empty confirmed history, unjoined, insufficient access, pending approval, failed fetch, and archived channel as separate states with accurate next actions.
 
-### 3.5 The default right rail is people, not diagnostics
+### 3.5 Message composer
 
-- Wide-window default: **public admitted server member list**, grouped once per member under highest eligible separately displayed role, with group counts.
-- Clicking a row opens a profile popout; context menu shows authorized actions. Show real account avatars and names, not device contact UUIDs.
-- The toggle should be in the familiar channel header. Hide rail without disturbing current message/history state.
-- **Info** opens channel confidentiality, server signing identity, retention, enrollment, and other technical conversation details as a mutually exclusive right-side surface. Do not stack Members + Info + Settings simultaneously.
-- At narrow widths, right-side surfaces become a dismissible overlay/drawer; they do not shrink the chat to unusability.
-- This is a **server membership** list, not proof of access to the selected encrypted channel. Never leak private rosters or enrollment state through the public rail.
-- Presence is NOT YET. Do not color avatars green or claim online/offline from historical connections.
+- Anchor a single cohesive multiline input to the bottom of conversation; do not render a bare text box alongside an unrelated-looking default Send button.
+- Enter sends; Shift+Enter inserts a line break (unless a deliberate user preference changes this). Composer grows only to a bounded height, after which its own content scrolls.
+- Preserve unsent input per account/server/channel, including after recoverable send failure; protect drafts on navigation and lock.
+- Send state communicates in-progress, failure/retry, and inability to post. A disabled composer MUST explain whether the cause is permission, connection, lock, pending membership, or pending cryptographic state.
+- No visible attachment/emoji/reply/formatting affordance unless it performs a real operation. Existing supported actions should be readily discoverable.
 
-### 3.6 Density, personalization, and navigation stability
+### 3.6 Member / Info rail
 
-- Provide at least a default **compact/comfortable** density setting (or one well-chosen default with equivalent layout controls), adjustable server icon size, text scale, and motion preference.
-- Do not require users to relearn ordinary server/channel/member navigation when themes change.
-- Preserve cursor, selection, scroll, and sensible focus when changing channels or closing popouts.
-- Do not move high-frequency chat actions into a novel secondary menu solely to save a few pixels.
-- Align top header, left account strip, message composer, sidebar separators, and status text; avoid random offsets and uneven padding.
+- Default right rail on a sufficiently wide window shows **public admitted server members**, not device contacts, diagnostics, or pending applicants.
+- Present one row per account, with verified avatar/display name and readable role-group headings/counts. Group each member once under its highest eligible *separately displayed* role, then a general member section. Do not infer presence from historic connections or show fake green status dots.
+- A row opens the shared profile popout. Authorized contextual actions can offer inspect roles, copy identity, moderate, etc., but never expose hidden restricted rosters or secrets.
+- A header Members control toggles the rail. **Info** replaces it with relevant technical conversation information and a return path. Do not stack multiple right panels simultaneously.
+- At narrow widths, these surfaces become dismissible overlays. Closing them does not reset channel scroll or composer state.
 
 ---
 
-## 4. Cords design language
+## 4. Reusable controls and interaction grammar
 
-### 4.1 Visual principles
+Create a coherent `Cords.UI` component library rather than repeating ad-hoc `Rectangle + MouseArea` implementations. Expected primitives include `CordsButton`, `CordsIconButton`, `CordsTextField`, `CordsSearchField`, `CordsCheckbox`, `CordsToggle`, `CordsSelect`, `CordsMenu`, `CordsPopover`, `CordsDialog`, `CordsToast`, `CordsTabs`, `CordsAvatar`, `CordsRoleChip`, `CordsMemberRow`, `CordsSettingsRow`, `CordsEmptyState`, and progress/error views.
 
-**Quiet structure, strong content, recognizable people.** Chat is not a dashboard. Chrome should recede, messages should be readable, and the user should always know what is clickable.
+### 4.1 Standard control states
 
-- Default dark appearance with optional lighter/darker themes where implemented; maintain sufficient contrast instead of optimizing for the blackest possible background.
-- Differentiate server rail, channel rail, conversation, and member rail with subtle, purposeful surfaces. Avoid a stack of glowing borders.
-- One restrained Cords accent for primary actions/selection. **Do not reuse bright green indiscriminately** for links, statuses, buttons, and labels.
-- Role color affects identity display, not administrative capability. Keep colored text legible regardless of chosen role hue.
-- Destructive actions clearly differ from ordinary Save/Cancel. Loading/pending and success/error must not be colors alone.
-- Prefer compact desktop spacing. A change must improve legibility or discoverability to justify consuming conversation width/height.
-- Use the OS's installed accessible font stack or a properly licensed bundled font; do not rely on remote fonts.
+Every applicable component MUST expose and style **resting, hover, focused, pressed, selected/checked, disabled, busy, error, and success** states. Do not let keyboard focus use a less visible style than mouse hover. Pending submission disables duplicate commands without swallowing cancellation when cancellation is safe.
 
-### 4.2 Central theme tokens
-
-Define via `CordsTheme` (QML singleton or equivalent), with clear semantic aliases:
-
-| Token family | Examples |
+| Element | Expected behavior |
 | --- | --- |
-| Surfaces | `window`, `serverRail`, `navigation`, `conversation`, `memberRail`, `popover`, `dialog`, `elevated` |
-| Text | `primary`, `secondary`, `muted`, `inverse`, `link`, `onAccent` |
-| Interactions | `accent`, `hover`, `pressed`, `selected`, `focusRing`, `disabled` |
-| Status | `success`, `warning`, `danger`, `pending`, `unread`, `offline` |
-| Geometry | spacing scale 4/8/12/16/24; radii; control heights; row/icon sizes |
-| Typography | page heading, section heading, body, metadata, code/ID |
-| Motion | hover, popout, panel, loading; zero/reduced alternatives |
-| Density | compact, comfortable; server-icon size separately controllable |
+| Button | Clear primary/secondary/quiet/destructive variants; state and action match label; no inert labels posing as buttons |
+| Icon button | Consistent glyph/size/hit target; tooltip and accessible name identify the action and, when needed, target |
+| Text field | Label, clear value, validation, edit state, selection/clipboard support, focus ring, recoverable submission error |
+| Search | Search scope explicit, results/count or useful empty state, fast updates without blocking UI thread |
+| Checkbox/toggle | Click label and control; checked state truthfully changes policy; keyboard Space toggles |
+| Menu | Context-aware entries, separators only when meaningful, nested items sparingly, never leaves window bounds |
+| Popover | Anchored to invoking element; closes on Escape/outside click; focus restores to invoker |
+| Dialog | Clear title and consequence, primary action, Cancel, focus trap, Escape behavior where cancellation is valid |
+| Toast/inline status | Communicates completed result without replacing error detail needed for recovery |
+| Empty state | States *why* content is missing and offers the correct available action, not a generic blank page |
+| Role chip | Color and role name, accessible; role reference and membership operate using stable role IDs |
 
-Do not hardcode unrelated one-off dimensions/colors in every view. Use Qt logical pixels, layouts, implicit sizing, and constraints. Color values belong in one reviewed palette, not scattered QML snippets.
+### 4.2 Hover is not permission
 
-### 4.3 Required reusable native controls
+Show contextual tools at hover/focus where helpful, but expose the same operations via keyboard-accessible menus. A hidden button is not server-side authorization. Derive availability from typed capability data; every privileged operation is enforced by the authoritative service.
 
-`CordsButton`, `CordsIconButton`, `CordsTextField`, `CordsSearchField`, `CordsCheckbox/Toggle`, `CordsSelect`, `CordsMenu`, `CordsPopover`, `CordsDialog`, `CordsToast/InlineError`, `CordsTabs`, `CordsAvatar`, `CordsRoleChip`, `CordsMemberRow`, `CordsSettingsRow`, `CordsEmptyState`, and standardized progress/error views.
+### 4.3 Mutations and forms
 
-Every reusable control MUST provide hover, focus, pressed, checked/selected, disabled, busy, and error semantics where relevant. Do not substitute a colored `Text` element for an actionable `Button`.
+- Save is enabled only for changed, valid data. Changing a field does not imply remote persistence.
+- Use explicit Save/Cancel or clearly indicated per-section autosave; do not mix both unpredictably on the same form.
+- Preserve drafts on recoverable failure and warn before navigating away from dirty forms.
+- Show optimistic feedback only when it can be reconciled with authoritative results. A spinner vanishing does not prove success.
+- Handle stale revisions, conflicts, retries, and duplicate submissions; use stable IDs, not QML delegate indices.
+- Confirm impactful actions with target and consequences. Ordinary reversible actions should not require exhausting confirmation rituals.
 
-### 4.4 Media presentation
+### 4.4 Profile and action popouts
 
-- Account avatars derive from the verified **canonical account-level signed profile**. Multiple devices must not create multiple public avatar identities.
-- Repeated appearances of the same account and image revision share a decoded default still image, but playback timelines MUST be per visible instance. Message avatars play while the whole message is hovered; member avatars play while their row is hovered. Leaving either region restores the default still frame. Expanded profiles play while visible, respecting encoded loops and motion preferences. Hidden/recycled instances release playback resources. Do not key sharing by display name. This supersedes the shared-clock rule under the explicit 2026-10-16 integration request.
-- Server icon and banner are **server presentation assets** with distinct storage/authorization; presentation edits never change server URL, signing key, or trust pin.
-- Support the separately specified bounded static and animated JPEG XL workflow. Use native decoding and Qt rendering rather than WebView/WASM as the target playback mechanism; keep decoder, memory, and animation timing tests.
-- Preserve frame timing, compositing, alpha, loops, crop/position, and reduced-motion preferences. Stop decoding/playing hidden or recycled delegates.
-- Do not assume `Image` can natively play every JXL animation. Provide an implemented decoder/provider/rendering path and validate on each platform.
-- Reuse shared media processing, but keep signed account-profile publication distinct from server-managed icon/banner uploads.
-
----
-
-## 5. Universal interaction contract: no decorative buttons
-
-### 5.1 Every affordance has a real contract
-
-Every visibly actionable item MUST have:
-
-1. **Real behavior:** a connected command or local-only action, not a blank QML handler.
-2. **Actual authority:** capabilities from the server/client core; never a QML permission guess.
-3. **Predictable target:** stable resource ID, correct account/server/channel context.
-4. **Honest feedback:** pending, success, validation, conflict, failure, cancellation.
-5. **Pointer, keyboard, and accessibility support:** the same operation through each path.
-6. **Verification:** tests or reproducible, recorded interaction with actual services.
-
-When unavailable: **finish and connect** an in-scope feature, **render read-only**, **omit**, or **disable with a useful reason** when discovery itself matters. Never turn the UI into a museum of inert green captions.
-
-### 5.2 Settings and mutation discipline
-
-- A server fingerprint or immutable channel confidentiality mode is read-only selectable text, not a disabled edit field pretending to be configurable.
-- Save requires dirty valid data; preserve edits after recoverable failure. Cancellation and navigation protect unsaved work.
-- Use revision-aware updates, conflict resolution, and idempotency for uncertain network outcomes. A disappearing spinner is not success.
-- Confirm impactful moderation, device revocation, identity burn, server drop, and channel succession with clear target/consequences.
-- An action submitted through a menu, role chip, or settings page MUST share the same client-core operation and response semantics.
-- Do not invent client-only authorization just to make an inaccessible page appear functional.
-
-### 5.3 Explicit states
-
-Distinguish: `Loading`, `Empty`, `No permission`, `Disconnected`, `Locked`, `Pending cryptographic transition`, `Unsupported server version`, `Invalid input`, `Conflict`, `Failed`, and `Succeeded` where relevant.
-
-Make a sensible recovery action available where possible. Error text should describe what the user can do next, without exposing secrets or treating every failure as an enigmatic “Something went wrong.”
-
-### 5.4 UI action inventory
-
-For each screen under rework, maintain a checkpoint inventory:
-
-| Element | User expectation | Client-core/server operation | Authorization | Error/empty behavior | Verified |
-| --- | --- | --- | --- | --- | --- |
-| Example: Change banner | Select, crop, publish new banner | Authorized asset upload + metadata revision | Server manage permission | Cancel/invalid file/conflict | Evidence link |
-
-An element is **not finished** if it only emits `clicked()` or opens a dialog with an inert Save button.
+Use one shared presentation for an account, regardless of whether opened from a message, member row, or administrator listing. Content may include verified account avatar, signed display name, visible server roles, supported actions, and an explicit Details section for identity/device metadata. No invented bio, online presence, DM, or activity button.
 
 ---
 
-## 6. Public members, profiles, and account identity
+## 5. Settings and administrative information architecture
 
-### 6.1 Account-first membership
+**Do not force every type of work into one generic page template.** The provided Discord examples show three distinct layouts that Cords SHOULD adopt deliberately:
 
-One public member row represents **one admitted account**. Device contacts are not the source of truth for membership. Public rows may contain verified display name, avatar, visible role color/group, and explicitly public profile information. Do not leak account secrets, raw device identifiers, join requests, restricted channel rosters, or moderation notes.
+1. **Account settings:** persistent left navigation, readable sections and setting rows, contextual edit controls.
+2. **Server settings:** persistent navigation, bounded forms with descriptions and visual previews.
+3. **Administrative workspace:** broad searchable/sortable tables or two-pane editors, using available width.
 
-### 6.2 Member list
+Use a dedicated app-level settings workspace (rather than a forest of floating unstyled windows), with a predictable close/return control and Escape handling. Sidebar selection persists while switching sections; content scrolls within a single clear primary region. Normal forms target approximately **680–760 px** content width, while member directories and other tables may expand much wider.
 
-- Group once per account by highest *separately displayed* eligible role, then a general Members group; deterministic ties.
-- Show counts and role headings without implying a role confers every channel's keys.
-- Member row opens the reusable profile popout. Moderation/role assignment context actions appear only when authorized.
-- Paginate/window large lists; preserve keyboard selection and clear accessible names.
-- No online/offline dots until a genuine presence system is implemented.
+### 5.1 Account settings
 
-### 6.3 Canonical profile popout
+Group related operations; only show categories that contain useful implemented content. Likely areas: **Profile & Identity**, **Password & Security**, **Privacy & Notifications**, **Appearance & Accessibility**, and **Local Accounts / Saved Servers**.
 
-- Open consistently from messages, member rows, and administration listings.
-- Show verified account display name, avatar, roles, and real supported actions. Details may reveal suitably authorized account identity/device diagnostic information.
-- Account presentation comes from one signed **account-level profile**; authorized devices may propose signed updates. Servers cache/sync records but cannot fabricate account-authored profile changes.
-- Preserve signed causal revisions and conflicts. Distinct-field concurrent changes may merge through an authorized signed merge; conflicting same-field changes require review. Do not pick winners by timestamps, server arrival, or device ID.
-- Previously unseen offline edits from revoked devices require an explicit secure acceptance policy; historical signatures alone do not prove pre-revocation authorship.
-- Independently hosted servers need not immediately know the same latest revision; clients converge after receiving the same verified history. No implicit federation.
-- Role assignments remain **server-scoped**; the account's canonical profile is not a global role definition.
-- No fake DM, activity, or bio controls.
+- Profile identity comes from the verified signed account-level profile. Do not treat devices as separate public people.
+- Change avatar via actual file selection, preview/crop, bounded processing, upload/publication, and actionable errors.
+- Mask sensitive values appropriately. Reveal operations must accurately reflect the supported security policy.
+- Password changes and vault lock/unlock are not interchangeable. Label each operation according to what it affects.
+- Account switch follows the existing account-picker-first flow and vault lifecycle. Clear old context immediately.
+- Read-only identity values should look selectable/copyable, not like broken Edit fields.
 
-### 6.4 Account versus device administration
+**Specific local vault-policy control:** label the supported override **“Ignore weak passwords”** without the previous misleading 12-character explanatory paragraph. Unchecked applies the normal local vault password policy. When checked, bypass local password length/strength checks; password/confirmation matching remains the only password-validation condition for that opted-in workflow. Do not quietly enforce a hidden client minimum or misrepresent the setting as a server-admission password policy. Respect any independent mandatory cryptographic format constraints, and state them as a separate concept rather than secretly treating them as password-strength checks.
 
-The Members page is a searchable, role-filtered account directory. Requests live in a separate review tab. A member detail page has an expandable Devices section for device certification, approval, revocation, generations, and diagnostic IDs. Actions explicitly identify account-wide versus device-specific consequences.
+### 5.2 Server profile and appearance
 
----
+Show an understandable editor for **name, description, icon, and banner** when implemented. Mirror the screenshot's idea of a live server preview. File selection, crop/position, preview, upload, removal, cancellation, save, failure, authoritative refresh, and restart persistence are parts of the same feature.
 
-## 7. Roles and permissions: Discord-familiar, Cords-authoritative
+Host URL, signing key, and trust fingerprint are immutable identity information with appropriate copy/verification actions, not cosmetic profile fields. A presentation change must not modify the trust identity.
 
-### 7.1 Role-management surfaces
+Optional tags, games, traits, engagement metrics, and promotional pages appear **only** if Cords has real data and intentional product requirements; the screenshot does not authorize them automatically.
 
-Use familiar workflow options backed by the **same mutation path**:
+### 5.3 Member administration
 
-- In a member's profile: colored role chips + searchable authorized add/remove picker.
-- In Members administration: select an account; inspect/change roles.
-- In Roles administration: select a role; manage its assigned accounts.
+Use a genuinely wide **directory table**, with verified account avatar/name, membership facts the server actually knows, role chips, search, sorting, selections, and context actions. Do not invent joined-Discord dates, online status, or recruitment signals. A selected row opens member details and supported administrative operations.
 
-### 7.2 Two-pane role editor
+Show loading, no results, genuinely zero admitted members, insufficient permission, and fetch failure differently. Bulk moderation actions require understandable eligibility and precise confirmation.
 
-Role hierarchy on left; on right tabs/sections for **Display**, **Permissions**, and **Members**. Drag reorder where safe and provide keyboard up/down controls. Persist numeric priorities in backend without forcing admins to type them. Show role color/description/member grouping and appropriate live preview. Keep the implicit default role and owner identity visibly distinct.
+### 5.4 Roles and permission editor
 
-### 7.3 Security semantics
+Prefer a hierarchy/list on the left and a contextual editor on the right with **Display**, **Permissions**, and **Members**. Include Create Role, search, role color, count, edit, member assignment, reorder where authorized, and delete where supported. Support keyboard reordering when drag-and-drop exists.
 
-Do not silently substitute Discord permission resolution for Cords':
+**Cords semantics outrank visual convention:** `$default` is implicit for admitted accounts; documented `$admin` → `$moderator` inheritance is explicit, while visual priority alone does not create inheritance. Owner authority remains independent. Channel/category policies follow the actual **Inherit / Allow / Deny** resolver and precedence rules. Assigning a role, editing a role, and managing encryption membership require distinct authorization where specified.
 
-- `$default` implicit for admitted accounts.
-- Explicit `$admin` → `$moderator` inheritance where documented; hierarchy order alone is **not** inheritance.
-- Owner authority is independent of roles.
-- Channel/category override resolution follows the actual Cords evaluator, including its specified deny precedence and visibility boundary.
-- Assignment and role-definition editing are distinct permissions; enforce hierarchy and prevent self-escalation.
-- Server-role grants and channel/category `Inherit / Allow / Deny` controls are represented according to **real policy semantics**, not superficial uniform toggles.
-- An effective-capabilities view may explain permissions but must not become a second authoritative evaluator in QML.
+A role editor must not visually advertise preparatory/display roles as enforced RBAC until verified activation. Conversely, remove obsolete warnings after enforced behavior is proven.
 
-### 7.4 Incomplete role states
+### 5.5 Access, invites, applications, and rules
 
-If RBAC activation is genuinely incomplete, do not claim saved presentation roles actively enforce permissions. Conversely, once validated enforcement ships, remove obsolete preparatory warnings. Visible role color isn't proof of MLS enrollment. The server decides every privileged mutation.
+Separate **how an account joins** from **what it must acknowledge before participating**.
 
----
+- Join choices may include **Invite only**, **Apply to join**, or **Discoverable**, but each is rendered as an actual choice only if its backing infrastructure and policy exist.
+- Invitations need real creation, copy/share, expiry/limit where supported, listing, and revocation.
+- Application-required admission needs a real submit → persist → admin-review → approve/reject → client-state transition workflow.
+- Rules acknowledgement is a distinct control. An editable rules list includes Add, Edit, Remove, Reorder, Preview, Cancel, and Save only when all are operational; enforcement is server-authoritative.
+- Age gating is NOT YET unless a genuine policy and enforcement model exists; do not copy a meaningless Discord toggle.
 
-## 8. Server administration and settings
+**Pending admission:** never show `CORDS_APPROVAL_PENDING: HTTP 403 Forbidden` as the primary UI. Show **“Waiting for administrator approval”**, explain which server and what happens next, allow a real refresh/status check, and transition after approval or denial. Pending applicants are not public admitted members.
 
-### 8.1 Layout
+**Administrator Requests:** display pending applications with verified requesting identity, submission time, meaningful details where supported, Approve/Reject, refresh, permissions, loading/empty/error states. An empty list cannot silently conceal a failed fetch.
 
-Use a clear settings shell: left section navigation, one primary scroll region, predictable header, Save/Cancel or per-section autosave with honest persistence. Avoid nested full-height scrolling panes and overlapping dialogs. Keep dense technical information in Advanced, not as the opening screen.
+### 5.6 Moderation and advanced/operator tasks
 
-Sections MAY include Overview, Members, Requests, Roles, Channels/Categories, Invites, Moderation, Audit, Notifications, Advanced, and Ownership, but ONLY when backed by functioning content. Unsupported sections do not get decorative navigation entries.
+When supported, expose kick, ban/unban, timeout, device revocation, own/moderator deletion, and audits in context-specific menus/pages. Distinguish public account consequences from device-specific ones and from MLS-related pending changes. Confirm destructive actions; do not promise remote erasure of content users may have retained.
 
-### 8.2 Overview and presentation
-
-- **Display name**, **description**, **icon**, **banner**: editable with full picker, crop/preview, upload, validate, persist, remove, and authoritative refresh if implemented and authorized.
-- **Server URL/origin, signing key, fingerprint**: stable identity data; read-only, selectable/copyable, with trust verification available.
-- Presentation metadata suitable for invitation previews MAY be publicly readable under bounded server policy; this does not expose membership/private policies.
-- Asset upload storage is independent from encrypted chat-message attachments; restrict sizes/frames/dimensions and handle replacement cleanup.
-- Show join policy as intelligible human text; only enable editing when the server actually supports changing it.
-- After Save, update server rail/header and other relevant surfaces. No silent reversion on restart.
-
-### 8.3 Channel management
-
-Separate ordinary edits (name, category, supported description, policy) from membership/MLS state and irreversible lifecycle operations. A channel's confidentiality mode is immutable for its identity. Replacement or authenticated succession to a new channel is NOT a normal Save on a dropdown.
-
-An encrypted channel pending removal commits is accurately shown as temporarily unable to accept new application messages; unrelated channels keep functioning. If no eligible committer remains, a permissioned, explicit succession workflow can create a *new* group identity without pretending to recover its old cryptographic state/history. Local archives may differ by device.
-
-### 8.4 Moderation and deletion
-
-Kick, ban/unban, timeout/removal, and own-message/moderator deletion require the right authority and precise targets. Show sanctions and pending MLS consequences separately. Durable tombstones make removed messages stay removed after reconnect, but the UI must never promise remote erasure of screenshots, exports, or previously retained plaintext.
-
-### 8.5 Advanced/operator details
-
-Security details are available but progressively disclosed: account identity, device approval, server pin, MLS enrollment, retention, event revisions, diagnostics, and migration/recovery state. User-facing language describes practical consequences first, exact protocol terms second.
+Technical diagnostics, server signing identity, MLS state, device approvals, event revisions, retention, and recovery/succession belong in clearly labeled **Advanced / Info** surfaces. Explain practical consequences first, jargon second. Hosting/machine management is an entirely different authority domain and should never be silently included in a community moderator's tools.
 
 ---
 
-## 9. Synchronization, unread state, and local notifications
+## 6. People, roles, mentions, and media
 
-### 9.1 Client operation
+### 6.1 Verified public identity
 
-All eligible joined servers of an **unlocked** account continue synchronizing while the app runs. Selected server/channel changes only the visible workspace. Use independent session/cursor/retry state, bounded fairness/concurrency, WebSocket wakeups and incremental fetch. Offline or blocked servers must not freeze healthy servers or the Qt event loop.
+One public row and one profile popout represent **one admitted account**. The displayed name and avatar derive from the canonical signed account-level profile. Server-scoped roles do not mutate that identity. Keep device details expandable and suitably authorized, not part of normal social identity presentation.
 
-### 9.2 Native notifications
+A server might not immediately possess the newest signed revision from another independently hosted server. Show the latest *verified available* record; do not fabricate updates, resolve conflicts by arrival time, or imply implicit federation. The Rust core implements validation/merge rules; QML renders the resulting verified snapshot.
 
-Notifications are decided in the Rust client core **after authorized retrieval and, for encrypted content, authenticated decryption**. The native Qt/platform layer only presents approved candidates and handles safe clicks/navigation. Do not build a plaintext server-side notification router.
+### 6.2 `$` roles and `@` users
 
-Offer **All Messages** (default), **Mentions Only**, **Nothing**, server/channel overrides, mute, app Do Not Disturb, and hidden previews by default. Suppress own-account messages across devices, currently visible focused chat, historical first-sync, duplicates, deleted/inaccessible messages, and locked content. Read/unread state is independent of notification deduplication state. Don't promise alerts when the app is fully stopped unless a separate supported background process exists.
+`@name` and `$role` are deliberately distinct user-facing concepts. Keep distinct autocomplete headings, symbols, entity chips, and announcement/notification descriptions. Resolve mentions to verified account/role IDs and the real structured-message semantics where supported. Literal plain text containing `@` or `$` must not silently grant permissions, trigger role actions, or claim structured mentions.
 
-### 9.3 Role mentions
+Role-color styling identifies membership or grouping; it is not evidence of permission to view or decrypt a channel. Mention notification eligibility is determined by the core after authorized content processing.
 
-Structured direct-account, stable role ID, and everyone mentions are authenticated with message content; in encrypted channels they are decrypted locally. Role membership helps decide whether a **role mention targets this account**. Roles do NOT create a separate permission to receive ordinary notifications. Don't imply server enforcement of encrypted mention contents without a protocol that actually provides it.
+### 6.3 JPEG XL account and server assets
 
----
-
-## 10. Native Qt interaction, accessibility, and performance
-
-### 10.1 Focus, keyboard, and assistive technology
-
-- Use proper Qt Quick Controls or explicit `Accessible.role`, `Accessible.name`, `Accessible.description`, and accessible actions for custom items. Mouse click handlers alone do not make a control accessible.
-- Full keyboard reachability, visible focus ring, coherent Tab/Shift-Tab order, and correct Enter/Space activation are required.
-- `Escape` dismisses topmost cancellable popout/dialog; destructive confirmations are not implicitly accepted. Restore focus to the invoking control.
-- Context menus appear within the current window and offer keyboard access. Avoid modal stacks and invisible offscreen controls.
-- Text scales appropriately; screen reader labels must identify both action and target where necessary.
-- Respect reduced motion and offer an animation disable preference; don't use animation or color as the only signal.
-
-### 10.2 Qt-specific list and rendering discipline
-
-- Use `ListView` and model-backed delegates for long messages/members/channels; avoid constructing thousands of permanent QML objects.
-- `reuseItems` can recycle delegates. Always reset local ephemeral state when reused and pause animated frames while pooled/offscreen.
-- Handle variable-height messages carefully; history prepend, scrolling to an event, and reply/menu anchors must not jump unpredictably.
-- Decode/process media off-thread with bounded memory and cancellation. Qt's scene graph and model updates obey their thread requirements.
-- Test the actual image renderer with static and animated JXL; static thumbnails should not force every offscreen item into animation playback.
-- Do not block the UI waiting for an unresponsive server, slow database, animation decode, or key operation.
-
-### 10.3 Responsive rules
-
-- **Wide desktop:** four areas by default; member rail optional.
-- **Narrow desktop:** member/Info rail overlays; channel rail resizable or collapsible while conversation stays usable.
-- **Smallest supported window:** no clipping of composer, settings Save/Cancel, role menus, or destructive-confirmation buttons. A measured minimum window size is acceptable if justified and documented.
-- **High-DPI and large text:** layout adapts; icons and click targets remain usable. Treat user font scaling separately from physical-pixel density.
-- **Mobile future:** stacked screens/drawers, not compressed desktop columns; preserve concepts rather than fixed coordinates.
-
-### 10.4 Validation toolkit
-
-- Run Qt/QML static analysis (including `qmllint`/`qmlformat` where applicable), compile/resource checks, and **Qt Quick Test** for controls, focus, popouts, and state changes.
-- Test typed Rust/Qt bridge commands, data model lifecycle, threading, error propagation, cancellation, and account switching.
-- Use actual server integration fixtures for persisted edits, RBAC denial, MLS state, and background synchronization; mock-only tests are not release proof.
-- Capture screenshots and interaction recordings from packaged native **Windows, Linux, and macOS** builds at normal/narrow/high-DPI/text-scale settings.
-- Validate native desktop notifications, image animation, file dialogs, OS integration, and accessibility separately per OS. A successful cross-compile isn't a runtime result.
-- Review custom Qt Quick style upgrade compatibility, platform graphics backends, packaging dependencies, and Qt licensing at release gates.
+- Support the existing bounded static and animated JXL pipeline using native decoding and Qt rendering. Never assume that QML `Image` automatically supports all animated JXL semantics.
+- Use shared cached decoded *still* data for repeated instances of the same account/image revision. **Playback clocks are independent per visible instance.**
+- A message-associated avatar animates while its **whole message row** is hovered; a member avatar animates while its **member row** is hovered. Leaving the region restores its still frame. Expanded profile avatars animate while displayed if permitted by reduced-motion preferences and encoded loops.
+- Preserve frame timing, compositing, alpha, loops, crop/position, cancellation, and memory limits. Offscreen/recycled delegates release playback resources.
+- Server icon/banner publication is separate from signed account-profile publication and never alters server identity/trust pins.
 
 ---
 
-## 11. Acceptance scenarios
+## 7. Copywriting and state communication
 
-A screen or checkpoint is not complete until the applicable scenario works with real services (or a clearly documented local-only setting) and has evidence:
+**Use plain language for normal states and technical detail on demand.** Do not teach users the internal API simply because it was easier to expose an error string.
 
-1. **Open and navigate:** launch native Qt client, choose server and channel, read/send permitted messages, and maintain expected scroll/focus.
-2. **Familiar shell:** wide layout shows server rail, channel tree, chat, and public member list; toggling Members/Info works; narrow layout keeps composer accessible.
-3. **Account identity:** one account with multiple devices is shown once; profile popout is consistent everywhere; verified avatar/name updates propagate after synchronization.
-4. **Roles:** assign via profile, member directory, and role view; role grouping/colors update; unauthorized API calls still fail; ordering is keyboard-accessible.
-5. **Member requests:** review/approve/reject without leaking pending accounts into public sidebar.
-6. **Moderation:** kick, ban/unban, timeout, own/moderator deletion show proper feedback; tombstones survive reconnect; MLS consequences are not misrepresented.
-7. **Encrypted revocation:** affected channel fences when needed, unrelated channel stays usable; recovery/succession clearly distinguishes new cryptographic identity.
-8. **Server presentation:** rename, description, icon, and banner edits work (when supported) via real validation and durable storage; cosmetic changes do not change trust identity.
-9. **Native media:** static and animated profile/server imagery decodes, crops, plays, pauses, and respects reduced motion on each supported OS.
-10. **Background sync:** server B receives new content while server A is selected; an unavailable server C doesn't stall either.
-11. **Notifications:** app running/unlocked receives a new message and classifies it correctly; no historical, duplicate, own-account, visible-chat, or forbidden previews.
-12. **Keyboard and accessibility:** ordinary chat, member profile, role picker, menu, settings Save/Cancel, and error recovery are operable without a pointer.
-13. **Window variants:** normal desktop, narrow window, and large-font/high-DPI screenshots have no clipped composer, inaccessible menus, or inconsistent rail alignment.
-14. **No false affordances:** every apparent control either works, clearly communicates an actionable limitation, is read-only, or has been removed.
-15. **Architecture:** native Qt scene renders the UI without an embedded browser; Rust client core remains the source of protocol/security state.
+| Condition | Primary language | Appropriate action |
+| --- | --- | --- |
+| Application awaiting approval | **Waiting for administrator approval** | Check status, view relevant server details |
+| Request denied | **Your request to join was denied** | Return to server selection / contact staff where applicable |
+| Offline | **Can't reach this server** | Retry, inspect connection details |
+| Locked vault | **Account locked** | Unlock |
+| History not yet fetched | **Loading messages…** | Wait / Retry if failed |
+| No messages confirmed | **No messages yet** | Start a conversation if authorized |
+| Local cache empty | **Messages haven't been loaded on this device** | Synchronize/load when possible |
+| Not authorized to post | **You can't send messages here** | Explain relevant permission/state |
+| Save conflict | **This changed elsewhere** | Review/reload/reconcile |
+| No pending applications | **No membership requests awaiting review** | No artificial action necessary |
+| Failed admin request fetch | **Couldn't load membership requests** | Retry; diagnostics if needed |
 
----
+The exact copy may vary with context, but it MUST correctly distinguish `Loading`, `Empty`, `Disconnected`, `Locked`, `Pending approval`, `Denied`, `No permission`, `Pending cryptographic transition`, `Unsupported server version`, `Conflict`, `Failed`, and `Succeeded` where relevant.
 
-## 12. Workflow for Codex and contributors
+Status belongs near its object or as a temporary, actionable notification. Do not permanently occupy prime sidebar space with “Membership approved” or “Synchronize” when normal operation can happen silently. A tooltip or Info surface can show more detail.
 
-1. **Read this file, relevant ADRs/security contracts, and actual code.** Do not assume planned milestones are implemented.
-2. **Audit every visible action** in the targeted screen. Mark working, broken-but-supported, read-only, or out of scope.
-3. **Confirm target architecture:** Qt 6 Quick/QML, Cords custom style, typed Rust bridge. Do not implement new frontend features in Tauri/Svelte when building the replacement native client.
-4. **Deliver vertical slices**, not screenshots: QML control → typed client operation → authoritative result → refreshed shared model → failure handling → tests.
-5. **Preserve existing frontend while migrating** until the native implementation has a validated replacement. Do not remove working features simply to claim WebView elimination early.
-6. **Keep each checkpoint independently testable:** design tokens/shell; core bridge; chat; public members/profiles; administration/RBAC; media; notifications; visual/accessibility refinement. Dependencies may alter order.
-7. **Record evidence** from actual native runs. Separate completed, partial, and unverified behavior.
-8. **Update this design contract** when a real product decision changes, not to rationalize an accidental regression.
-
-### 12.1 Running implementation ledger
-
-| Surface | Contract | Actual implementation | Evidence / next blocker |
-| --- | --- | --- | --- |
-| Qt shell and Cords style | Specified | **Partial native implementation** | MSVC/Qt 6.10.3 executable; real-service Windows captures at 1180x760, 680x520 and 150% scaling |
-| Server/channel rail | Specified | **Partial** | Core trust/selection, channel lifecycle and persisted notification mute wired; categories and unread remain incomplete |
-| Conversation/composer | Specified | **Partial** | Independent TLS/PostgreSQL send/receive/restart and bounded 100–300-row history pass; native retained scroll anchors and Latest pass; unread state remains |
-| Public member sidebar | Specified | **Partial** | Real directory and automatic canonical name/JXL propagation pass two-vault TLS acceptance and native Windows captures; larger directory and role grouping remain |
-| Canonical profile/popouts | Specified | **Partial** | Signed name edit and propagation, shared JXL still images and independent hover/profile playback pass native Windows tests (the new interaction policy has not been retested on Linux); image editor and conflict resolution remain |
-| Members/requests/devices | Specified | **Partial** | Typed core commands and QML views; complete interaction/denial acceptance remains |
-| Roles and channel policy | Specified | **Partial** | Signed catalog/assignment API ported; preserve the server's current policy activation flag and enforcement boundaries |
-| Moderation and lifecycle | Specified | **Partial** | Supported departure/archive/burn and channel succession wired; moderation/deletion APIs remain gaps |
-| Server presentation/media | Specified | **Incomplete** | Native JXL renderer tested independently; server asset publication/editing remains unavailable |
-| Background sync/notifications | Specified | **Partial** | Real TLS classification, hidden previews, mute persistence and Rust click targets pass; OS presentation unavailable/suppressed in this run, unavailable-third-server and other OS adapters remain |
-| Accessibility and platform packaging | Specified | **Partial platform evidence** | Windows installed-tree real TLS startup without SDK PATH/source migrations; Linux native package/headless startup and native tests pass; interactive Linux/macOS runtime pending |
-
-Evidence is dated 2026-10-16; the detailed ledger is
-`docs/plans/qt-desktop-migration.md`. “Partial” does not satisfy the completion
-gate. Windows event tests inject a native session-lock event against a stalled
-TLS peer; actual workstation lock/suspend and clean-machine deployment remain
-separate checks. Tauri remains temporarily for parity comparison and has not
-passed its removal gate.
-
-### 12.2 Design decision log
-
-Record each change as `date — decision — rationale — affected surfaces`.
-
-- **2026-10-16 — Native desktop layout refinement:** Use dedicated full-window account/server settings with left section navigation, bounded 740 px forms, and Close/Escape return to chat. Apply quiet navigation rows, compact shared controls, a slate Cords palette, and explicit role editing to the native surfaces. Discord screenshots inform layout and hierarchy, without adding unsupported features or changing Cords authority. Windows fixture captures cover 680 px and 1920 px layouts; real-service and other-platform acceptance remain separate.
-
-- **2026-10-15 — Initial Cords design contract:** Familiar Discord-inspired navigation; account-centric members and roles; technical conversation info on demand; honest UI controls; client-local notifications; server-authoritative RBAC/MLS.
-- **2026-10-15 — Native Qt direction:** Qt 6 Quick/QML with a custom Cords style replaces Tauri/Svelte as the **target** interface framework; Rust remains authoritative for core behavior. Existing frontend can remain during validated transition.
-- **2026-10-15 — Discord feedback synthesis:** Preserve the familiar four-region desktop model and contextual interactions; prioritize readable density, distinct server icons, optional panel sizing, stable control positions, and avoidance of visual clutter. Feedback is qualitative and includes both criticism and praise of redesigns.
+A control that cannot operate must either disappear, become honestly read-only, or be disabled **with a useful reason** when discovering its existence is valuable. Never show success until the authoritative operation succeeded.
 
 ---
 
-## 13. Reference implementation documentation
+## 8. Keyboard, accessibility, and desktop interaction
 
-Use these as **technical references**, not as instructions to make Cords visually imitate Qt's stock controls:
+- All ordinary chat, navigation, profile, menus, settings, and administrative actions MUST be operable by keyboard. Provide visible focus rings and sensible Tab/Shift+Tab order.
+- Enter/Space activate the focused control according to convention. Escape closes the topmost cancellable menu, popout, or dialog and returns focus to its trigger. Escape never implicitly confirms destructive operations.
+- Menu placement is constrained to the usable window/screen; do not spawn popouts where they cannot be reached.
+- Custom QML controls define the proper `Accessible.role`, `Accessible.name`, `Accessible.description`, and actions. Mouse-only handlers do not meet accessibility acceptance.
+- Search and large lists support keyboard selection, announcement of useful counts, and reliable focus after updates.
+- Do not communicate hover-only actions solely through animation or color. Expose equivalent focus/context-menu actions.
+- Respect reduced motion, text scaling, contrast requirements, platform high-DPI behavior, and installed screen-reader backends where available.
+- Persist sensible user preferences without rearranging common controls unexpectedly. Users should not have to relearn channel navigation after changing themes.
+
+---
+
+## 9. QML and Rust implementation boundary
+
+This HIG is primarily a **user interface specification**. Technical implementation follows existing architecture and ADRs, with these constraints relevant to UI correctness:
+
+- **Qt 6 Quick/QML** implements scene/layout, custom styling, animations, local presentation and input. Use Qt Quick Controls/Templates or a coherent Cords style; do not rely on raw OS-native default visual themes.
+- The typed **CXX-Qt / QObject bridge** exposes immutable identifiers, typed snapshots, authorized commands, async progress/results, and cancellation. Rust owns protocol, synchronization, authentication, key material, encrypted persistence, policy decisions, and profile validation.
+- Never put authentication secrets, MLS state, or server-authoritative authorization in QML properties. QML cannot become a second permission evaluator.
+- Do not block the GUI thread on networking, database access, encryption, image decoding, or remote services.
+- Use `ListView`/proper Qt models and recycled delegates for substantial lists; reset ephemeral delegate state on reuse. History preprends, scroll anchors, profile popouts, and animation state must remain stable.
+- Scope drafts, search, selections, focus restore, delayed requests, and results by account/server/channel. Locking or switching vaults immediately invalidates former presentation data.
+- All eligible joined servers of an unlocked account continue background synchronization even when another server is selected. Errors on one server cannot freeze the rest.
+- Native notifications are classified by the Rust core only after authorized fetch/decryption. Suppress historical, duplicate, own-account, visible-chat, deleted, inaccessible, and locked-content notifications. No fake presence from connected devices.
+- Notification settings should support supported All Messages / Mentions Only / Nothing choices, server/channel overrides, and mute without conflating unread state with OS notifications.
+- Desktop OS-specific window controls, file pickers, system notifications, and packaging may vary, but the Cords interaction model must remain recognizable on Windows, Linux, and macOS. Android is a future form factor, not proof of a current mobile client.
+
+---
+
+## 10. Visual and behavioral acceptance
+
+### 10.1 Screenshot reference suite
+
+The provided references establish canonical *types of screens*, not an obligation to copy their copyrighted visual assets. Maintain repository-approved captures or equivalent accessible design references for:
+
+| Reference | What a reviewer compares |
+| --- | --- |
+| Main chat (current Cords baseline + desired Discord-level target) | Four-region layout, density, rail hierarchy, message treatment, composer, member identities, contextual actions |
+| Discord account settings | Persistent navigation, group headings, settings rows, readable content width, edit buttons, status semantics |
+| Discord server profile | Bounded editor, live preview, icon/banner controls, balanced column layout |
+| Discord member management | Full-width table, search/sort, compact cells, role chips, contextual row actions |
+| Discord roles | Searchable hierarchy, member counts, create/edit operations, role colors, contextual editor |
+| Discord access and rules | Join-policy chooser, separate acknowledgement, clear cards, editable rule list |
+
+**Do not claim reference comparison was performed without rendering Cords and actually inspecting the images.** Comparing screenshot proportions, spacing, and behavior is a design test, not a license to copy Discord trademarks.
+
+### 10.2 Required capture states
+
+For each touched major surface, capture both normal and interaction states as applicable: normal, hovered/focused, selected, menu/popover open, dialog open, validation error, loading, permission denied, network error, and empty-but-successful data. Test account/server/channel switching and state restoration.
+
+Use at least **1440×900**, **1024×768**, and **150% display scaling** for current Windows acceptance, and add narrow/minimum-window and large-font variants. A separately packaged Windows smoke test is needed; headless/offscreen QML rendering does not replace native mouse/keyboard verification. Linux and macOS support remain unverified until their actual native runtime checks are performed.
+
+### 10.3 Required behavioral scenarios
+
+1. Launch, select an account/server/channel, send/read permitted messages, preserve scroll anchors and focus.
+2. Verify server, channel, member, and conversation panels at wide/narrow sizes; Members/Info replacement works.
+3. Account/profile avatar and name updates reach every appropriate visible surface after verified synchronization.
+4. Message grouping, hover tools, profile clicks, context actions, search scope, and composer shortcuts work.
+5. Account switching never leaks old server lists, drafts, identity, or stale asynchronous results.
+6. Admin can see and approve/reject a real pending application using an independent second vault; requester sees corresponding state.
+7. Role identity/color/grouping and supported assignments update through the same server operation, with forbidden mutations rejected by the server.
+8. Server appearance edits preview and persist without changing server signing identity.
+9. Animations use correct per-instance JXL playback and stop when hidden/offscreen or reduced motion applies.
+10. Background sync on server B works while server A is selected; unavailable server C does not stall either.
+11. Keyboard and accessibility controls reach every important operation; Escape/focus restoration and dialog guards work.
+12. No apparent action is inert, no pending state is described as an unexplained crash, and no technical ID replaces a verified user name by default.
+
+### 10.4 Definition of done for each screen
+
+Maintain a short action inventory in the implementation ledger (not here): **element → user expectation → real core/server/local action → required authority → states/errors → validation evidence**. A screen passes only when its visual composition, behavior, correctness, and accessibility have all been validated. A working backend without an accessible UI and a pretty QML mockup without a working backend are both incomplete.
+
+---
+
+## 11. HIG governance
+
+- A change that affects Cords' appearance, layout, input conventions, shared component behavior, or user-facing copy **must be reconciled against this HIG**.
+- Small bug fixes that restore the written design do not need a policy rewrite.
+- Intentional changes require: date, decision, motivation, alternatives considered when meaningful, affected surfaces, and updated reference captures/tests.
+- Keep implementation status, evidence, blockers, and migration gates in `docs/plans/qt-desktop-migration.md` or its successor, not mixed into these enduring rules.
+- Changes to `$` role semantics, account/device identity, security policy, or MLS are protocol/product decisions first. This HIG may reflect them only after the governing specification changes.
+
+### Design decisions
+
+- **2026-10-19 — HIG-first presentation:** Make `UI-DESIGN.md` the permanent visual and behavioral master, with explicit charcoal reference palette, component geometry, screen-specific UI patterns, Cords `$` role identity, and visual acceptance gates. Move ephemeral milestone status out of the master design rules.
+- **2026-10-16 — Full-window settings pattern:** Account/server settings use left navigation, bounded forms, close/Escape return to chat; administration tables may expand to use width.
+- **2026-10-16 — JXL instance animation:** Share still-image decode by verified account/image revision while keeping hover/profile animation playback clocks independent per visible instance.
+- **2026-10-15 — Native interface direction:** Qt 6 Quick/QML custom Cords style; typed Rust bridge; no embedded browser shell.
+- **2026-10-15 — Familiar interaction structure:** Discord-like four-region desktop mental model with Cords identity, server independence, and protocol-specific semantics.
+
+### Technical references
 
 - [Qt Quick](https://doc.qt.io/qt-6/qtquick-index.html)
 - [Customizing Qt Quick Controls](https://doc.qt.io/qt-6/qtquickcontrols-customize.html)
-- [Styling Qt Quick Controls](https://doc.qt.io/qt-6/qtquickcontrols-styles.html)
-- [Qt Quick best practices](https://doc.qt.io/qt-6/qtquick-bestpractices.html)
 - [Qt Quick ListView delegate reuse](https://doc.qt.io/qt-6/qml-qtquick-listview.html)
 - [Accessibility for Qt Quick](https://doc.qt.io/qt-6/accessible-qtquick.html)
 - [Qt Quick Test](https://doc.qt.io/qt-6/qtquicktest-index.html)
 - [Asynchronous image providers](https://doc.qt.io/qt-6/qquickasyncimageprovider.html)
 
-**Final principle:** Make Cords' ordinary chat interactions boringly predictable. The engineering behind it can be sophisticated; the interface should not make people pay for that sophistication in clicks, clutter, or guesswork.
+**Final rule:** Cords should feel so familiar that people can just chat. The complexity of self-hosting, permissions, cryptography, and synchronization must not be paid for in unnecessary clicks, strange layout, misleading labels, or dead buttons.

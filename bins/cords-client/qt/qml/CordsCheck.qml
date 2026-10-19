@@ -6,19 +6,22 @@ CheckBox {
     spacing: 10
     implicitHeight: Math.max(Theme.controlHeight, contentItem.implicitHeight + topPadding + bottomPadding)
     Accessible.name: text
+    hoverEnabled: true
     indicator: Rectangle {
         implicitWidth: 20
         implicitHeight: 20
         x: control.leftPadding
         y: (control.height - height) / 2
-        color: control.checked ? Theme.accent : Theme.rail
+        color: control.checked ? Theme.accent : control.hovered ? Theme.hover : Theme.input
         border.width: control.visualFocus ? 2 : 1
-        border.color: control.visualFocus ? Theme.focus : Theme.border
+        border.color: control.visualFocus ? Theme.focus : Theme.controlBorder
         radius: 4
-        Text {
+        opacity: control.enabled ? 1 : 0.55
+        CordsIcon {
             anchors.centerIn: parent
-            text: control.checked ? "✓" : ""
-            color: Theme.onAccent
+            name: "check"
+            visible: control.checked
+            color: Theme.textOnAccent
         }
     }
     contentItem: Text {

@@ -28,6 +28,40 @@ fn open(path: &std::path::Path) -> Result<Box<Desktop>> {
     )
 }
 #[test]
+fn appearance_preferences_validate_and_survive_sealed_restart() -> Result<()> {
+    let state = tempfile::tempdir()?;
+    let desktop = open(state.path())?;
+    wait(&desktop, |_| true)?;
+    let password = "Mango Lantern verification orchard 73!";
+    desktop.create_account("Appearance".into(), password.into(), false)?;
+    let created = wait(&desktop, |view| view.completed == 1)?;
+    assert!(created.error.is_empty(), "{}", created.error);
+    assert!(created.unlocked);
+    let account = created.account;
+    let mut preferences = created.preferences;
+    assert_eq!(preferences.text_scale_percent, 100);
+    assert_eq!(preferences.server_icon_size, 48);
+    preferences.text_scale_percent = 150;
+    preferences.server_icon_size = 56;
+    desktop.save_preferences(preferences.clone())?;
+    let saved = wait(&desktop, |view| view.completed == 2)?;
+    assert!(saved.error.is_empty(), "{}", saved.error);
+    preferences.text_scale_percent = 0;
+    desktop.save_preferences(preferences)?;
+    let rejected = wait(&desktop, |view| view.completed == 3)?;
+    assert!(rejected.error.contains("Text size"));
+    assert_eq!(rejected.preferences.text_scale_percent, 150);
+    drop(desktop);
+    let reopened = open(state.path())?;
+    wait(&reopened, |_| true)?;
+    reopened.unlock_account(account, password.into())?;
+    let restored = wait(&reopened, |view| view.completed == 1)?;
+    assert!(restored.error.is_empty(), "{}", restored.error);
+    assert_eq!(restored.preferences.text_scale_percent, 150);
+    assert_eq!(restored.preferences.server_icon_size, 56);
+    Ok(())
+}
+#[test]
 fn existing_vault_restart_password_failure_and_lock_clear_plaintext() -> Result<()> {
     let state = tempfile::tempdir()?;
     let password = "a long native vault acceptance phrase 42";
@@ -284,14 +318,24 @@ fn native_avatar_edit_persists_signed_profile_and_removal() -> Result<()> {
     assert!(saved.error.is_empty(), "{}", saved.error);
     assert!(saved.avatar_draft.id.is_empty());
     assert_eq!(saved.profile.shape, "square");
-    let encoded = saved.profile.image.strip_prefix("data:image/jxl;base64,").context("missing JXL image")?;
+    let encoded = saved
+        .profile
+        .image
+        .strip_prefix("data:image/jxl;base64,")
+        .context("missing JXL image")?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
     let output = cords_avatar_codec::validate(&bytes)?;
     assert_eq!(output.frames, original.frames);
     assert_eq!(output.loops, original.loops);
     for (before, after) in original.durations.iter().zip(&output.durations) {
-        assert_eq!(u64::from(*before) * u64::from(original.ticks_per_second_denominator) * u64::from(output.ticks_per_second_numerator),
-            u64::from(*after) * u64::from(output.ticks_per_second_denominator) * u64::from(original.ticks_per_second_numerator));
+        assert_eq!(
+            u64::from(*before)
+                * u64::from(original.ticks_per_second_denominator)
+                * u64::from(output.ticks_per_second_numerator),
+            u64::from(*after)
+                * u64::from(output.ticks_per_second_denominator)
+                * u64::from(original.ticks_per_second_numerator)
+        );
     }
     drop(desktop);
     let desktop = open(state.path())?;
@@ -322,6 +366,11 @@ fn native_avatar_edit_persists_signed_profile_and_removal() -> Result<()> {
     desktop.save_avatar(prepared.avatar_draft.id, 0.5, 0.5, 1.0, "circle".into())?;
     let png_saved = wait(&desktop, |v| v.completed == 4)?;
     assert!(png_saved.error.is_empty(), "{}", png_saved.error);
-    assert!(png_saved.profile.image.starts_with("data:image/jxl;base64,"));
+    assert!(
+        png_saved
+            .profile
+            .image
+            .starts_with("data:image/jxl;base64,")
+    );
     Ok(())
 }

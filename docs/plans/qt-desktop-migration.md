@@ -1,5 +1,9 @@
 # Native Qt desktop migration
 
+Current HIG overhaul work and evidence are tracked in
+[the native HIG implementation ledger](qt-hig-overhaul.md). Its source-verified
+observations supersede older status snapshots below; the removal gates remain.
+
 Date: 2026-10-16. User-authorized replacement of Tauri/Svelte. This is an
 implementation ledger, not a claim of parity or platform acceptance.
 

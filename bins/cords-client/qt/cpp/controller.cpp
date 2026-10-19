@@ -13,7 +13,7 @@ template<class RowsType, class Convert> QList<QVariantMap> rows(const RowsType &
     for (const auto &value : values) result.push_back(convert(value)); return result;
 }
 QVariantMap profile(const cords::Profile &p) { return {{"account", qs(p.account)}, {"name", qs(p.name)}, {"image", qs(p.image)}, {"shape", qs(p.shape)}, {"heads", strings(p.heads)}, {"conflicts", strings(p.conflicts)}, {"pending", qs(p.pending)}}; }
-QVariantMap preferences(const cords::Preferences &p) { return {{"name", qs(p.name)}, {"theme", qs(p.theme)}, {"compact", p.compact}, {"reducedMotion", p.reduced_motion}, {"disableAnimations", p.disable_animations}, {"showMembers", p.show_members}, {"autoLockMinutes", p.auto_lock_minutes}, {"genericize", p.genericize}, {"hideName", p.hide_name}, {"lockOnSuspend", p.lock_on_suspend}, {"lockOnOsLock", p.lock_on_os_lock}, {"notifications", p.notifications}, {"notificationPreviews", p.notification_previews}, {"doNotDisturb", p.do_not_disturb}}; }
+QVariantMap preferences(const cords::Preferences &p) { return {{"name", qs(p.name)}, {"theme", qs(p.theme)}, {"compact", p.compact}, {"textScalePercent", p.text_scale_percent}, {"serverIconSize", p.server_icon_size}, {"reducedMotion", p.reduced_motion}, {"disableAnimations", p.disable_animations}, {"showMembers", p.show_members}, {"autoLockMinutes", p.auto_lock_minutes}, {"genericize", p.genericize}, {"hideName", p.hide_name}, {"lockOnSuspend", p.lock_on_suspend}, {"lockOnOsLock", p.lock_on_os_lock}, {"notifications", p.notifications}, {"notificationPreviews", p.notification_previews}, {"doNotDisturb", p.do_not_disturb}}; }
 }
 
 Controller::Controller(QString statePath, QString migrations, QString ca, QObject *parent)
@@ -143,7 +143,7 @@ void Controller::deleteRole(QString role, quint64 revision, QString requestId) {
 void Controller::assignRole(QString account, QString role, bool remove, quint64 revision, QString requestId) { submit([&] { m_desktop->assign_role(rs(account), rs(role), remove, revision, rs(requestId)); }); }
 void Controller::saveProfileName(QString name, QStringList heads) { submit([&] { m_desktop->save_profile_name(rs(name), rustStrings(heads)); }); }
 void Controller::savePreferences(QVariantMap p) {
-    submit([&] { m_desktop->save_preferences(cords::Preferences{rs(p["name"].toString()), rs(p["theme"].toString()), p["compact"].toBool(), p["reducedMotion"].toBool(),
+    submit([&] { m_desktop->save_preferences(cords::Preferences{rs(p["name"].toString()), rs(p["theme"].toString()), p["compact"].toBool(), p.value("textScalePercent", 100).toUInt(), p.value("serverIconSize", 48).toUInt(), p["reducedMotion"].toBool(),
         p["disableAnimations"].toBool(), p["showMembers"].toBool(), p["autoLockMinutes"].toUInt(), p["genericize"].toBool(), p["hideName"].toBool(), p["lockOnSuspend"].toBool(), p["lockOnOsLock"].toBool(), p["notifications"].toBool(), p["notificationPreviews"].toBool(), p["doNotDisturb"].toBool()}); });
 }
 void Controller::copy(QString text) { QGuiApplication::clipboard()->setText(text); }

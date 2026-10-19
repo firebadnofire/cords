@@ -33,15 +33,24 @@ ColumnLayout {
         Layout.fillWidth: true
         CordsField {
             id: search
-            placeholderText: "Find a name or device identifier"
+            placeholderText: "Search requesting identities"
             Accessible.name: "Search membership requests"
             Layout.fillWidth: true
         }
-        CordsButton {
-            text: workspace.desktop.busy ? "Working…" : "Refresh"
+        CordsIconButton {
+            objectName: "refreshMembershipRequests"
+            iconName: "refresh"
+            text: "Refresh membership requests"
             enabled: !workspace.desktop.busy && !!workspace.desktop.state.canApprove
             onClicked: workspace.desktop.loadRequests()
         }
+    }
+    CordsLabel {
+        text: filtered.count + (filtered.count === 1 ? " request" : " requests") + (search.text ? " matching this search" : " loaded")
+        visible: !!workspace.desktop.state.requestsLoaded && !!workspace.desktop.state.canApprove
+        color: Theme.muted
+        font.pixelSize: Theme.captionSize
+        Accessible.name: text
     }
     CordsLabel {
         Layout.fillWidth: true
@@ -62,14 +71,16 @@ ColumnLayout {
         clip: true
         reuseItems: true
         model: workspace.desktop.state.canApprove ? filtered : null
-        spacing: 12
+        spacing: 4
         delegate: Rectangle {
             id: request
             required property var row
+            onRowChanged: identityDetails.checked = false
+            ListView.onReused: identityDetails.checked = false
             width: list.width
             height: content.implicitHeight + 24
-            color: Theme.navigation
-            radius: 8
+            color: Theme.input
+            radius: Theme.radius
             ColumnLayout {
                 id: content
                 x: 12
@@ -79,31 +90,49 @@ ColumnLayout {
                     CordsAvatar {
                         name: request.row.name || "Applicant"
                         account: request.row.account
+                        Layout.preferredWidth: 36
+                        Layout.preferredHeight: 36
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        CordsLabel {
+                            text: request.row.name || "Unnamed applicant"
+                            font.weight: Font.DemiBold
+                            Layout.fillWidth: true
+                        }
+                        CordsLabel {
+                            text: "Submitted " + new Date(Number(request.row.requestedAt) * 1000).toLocaleString()
+                            color: Theme.muted
+                            font.pixelSize: Theme.captionSize
+                            Layout.fillWidth: true
+                        }
                     }
                     CordsLabel {
-                        text: request.row.name || "Unnamed applicant"
-                        font.bold: true
-                        Layout.fillWidth: true
+                        text: request.row.status === "pending" ? "Awaiting review" : request.row.status
+                        color: Theme.warning
+                        font.pixelSize: Theme.captionSize
                     }
                 }
                 CordsLabel {
+                    visible: identityDetails.checked
                     text: "Account: " + request.row.account + "\nDevice: " + request.row.id
                     Layout.fillWidth: true
                     color: Theme.secondary
                     wrapMode: Text.WrapAnywhere
                 }
-                CordsLabel {
-                    text: request.row.status + " · " + new Date(Number(request.row.requestedAt) * 1000).toLocaleString()
+                Flow {
                     Layout.fillWidth: true
-                }
-                RowLayout {
+                    spacing: 8
                     CordsButton {
+                        objectName: "approveMembershipRequest"
                         text: "Approve"
                         primary: true
                         enabled: !workspace.desktop.busy && request.row.status === "pending"
                         onClicked: workspace.desktop.approveRequest(request.row.id)
                     }
                     CordsButton {
+                        objectName: "rejectMembershipRequestAction"
                         text: "Reject"
                         destructive: true
                         enabled: !workspace.desktop.busy && request.row.status === "pending"
@@ -120,7 +149,14 @@ ColumnLayout {
                         }
                     }
                     CordsButton {
+                        id: identityDetails
+                        text: checked ? "Hide identity details" : "Identity details"
+                        quiet: true
+                        checkable: true
+                    }
+                    CordsButton {
                         text: "Copy account ID"
+                        quiet: true
                         onClicked: workspace.desktop.copy(request.row.account)
                     }
                 }

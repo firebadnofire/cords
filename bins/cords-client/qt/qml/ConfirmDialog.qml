@@ -21,6 +21,7 @@ CordsDialog {
                 onClicked: dialog.close()
             }
             CordsButton {
+                objectName: "confirmOperation"
                 text: dialog.confirmText
                 destructive: true
                 onClicked: {

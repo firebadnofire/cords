@@ -40,6 +40,9 @@ The normative document set is:
 2. **`KEY-SYSTEM.md`** defines the long-lived cryptographic identity and key architecture: key roles, authority, separation, certification, enrollment, revocation, recovery, rotation, compromise boundaries, and lifecycle requirements.
 3. **Accepted ADRs** record scoped architectural decisions and may supersede a specific requirement in `AGENTS.md` or `KEY-SYSTEM.md` when the superseded requirement is identified explicitly.
 4. **`CHECKPOINT.md`** is the ordered implementation-maturity checklist for an Internet Messaging Service. It does not replace the Cords architecture or phase roadmap. Cords SHOULD satisfy its applicable checkpoints in order unless a documented dependency or product decision justifies otherwise.
+5. **`UI-DESIGN.md`** is the adopted, authoritative Cords Human Interface Guidelines. Contributors MUST consult it before planning or implementing user-facing changes. Protocol, cryptographic, identity, authentication, MLS, and RBAC specifications retain authority over security and operational semantics. Keep temporary implementation status and verification evidence in implementation ledgers, not in the HIG.
+
+For desktop work, accepted ADR 0011 supersedes the Tauri/Svelte choices in sections 1.2 and 5 and framework-specific desktop/build prescriptions with native Qt Quick/QML and a typed CXX/QObject bridge. Historical frontend references below do not authorize restoring the old frontend or embedding it in a browser. Preserve the Rust-owned security boundaries and ADR 0011's functional-parity and native-acceptance gates before removing the legacy implementation.
 
 Repository dissections, status reports, generated onboarding maps, issue descriptions, and implementation notes are descriptive snapshots. They are not normative merely because they describe current code.
 

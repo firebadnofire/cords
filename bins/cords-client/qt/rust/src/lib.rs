@@ -161,6 +161,8 @@ pub mod ffi {
         name: String,
         theme: String,
         compact: bool,
+        text_scale_percent: u32,
+        server_icon_size: u32,
         reduced_motion: bool,
         disable_animations: bool,
         show_members: bool,

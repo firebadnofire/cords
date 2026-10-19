@@ -12,6 +12,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QSignalSpy>
+#include <QJsonDocument>
+#include <QJsonObject>
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -55,16 +57,20 @@ private slots:
         controller.m_state.insert("serverProfile", serverProfile);
         controller.servers()->replace({{{"id", "test-server"}, {"name", "Cords community"}, {"origin", "https://presentation.invalid"}, {"selected", true}, {"state", "active"}, {"image", QString::fromLatin1(imageData)}, {"shape", "circle"}}});
         controller.channels()->replace({{{"id", "test-channel"}, {"name", "general"}, {"mode", "encrypted"}, {"joined", true}}});
-        controller.messages()->replace({{{"id", "test-message"}, {"account", "test-person"}, {"author", "Test person"}, {"body", "Local presentation fixture. Hover anywhere in this message to play its avatar."}, {"timestamp", 1700000000}}});
+        controller.messages()->replace({
+            {{"id", "test-message"}, {"account", "test-person"}, {"author", "Test person"}, {"body", "Local presentation fixture. Hover anywhere in this message to play its avatar."}, {"timestamp", 1700000000}},
+            {{"id", "followup"}, {"account", "test-person"}, {"author", "Test person"}, {"body", "A grouped follow-up from the same verified account."}, {"timestamp", 1700000060}},
+            {{"id", "other-account"}, {"account", "other-test-person"}, {"author", "Test person"}, {"body", "The same display name belongs to a different account: begin a new group."}, {"timestamp", 1700000120}}});
         controller.requests()->replace({{{"id", "verified-device"}, {"account", "verified-account"}, {"name", "Applicant"}, {"status", "pending"}, {"requestedAt", 1700000000}}});
-        controller.members()->replace({{{"id", "test-person"}, {"name", "Test person"}, {"group", "Members"}}});
+        controller.members()->replace({{{"id", "test-person"}, {"name", "Test person"}, {"group", "Members"}, {"roles", QStringList{"fixture-role"}}}});
+        controller.roles()->replace({{{"id", "fixture-role"}, {"name", "Community guides"}, {"color", "#8dc4e7"}}});
         QQmlEngine engine;
         QQmlComponent component(&engine, QUrl::fromLocalFile(qmlPath + "/Shell.qml"));
+        QQuickWindow window;
         QScopedPointer<QObject> shell(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
         QVERIFY2(shell, qPrintable(component.errorString()));
         auto *item = qobject_cast<QQuickItem *>(shell.data());
         QVERIFY(item);
-        QQuickWindow window;
         window.setColor(QColor("#313338"));
         window.resize(1180, 760); item->setParentItem(window.contentItem()); item->setSize(window.size());
         window.show();
@@ -75,7 +81,19 @@ private slots:
             for (auto *child : root->childItems()) if (auto *found = findVisible(child, name)) return found;
             return nullptr;
         };
-        auto *message = findVisible(item, "messageRow");
+        QQuickItem *message = nullptr;
+        int groupedRows = 0;
+        const std::function<void(QQuickItem *)> countGroups = [&countGroups, &groupedRows, &message](QQuickItem *root) {
+            if (root->objectName() == "messageRow") {
+                if (root->property("grouped").toBool()) ++groupedRows;
+                if (root->property("row").toMap().value("id") == "test-message") message = root;
+            }
+            for (auto *child : root->childItems()) countGroups(child);
+        };
+        countGroups(item);
+        qInfo() << "Rendered message grouping count" << groupedRows;
+        QCOMPARE(groupedRows, 1);
+        QVERIFY(message && !message->property("grouped").toBool());
         auto *serverIcon = findVisible(item, "serverRailIcon");
         QVERIFY(serverIcon);
         auto *serverImage = serverIcon->findChild<JxlImage *>("avatarPlayback");
@@ -101,6 +119,49 @@ private slots:
         QTRY_VERIFY(!memberImage->playing());
         QCOMPARE(memberImage->frameNumber(), 1);
         QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-fixture-wide.png"));
+        auto *card = item->findChild<QObject *>("accountCard");
+        QVERIFY(card);
+        QVERIFY(QMetaObject::invokeMethod(card, "openFor", Q_ARG(QVariant, "test-person"), Q_ARG(QVariant, QVariant::fromValue(member))));
+        QTRY_VERIFY(card->property("opened").toBool());
+        QVERIFY(!card->property("modal").toBool());
+        QVERIFY(card->property("x").toReal() >= 12 && card->property("x").toReal() + card->property("width").toReal() <= window.width() - 12);
+        auto *cardAvatar = card->findChild<QObject *>("accountCardAvatar");
+        QVERIFY(cardAvatar);
+        QTRY_VERIFY(cardAvatar->property("playing").toBool());
+        QTest::qWait(150);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-fixture-account-card.png"));
+        auto *details = card->findChild<QQuickItem *>("accountCardDetails");
+        QVERIFY(details);
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, details->mapToScene(QPointF(details->width() / 2, details->height() / 2)).toPoint());
+        QTRY_VERIFY(card->property("details").toBool());
+        // A real profile refresh can reset the directory while the card is open.
+        // Restore to the current account row rather than a deleted delegate.
+        controller.members()->replace({{{"id", "test-person"}, {"name", "Test person"}, {"group", "Members"}, {"roles", QStringList{"fixture-role"}}}});
+        QTest::qWait(100);
+        member = findVisible(item, "memberRow");
+        QVERIFY(member);
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QTRY_VERIFY(!card->property("opened").toBool());
+        QTRY_VERIFY(member->hasActiveFocus());
+        auto *search = item->findChild<QQuickItem *>("messageSearch");
+        auto *emptySearch = item->findChild<QQuickItem *>("conversationEmptyState");
+        QVERIFY(search && emptySearch);
+        QTest::keyClick(&window, Qt::Key_F, Qt::ControlModifier);
+        QTRY_VERIFY(search->hasActiveFocus());
+        search->setProperty("text", "no-such-loaded-body-token");
+        QTRY_VERIFY(emptySearch->isVisible());
+        QCOMPARE(emptySearch->property("title").toString(), QString("No loaded messages match"));
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QTRY_COMPARE(search->property("text").toString(), QString());
+        QTRY_VERIFY(!emptySearch->isVisible());
+        message->forceActiveFocus();
+        QTest::keyClick(&window, Qt::Key_Menu);
+        auto *messageMenu = message->findChild<QObject *>("messageContextMenu");
+        QVERIFY(messageMenu);
+        QTRY_VERIFY(messageMenu->property("opened").toBool());
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-fixture-message-menu.png"));
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QTRY_VERIFY(!messageMenu->property("opened").toBool());
         auto *profile = item->findChild<QObject *>("expandedProfile");
         QVERIFY(profile);
         profile->setProperty("account", "test-person");
@@ -174,6 +235,195 @@ private slots:
         QTRY_VERIFY(!item->property("showAdmin").toBool());
         item->setParentItem(nullptr);
         QThreadPool::globalInstance()->waitForDone();
+    }
+    void composerSeparatesDraftScopesAndExplainsDisabledSending() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        // Presentation-only input test; this does not claim a server authorized sending.
+        controller.m_state = {{"account", "account-a"}, {"server", "server-a"}, {"route", "channel-a"}, {"admission", "active"}, {"connected", true}};
+        controller.channels()->replace({{{"id", "channel-a"}, {"name", "general"}, {"mode", "public"}, {"joined", true}}, {{"id", "channel-b"}, {"name", "other"}, {"mode", "encrypted"}, {"joined", false}}});
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/Shell.qml"));
+        QQuickWindow window;
+        QScopedPointer<QObject> shell(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(shell, qPrintable(component.errorString()));
+        auto *item = qobject_cast<QQuickItem *>(shell.data());
+        QVERIFY(item);
+        window.resize(1024, 768); item->setParentItem(window.contentItem()); item->setSize(window.size()); window.show();
+        emit controller.stateChanged();
+        auto *composer = shell->findChild<QQuickItem *>("messageComposer");
+        auto *send = shell->findChild<QQuickItem *>("sendMessage");
+        auto *feedback = shell->findChild<QObject *>("composerFeedback");
+        QVERIFY(composer && send && feedback);
+        QVERIFY(composer->isEnabled());
+        composer->setProperty("text", "Draft for A");
+        controller.m_state["route"] = "channel-b"; emit controller.stateChanged();
+        QCOMPARE(composer->property("text").toString(), QString());
+        QVERIFY(!composer->isEnabled() && !send->isEnabled());
+        QVERIFY(feedback->property("text").toString().contains("Join this encrypted conversation"));
+        controller.m_state["route"] = "channel-a"; emit controller.stateChanged();
+        QCOMPARE(composer->property("text").toString(), QString("Draft for A"));
+        controller.m_state["server"] = "server-b"; emit controller.stateChanged();
+        QCOMPARE(composer->property("text").toString(), QString());
+        composer->setProperty("text", "Draft for B");
+        controller.m_state["account"] = "account-b"; emit controller.stateChanged();
+        QCOMPARE(composer->property("text").toString(), QString());
+        controller.m_state["account"] = "account-a"; emit controller.stateChanged();
+        QCOMPARE(composer->property("text").toString(), QString("Draft for B"));
+        controller.m_state["server"] = "server-a"; emit controller.stateChanged();
+        QCOMPARE(composer->property("text").toString(), QString("Draft for A"));
+        controller.m_state["admission"] = "pending"; emit controller.stateChanged();
+        QVERIFY(!composer->isEnabled() && !send->isEnabled());
+        QVERIFY(feedback->property("text").toString().contains("administrator approval"));
+        controller.m_state["admission"] = "active"; controller.m_state["connected"] = false; emit controller.stateChanged();
+        QVERIFY(composer->isEnabled() && !send->isEnabled());
+        QVERIFY(feedback->property("text").toString().contains("Offline"));
+        composer->forceActiveFocus();
+        QTest::keyClick(&window, Qt::Key_Return, Qt::ShiftModifier);
+        QVERIFY(composer->property("text").toString().contains('\n'));
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/messenger-composer-offline.png"));
+        item->setParentItem(nullptr);
+    }
+    void nativeComponentThemesAndSizing() {
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/../tests/controls-gallery.qml"));
+        QQuickWindow window;
+        QScopedPointer<QObject> gallery(component.create());
+        QVERIFY2(gallery, qPrintable(component.errorString()));
+        auto *item = qobject_cast<QQuickItem *>(gallery.data());
+        QVERIFY(item);
+        window.resize(1024, 900);
+        item->setParentItem(window.contentItem()); item->setSize(window.size()); window.show();
+        window.raise(); window.requestActivate();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        for (const auto &theme : {QString("dark"), QString("midnight"), QString("light")}) {
+            gallery->setProperty("appearance", theme);
+            for (const auto scale : {1.0, 1.5, 2.0}) {
+                gallery->setProperty("textScale", scale);
+                QTest::qWait(100);
+                auto *field = gallery->findChild<QQuickItem *>("galleryField");
+                QVERIFY(field);
+                field->forceActiveFocus();
+                QVERIFY(field->hasActiveFocus());
+                window.requestUpdate();
+                const auto frame = window.grabWindow();
+                QVERIFY(!frame.isNull());
+                qInfo() << "Rendered theme sizing" << theme << scale << gallery->property("effectiveBodySize") << field->property("font").value<QFont>().pixelSize() << field->height() << field->implicitHeight();
+                QTRY_VERIFY_WITH_TIMEOUT(field->height() >= 14 * scale + 16, 5000);
+                QVERIFY(frame.save(QStringLiteral(CORDS_TEST_OUTPUT) + "/controls-" + theme + "-" + QString::number(qRound(scale * 100)) + ".png"));
+            }
+        }
+        auto *menu = gallery->findChild<QObject *>("galleryMenu");
+        QVERIFY(menu);
+        QVERIFY(QMetaObject::invokeMethod(menu, "open"));
+        QTRY_VERIFY(menu->property("opened").toBool());
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/controls-menu.png"));
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->property("opened").toBool());
+        item->setParentItem(nullptr);
+    }
+    void liveAdmissionWorkflow() {
+        const auto fixturePath = qEnvironmentVariable("CORDS_QT_ADMISSION_FIXTURE");
+        if (fixturePath.isEmpty()) QSKIP("Explicit disposable native admission fixture not selected");
+        QFile file(fixturePath + "/ready.json");
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto ready = QJsonDocument::fromJson(file.readAll()).object();
+        QCOMPARE(ready["fixture"].toString(), QString("native-admission-v1"));
+        const auto migrations = QStringLiteral(CORDS_TEST_MIGRATIONS);
+        Controller owner(ready["owner_state"].toString(), migrations, ready["ca"].toString());
+        Controller applicant(ready["applicant_state"].toString(), migrations, ready["ca"].toString());
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.state().isEmpty() && !applicant.state().isEmpty(), 10000);
+        const auto password = QStringLiteral("Native admission fixture only 7319!");
+        owner.unlockAccount(ready["owner_account"].toString(), password);
+        applicant.unlockAccount(ready["applicant_account"].toString(), password);
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && !applicant.busy(), 30000);
+        QVERIFY2(owner.state().value("error").toString().isEmpty(), qPrintable(owner.state().value("error").toString()));
+        if (applicant.state().value("admission").toString() == "rejected") {
+            applicant.authenticate();
+            QTRY_COMPARE_WITH_TIMEOUT(applicant.state().value("admission").toString(), QString("pending"), 30000);
+        }
+        QCOMPARE(applicant.state().value("admission").toString(), QString("pending"));
+        QCOMPARE(applicant.channels()->rowCount(), 0);
+        QCOMPARE(applicant.members()->rowCount(), 0);
+        QVERIFY(!applicant.state().value("canApprove").toBool());
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/Shell.qml"));
+        QQuickWindow ownerWindow, applicantWindow;
+        QScopedPointer<QObject> ownerShell(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&owner)}}));
+        QScopedPointer<QObject> applicantShell(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&applicant)}}));
+        QVERIFY2(ownerShell && applicantShell, qPrintable(component.errorString()));
+        auto *ownerItem = qobject_cast<QQuickItem *>(ownerShell.data());
+        auto *applicantItem = qobject_cast<QQuickItem *>(applicantShell.data());
+        QVERIFY(ownerItem && applicantItem);
+        ownerWindow.resize(1024, 768); applicantWindow.resize(1024, 768);
+        ownerItem->setParentItem(ownerWindow.contentItem()); ownerItem->setSize(ownerWindow.size());
+        applicantItem->setParentItem(applicantWindow.contentItem()); applicantItem->setSize(applicantWindow.size());
+        ownerWindow.show(); applicantWindow.show();
+        emit owner.stateChanged(); emit applicant.stateChanged();
+        QTest::qWait(200);
+        auto *empty = applicantShell->findChild<QObject *>("conversationEmptyState");
+        QVERIFY(empty);
+        QCOMPARE(empty->property("title").toString(), QString("Waiting for administrator approval"));
+        QVERIFY(applicantWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-pending.png"));
+        ownerItem->setProperty("showAdmin", true);
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy(), 30000);
+        auto *admin = ownerShell->findChild<QObject *>("serverSettings");
+        QVERIFY(admin);
+        QVERIFY(QMetaObject::invokeMethod(admin, "selectPage", Q_ARG(QVariant, 2)));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && owner.requests()->rowCount() == 1, 30000);
+        QCOMPARE(owner.requests()->get(0).value("account").toString(), ready["applicant_account"].toString());
+        const auto click = [](QQuickWindow &window, QQuickItem *button) {
+            qInfo() << "Click native admission action" << button->objectName();
+            window.raise();
+            window.requestActivate();
+            QTest::qWait(100);
+            QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
+                button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+            qInfo() << "Native admission action returned" << button->objectName();
+        };
+        const std::function<QQuickItem *(QQuickItem *, const QString &)> findVisible = [&findVisible](QQuickItem *root, const QString &name) -> QQuickItem * {
+            if (root->objectName() == name && root->isVisible()) return root;
+            for (auto *child : root->childItems()) if (auto *found = findVisible(child, name)) return found;
+            return nullptr;
+        };
+        QQuickItem *reject = nullptr;
+        QTRY_VERIFY((reject = findVisible(ownerItem, "rejectMembershipRequestAction")) != nullptr);
+        QVERIFY(ownerWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-review.png"));
+        click(ownerWindow, reject);
+        auto *confirmation = ownerShell->findChild<QObject *>("rejectMembershipRequest");
+        QVERIFY(confirmation);
+        QTRY_VERIFY(confirmation->property("opened").toBool());
+        QVERIFY(ownerWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-confirmation.png"));
+        auto *confirm = confirmation->findChild<QQuickItem *>("confirmOperation");
+        QVERIFY(confirm && confirm->isVisible());
+        click(ownerWindow, confirm);
+        // The authoritative queue intentionally retains rejected requests for review.
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && owner.requests()->rowCount() == 1 && owner.requests()->get(0).value("status").toString() == "rejected", 30000);
+        qInfo() << "Rejection persisted; requester status" << applicant.state().value("admission");
+        auto *check = empty->findChild<QQuickItem *>("emptyStateAction");
+        QVERIFY(check && check->isVisible());
+        click(applicantWindow, check);
+        QTRY_COMPARE_WITH_TIMEOUT(applicant.state().value("admission").toString(), QString("rejected"), 30000);
+        QCOMPARE(empty->property("title").toString(), QString("Your request to join was denied"));
+        QVERIFY(applicantWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-denied.png"));
+        QTRY_VERIFY(!applicant.busy());
+        click(applicantWindow, check);
+        QTRY_COMPARE_WITH_TIMEOUT(applicant.state().value("admission").toString(), QString("pending"), 30000);
+        owner.loadRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && owner.requests()->rowCount() == 1, 30000);
+        QQuickItem *approve = nullptr;
+        QTRY_VERIFY((approve = findVisible(ownerItem, "approveMembershipRequest")) != nullptr);
+        click(ownerWindow, approve);
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && owner.requests()->rowCount() == 0, 30000);
+        click(applicantWindow, check);
+        QTRY_COMPARE_WITH_TIMEOUT(applicant.state().value("admission").toString(), QString("active"), 30000);
+        QVERIFY(applicant.state().value("error").toString().isEmpty());
+        applicant.loadDirectory("");
+        QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy() && applicant.members()->rowCount() == 2, 30000);
+        QVERIFY(applicantWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-approved.png"));
+        applicantItem->setParentItem(nullptr); ownerItem->setParentItem(nullptr);
     }
     void administrationDraftsAndVirtualization() {
         QTemporaryDir state;

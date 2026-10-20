@@ -1,0 +1,17 @@
+Host: Linux with Docker or Podman; output: locally loaded server OCI image.
+Tools: Bash, standard Unix utilities including awk; Git is optional for revision
+metadata. Docker or Podman must be installed, running and accessible to your user.
+The engine needs network access to pull base images and Cargo dependencies,
+and enough storage/memory for the Rust build. Rust is supplied by deploy/Dockerfile;
+host Rust, CMake and Qt are not required.
+
+Setup (run explicitly; this script does not install packages or change services):
+Install Docker Engine or Podman using your distribution's supported instructions.
+Configure user access (prefer rootless operation where available), then check:
+  docker info
+or:
+  podman info
+The script prefers Docker if both commands exist. Repair access/start the selected
+engine before retrying; it does not silently switch engines after a build failure.
+Optional: CORDS_IMAGE_NAME and CORDS_IMAGE_TAG select the local image reference.
+Nothing is pushed to a registry.

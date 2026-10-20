@@ -1,0 +1,14 @@
+Host: Linux x64/ARM64; output: native server tarball. Qt is not required.
+Tools: Bash, Rust/Cargo 1.97.1 via rustup, native C compiler/linker and make,
+standard Unix utilities including awk, find, tar, install, mktemp, cp and mv,
+sha256sum or shasum. Development headers/libraries required by Cargo native
+dependencies must be available for the host architecture.
+
+Setup (run explicitly; this script does not install packages):
+Install Rust via https://rustup.rs/ if rustup is unavailable, then:
+  export PATH="$HOME/.cargo/bin:$PATH"
+  rustup toolchain install 1.97.1
+Install your distribution's C/C++ development toolchain, make and required
+development libraries using its package manager, or select existing tools in PATH.
+Build from the repository checkout so rust-toolchain.toml selects the pinned Rust.
+Use CARGO_TARGET_DIR and CORDS_DIST_DIR for custom build/artifact directories.

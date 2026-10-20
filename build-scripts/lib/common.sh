@@ -6,6 +6,26 @@
 BUILD_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${BUILD_SCRIPTS_DIR}/.." && pwd)"
 DIST_DIR="${CORDS_DIST_DIR:-${REPO_ROOT}/dist}"
+BUILD_SCRIPT_NAME="${BASH_SOURCE[1]##*/}"
+BUILD_REQUIREMENTS_PRINTED=false
+
+print_build_requirements() {
+  [[ "${BUILD_REQUIREMENTS_PRINTED}" == false ]] || return 0
+  BUILD_REQUIREMENTS_PRINTED=true
+  local requirements="${BUILD_SCRIPTS_DIR}/requirements/${BUILD_SCRIPT_NAME}.txt"
+  printf '\nRequirements for %s:\n' "${BUILD_SCRIPT_NAME}" >&2
+  if [[ -f "${requirements}" ]]; then
+    printf '%s\n' "$(< "${requirements}")" >&2
+  else
+    printf 'Requirements file is missing: %s\n' "${requirements}" >&2
+  fi
+  printf 'Full setup and controls: %s/README.md\n' "${BUILD_SCRIPTS_DIR}" >&2
+}
+
+# Also cover dependency errors reported by Cargo, CMake and the Python helpers.
+# ERR is separate from the entry points' existing EXIT cleanup traps.
+set -E
+trap 'print_build_requirements' ERR
 
 log() {
   printf '==> %s\n' "$*"
@@ -13,6 +33,7 @@ log() {
 
 die() {
   printf 'error: %s\n' "$*" >&2
+  print_build_requirements
   exit 1
 }
 

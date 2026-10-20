@@ -1,0 +1,26 @@
+Host: Linux x64; output: Windows x64 portable Qt ZIP.
+Tools: Bash, Rust/Cargo 1.97.1 via rustup, Python >=3.9, CMake >=3.24,
+Ninja, cargo-xwin 0.23.1, clang-cl, lld-link, llvm-lib, llvm-rc, llvm-mt,
+standard Unix utilities and sha256sum or shasum.
+Rust target: x86_64-pc-windows-msvc.
+SDKs: Qt 6.10.3 Linux gcc_64 host tools AND Windows msvc2022_64 libraries.
+Qt components: Core, Gui, Network, Qml, Quick, QuickControls2, Widgets,
+Concurrent, Test and QuickTest (archives qtbase qtdeclarative qtsvg qttools
+qttranslations). The Windows target needs the Microsoft Visual C++ x64 runtime.
+
+User-local setup (run explicitly; this script does not install packages):
+  export PATH="$HOME/.cargo/bin:$PATH"
+  rustup toolchain install 1.97.1
+  rustup target add --toolchain 1.97.1 x86_64-pc-windows-msvc
+  python3 -m venv "$HOME/.local/share/cords-build-tools"
+  "$HOME/.local/share/cords-build-tools/bin/python" -m pip install cmake ninja cargo-xwin==0.23.1 aqtinstall==3.3.0
+  export PATH="$HOME/.local/share/cords-build-tools/bin:$PATH"
+  aqt install-qt linux desktop 6.10.3 linux_gcc_64 --outputdir "$HOME/Qt" --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
+  aqt install-qt windows desktop 6.10.3 win64_msvc2022_64 --outputdir "$HOME/Qt" --archives qtbase qtdeclarative qtsvg qttools qttranslations
+  export CORDS_QT_HOST_PREFIX="$HOME/Qt/6.10.3/gcc_64"
+  export CORDS_QT_WINDOWS_PREFIX="$HOME/Qt/6.10.3/msvc2022_64"
+Install missing LLVM tools using your distribution's LLVM/Clang/LLD packages,
+or select an existing complete LLVM installation in PATH.
+cargo-xwin may download Microsoft's SDK/CRT into its user cache; Microsoft's
+license applies: https://github.com/rust-cross/cargo-xwin#cargo-xwin
+Windows runtime tests are separate from cross-compilation; Wine is not required.

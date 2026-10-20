@@ -34,6 +34,16 @@ version and fail on missing dependencies. Windows offers approved WinGet setup
 as described below; Unix builders do not install system packages. Builders do
 not fall back to the old frontend.
 
+Every entry point prints its complete, script-specific requirements and setup
+guidance when a prerequisite or preflight/build command fails, alongside the
+original error. These lists are also available in `build-scripts/requirements/`.
+Printing setup commands does not execute them. Windows retains its explicit
+interactive installation prompt and noninteractive safeguards below.
+On Unix, `python3 scripts/test-build-requirements.py` checks missing-dependency
+reporting for all seven shell entry points and failure/cleanup propagation.
+On Windows, `pwsh -NoProfile -File scripts/test-build-requirements.ps1` checks
+the noninteractive/redirected-input safeguards and original error reporting.
+
 ## Windows ZIP
 
 ```powershell

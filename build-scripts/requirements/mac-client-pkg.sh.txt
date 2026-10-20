@@ -1,0 +1,21 @@
+Host: macOS Intel/Apple Silicon; output: native Qt application PKG.
+Tools: Bash, Rust/Cargo 1.97.1 via rustup, Python 3, CMake >=3.24,
+Xcode C++17 compiler and macOS SDK, make or Ninja, codesign, pkgbuild,
+pkgutil, cmp, grep, find, standard Unix utilities, sha256sum or shasum.
+SDK: matching-architecture Qt 6.10.3 with Core, Gui, Network, Qml, Quick,
+QuickControls2, Widgets, Concurrent, Test and QuickTest.
+Xcode must be selected, initialized and its license reviewed/accepted.
+
+Setup (run explicitly; this script does not install packages):
+  xcode-select --install
+  xcrun --find clang++
+  export PATH="$HOME/.cargo/bin:$PATH"
+  rustup toolchain install 1.97.1
+  python3 -m venv "$HOME/.local/share/cords-build-tools"
+  "$HOME/.local/share/cords-build-tools/bin/python" -m pip install cmake aqtinstall==3.3.0
+  export PATH="$HOME/.local/share/cords-build-tools/bin:$PATH"
+  aqt install-qt mac desktop 6.10.3 clang_64 --outputdir "$HOME/Qt" --archives qtbase qtdeclarative qtsvg qttools qttranslations
+  export CORDS_QT_PREFIX="$HOME/Qt/6.10.3/macos"
+QT_ROOT_DIR is also accepted. Use xcodebuild -license to review an outstanding
+Xcode license; accept it yourself with the permissions required by your Mac.
+Ad hoc app signing is the default; distribution/installer identities are optional.

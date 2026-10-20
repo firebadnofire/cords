@@ -1,0 +1,16 @@
+Host: macOS Intel/Apple Silicon; output: native server tarball. Qt is not required.
+Tools: Bash, Rust/Cargo 1.97.1 via rustup, Xcode command-line tools/macOS SDK
+including clang and xcrun, make, standard Unix utilities including awk, find,
+tar, install and mktemp, sha256sum or shasum.
+Xcode must be selected, initialized and its license reviewed/accepted.
+
+Setup (run explicitly; this script does not install packages):
+  xcode-select --install
+  xcrun --find clang
+Install Rust via https://rustup.rs/ if rustup is unavailable, then:
+  export PATH="$HOME/.cargo/bin:$PATH"
+  rustup toolchain install 1.97.1
+Use xcodebuild -license to review an outstanding Xcode license; accept it yourself
+with the permissions required by your Mac.
+Build from the repository checkout so rust-toolchain.toml selects the pinned Rust.
+Use CARGO_TARGET_DIR and CORDS_DIST_DIR for custom build/artifact directories.

@@ -1,0 +1,26 @@
+Host: native Windows x64/ARM64; output: portable Qt ZIP (no WebView2).
+Tools: PowerShell, Rust/Cargo 1.97.1 (native MSVC target), Python 3,
+CMake >=3.24, Visual Studio 2022 C++ workload with matching-architecture tools,
+Windows SDK, MSVC redistributables, Windows tar.exe and standard PowerShell tools.
+SDK: matching-architecture Qt 6.10.3 MSVC 2022 with Core, Gui, Network, Qml,
+Quick, QuickControls2, Widgets, Concurrent, Test and QuickTest.
+WinGet/App Installer is needed only for the optional approved installation flow.
+
+Setup commands (review before running):
+  winget install --exact --id Rustlang.Rustup --source winget
+  rustup toolchain install 1.97.1
+  winget install --exact --id Python.Python.3.13 --source winget
+  winget install --exact --id Kitware.CMake --source winget
+  winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source winget --override '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+For ARM64, also add Microsoft.VisualStudio.Component.VC.Tools.ARM64 to that workload.
+  winget install --exact --id miurahr.aqtinstall --source winget --version 3.3.0
+For x64 Qt:
+  aqt install-qt windows desktop 6.10.3 win64_msvc2022_64 --outputdir "$env:LOCALAPPDATA\Cords\Qt" --archives qtbase qtdeclarative qtsvg qttools qttranslations
+For ARM64 use win64_msvc2022_arm64_cross_compiled instead.
+Set CORDS_QT_PREFIX (or -QtPrefix / QT_ROOT_DIR) to the SDK containing bin\qmake.exe;
+the default user-local Cords\Qt installation is detected automatically.
+Use CORDS_PYTHON to select Python, and -CMake or CORDS_CMAKE to select CMake.
+Restore Windows System32 to PATH if tar.exe is missing. Reopen PowerShell after
+installations if tools are not visible; select rustup's tools ahead of other Cargo.
+Missing dependencies retain the Y/n prompt (Enter = Yes); declining stops.
+-NonInteractive, CI and redirected input never prompt or install packages.

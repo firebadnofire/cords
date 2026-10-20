@@ -8,6 +8,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$script:RequirementsPrinted = $false
+function Show-BuildRequirements {
+    if ($script:RequirementsPrinted) { return }
+    $script:RequirementsPrinted = $true
+    Write-Host "`nRequirements for windows-client.ps1:"
+    Get-Content -LiteralPath (Join-Path $PSScriptRoot 'requirements\windows-client.ps1.txt') | ForEach-Object { Write-Host $_ }
+    Write-Host "Full setup and controls: $(Join-Path $PSScriptRoot 'README.md')"
+}
+trap { Show-BuildRequirements; throw $_ }
 function Invoke-Native {
     param([string]$Command, [string[]]$Arguments)
     & $Command @Arguments
@@ -36,6 +45,7 @@ function Install-MissingPrerequisite {
     param([string]$Message, [string]$PackageId, [string[]]$Commands,
         [string[]]$InstallArguments = @(), [string]$ExistingCommand = '')
     Write-Host "`n$Message"
+    Show-BuildRequirements
     Write-Host 'Installation commands:'
     foreach ($command in $Commands) { Write-Host "  $command" }
     $interactive = [Environment]::UserInteractive

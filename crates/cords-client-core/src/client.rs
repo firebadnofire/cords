@@ -246,6 +246,9 @@ pub struct Status {
 #[derive(Debug, Serialize)]
 pub struct SyncResult {
     pub fetched: usize,
+    /// Routes fetched successfully through the end of currently available history,
+    /// including routes with no application messages. Local archives are excluded.
+    pub loaded_routes: Vec<String>,
     pub messages: Vec<Message>,
     /// Verified route for each message, in the same order. This is local
     /// delivery metadata; it does not alter the wire event or encrypted body.
@@ -3077,6 +3080,7 @@ impl Client {
         if channel.locally_archived {
             return Ok(SyncResult {
                 fetched: 0,
+                loaded_routes: Vec::new(),
                 messages: Vec::new(),
                 message_routes: Vec::new(),
             });
@@ -3194,6 +3198,7 @@ impl Client {
         }
         Ok(SyncResult {
             fetched,
+            loaded_routes: vec![route.to_owned()],
             message_routes: vec![route.to_owned(); messages.len()],
             messages,
         })
@@ -3210,6 +3215,7 @@ impl Client {
         ) {
             return Ok(SyncResult {
                 fetched: 0,
+                loaded_routes: Vec::new(),
                 messages: Vec::new(),
                 message_routes: Vec::new(),
             });
@@ -3233,12 +3239,14 @@ impl Client {
         let routes: Vec<_> = channels.into_iter().map(|channel| channel.channel_id).collect();
         let mut result = SyncResult {
             fetched: 0,
+            loaded_routes: Vec::new(),
             messages: Vec::new(),
             message_routes: Vec::new(),
         };
         for route in routes {
             let next = self.sync_route(&route).await?;
             result.fetched += next.fetched;
+            result.loaded_routes.extend(next.loaded_routes);
             result.messages.extend(next.messages);
             result.message_routes.extend(next.message_routes);
             let channel = self.fetch_channel(&route).await?;

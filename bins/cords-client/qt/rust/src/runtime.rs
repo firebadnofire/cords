@@ -200,6 +200,7 @@ pub(super) fn empty_snapshot() -> ffi::Snapshot {
         history_older: false,
         history_newer: false,
         history_browsing: false,
+        history_loaded: false,
         directory_after: String::new(),
         presentation_error: String::new(),
         directory_loaded: false,
@@ -243,6 +244,7 @@ pub(super) struct Worker {
     scope: Arc<Mutex<Scope>>,
     sync_cursor: usize,
     server_health: BTreeMap<String, (bool, String, bool)>,
+    loaded_routes: BTreeMap<String, Vec<String>>,
     admission_checks: BTreeMap<String, Instant>,
     lock: Arc<LockSignal>,
     environment: Arc<Environment>,
@@ -299,6 +301,7 @@ impl Worker {
             scope,
             sync_cursor: 0,
             server_health: BTreeMap::new(),
+            loaded_routes: BTreeMap::new(),
             admission_checks: BTreeMap::new(),
             lock: lock.clone(),
             environment,
@@ -592,6 +595,8 @@ impl Worker {
         server: &str,
         result: &cords_client_core::client::SyncResult,
     ) -> Result<()> {
+        self.loaded_routes
+            .insert(server.into(), result.loaded_routes.clone());
         let client = self.client.as_ref().context("Account locked")?;
         let preferences = notification_preferences(&client.ui_preferences())?;
         let context = notifications::Context {
@@ -779,6 +784,7 @@ impl Worker {
         self.channel_by_server.clear();
         self.server_order.clear();
         self.server_health.clear();
+        self.loaded_routes.clear();
         self.admission_checks.clear();
         self.sync_cursor = 0;
         self.classifier = Classifier::default();
@@ -1949,6 +1955,10 @@ impl Worker {
         self.view.history_older = false;
         self.view.history_newer = false;
         self.view.history_browsing = self.history_end.is_some();
+        self.view.history_loaded = self
+            .loaded_routes
+            .get(&self.view.server)
+            .is_some_and(|routes| routes.contains(&self.view.route));
         self.view.messages = if self.view.route.is_empty() {
             Vec::new()
         } else {

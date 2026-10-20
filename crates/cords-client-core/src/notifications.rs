@@ -137,6 +137,7 @@ mod tests {
     fn result(id: &str, sender: &str) -> SyncResult {
         SyncResult {
             fetched: 1,
+            loaded_routes: vec!["channel".into()],
             message_routes: vec!["channel".into()],
             messages: vec![Message {
                 schema_version: 1,

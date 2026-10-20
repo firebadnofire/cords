@@ -64,6 +64,7 @@ void Controller::apply(const cords::Snapshot &s) {
     m_state.insert("historyOlder", s.history_older);
     m_state.insert("historyNewer", s.history_newer);
     m_state.insert("historyBrowsing", s.history_browsing);
+    m_state.insert("historyLoaded", s.history_loaded);
     if (s.completed != m_completed) { m_completed = s.completed; m_busy = false; emit busyChanged(); }
     emit stateChanged();
 }

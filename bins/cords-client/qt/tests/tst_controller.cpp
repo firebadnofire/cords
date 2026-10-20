@@ -451,6 +451,49 @@ private slots:
         QVERIFY(applicantWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-approved.png"));
         applicantItem->setParentItem(nullptr); ownerItem->setParentItem(nullptr);
     }
+    void conversationEmptyHistoryStates() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_state = {{"account", "test-account"}, {"server", "test-server"},
+            {"route", "empty-channel"}, {"admission", "active"}, {"connected", true},
+            {"historyLoaded", false}};
+        controller.channels()->replace({{{"id", "empty-channel"}, {"name", "empty"}, {"mode", "public"}, {"joined", true}}});
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/Shell.qml"));
+        QScopedPointer<QObject> shell(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(shell, qPrintable(component.errorString()));
+        auto empty = shell->findChild<QObject *>("conversationEmptyState");
+        QVERIFY(empty);
+        QCOMPARE(empty->property("title").toString(), QString("Messages haven't been loaded on this device"));
+        QCOMPARE(empty->property("actionText").toString(), QString("Load messages"));
+        controller.m_busy = true;
+        emit controller.busyChanged();
+        QCOMPARE(empty->property("title").toString(), QString("Loading messages…"));
+        controller.m_busy = false;
+        emit controller.busyChanged();
+        controller.m_state["historyLoaded"] = true;
+        emit controller.stateChanged();
+        QCOMPARE(empty->property("title").toString(), QString("No messages yet"));
+        QVERIFY(empty->property("actionText").toString().isEmpty());
+        controller.channels()->replace({{{"id", "empty-channel"}, {"name", "empty"}, {"mode", "encrypted"}, {"joined", true}}});
+        emit controller.stateChanged();
+        QCOMPARE(empty->property("title").toString(), QString("No messages available yet"));
+        QVERIFY(empty->property("explanation").toString().contains("before this device was added"));
+        controller.m_state["error"] = "Synchronization failed";
+        emit controller.stateChanged();
+        QVERIFY(!empty->property("historyLoaded").toBool());
+        controller.m_state["error"] = "";
+        controller.m_state["connected"] = false;
+        emit controller.stateChanged();
+        QVERIFY(!empty->property("historyLoaded").toBool());
+        controller.m_state["connected"] = true;
+        controller.m_state["route"] = "unloaded-channel";
+        controller.m_state["historyLoaded"] = false;
+        emit controller.stateChanged();
+        QCOMPARE(empty->property("title").toString(), QString("Messages haven't been loaded on this device"));
+    }
     void administrationDraftsAndVirtualization() {
         QTemporaryDir state;
         Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});

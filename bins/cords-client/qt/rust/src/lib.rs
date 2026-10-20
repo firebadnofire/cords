@@ -212,6 +212,7 @@ pub mod ffi {
         history_older: bool,
         history_newer: bool,
         history_browsing: bool,
+        history_loaded: bool,
         directory_after: String,
         presentation_error: String,
         directory_loaded: bool,

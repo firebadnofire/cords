@@ -279,17 +279,6 @@ Pane {
                     }
                 }
                 CordsButton {
-                    text: "Migrate legacy account"
-                    visible: !!picker.desktop.state.legacy && !picker.creating && !picker.migrating
-                    Layout.fillWidth: true
-                    enabled: !picker.desktop.busy
-                    onClicked: {
-                        picker.resetSelection();
-                        picker.migrating = true;
-                        nickname.forceActiveFocus();
-                    }
-                }
-                CordsButton {
                     text: "Remove selected account from this device…"
                     destructive: true
                     visible: !picker.creating && !picker.migrating && !!picker.selectedAccount

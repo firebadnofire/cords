@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "covered_scenarios": {
+    "identity": ["independent accounts and devices", "passphrase-protected native client stores", "signed discovery and key pins", "pending admission denies access", "reject and resubmit", "authenticated membership"],
+    "messaging": ["three independent guests", "encrypted bidirectional messages", "concurrent senders", "ordering", "retry idempotency", "offline catch-up"],
+    "public": ["device-signed public channel messages in both directions"],
+    "permissions": ["owner-only channel creation", "role catalog create/edit/delete", "assignment and revocation"],
+    "profiles": ["signed avatar upload/retrieval", "cross-client bytes", "replacement", "invalid image", "oversized display name", "oversized avatar", "cross-account publication denied without effect"],
+    "resilience": ["client termination", "interrupted sends after outbox persistence and upload response", "owned guest network outage and recovery", "owned guest latency and packet loss", "server and PostgreSQL restart", "history and profile persistence"],
+    "security": ["untrusted TLS certificate", "valid TLS with substituted server signing key", "invalid and absent sessions", "malformed JSON", "empty and oversized text", "MLS exclusion", "denied sends after reconnect and restart", "no unauthorized effect"]
+  },
+  "unavailable": [
+    {"feature": "os-store-identity-protection", "reason": "Headless Ubuntu guests have no OS credential store; initialization without a passphrase fails explicitly"},
+    {"feature": "active-role-channel-permission-enforcement", "reason": "Current client supports the preparatory inactive role catalog; active policy is explicitly rejected"},
+    {"feature": "integrated-windows-gui-suite", "reason": "Interactive runtime evidence covers admission, bidirectional messaging, signed profile/avatar propagation, account switching, restart history, settings persistence and server-driven exclusion. Complete unattended execution and active-role GUI operations remain incomplete; see VALIDATION.md"}
+  ]
+}

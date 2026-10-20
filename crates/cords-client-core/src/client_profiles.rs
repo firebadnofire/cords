@@ -29,6 +29,32 @@ fn transport_unavailable(error: &anyhow::Error) -> bool {
 }
 
 impl Client {
+    /// Exercise the server's account/session binding using an already verified
+    /// public revision. Available only in explicit integration-test builds.
+    /// # Errors
+    /// Returns the server refusal, or fails if no verified foreign record exists.
+    #[cfg(feature = "fault-injection")]
+    pub async fn test_publish_foreign_profile(&mut self, account: &str) -> Result<ProfileReceipt> {
+        ensure!(
+            account != self.identity.authorization.value.account_id,
+            "Foreign account required"
+        );
+        self.account_profile(account).await?;
+        let record = self
+            .durable
+            .account_profiles
+            .get(account)
+            .and_then(|graph| graph.records.values().next())
+            .context("No verified foreign profile record")?
+            .clone();
+        self.post(
+            "/api/v1/account-profiles",
+            &ProfilePublish { record, image: None },
+            true,
+        )
+        .await
+    }
+
     async fn profile_compatible(&mut self) -> Result<()> {
         self.ensure_session().await?;
         let discovery: SignedServerMetadataV1 = Self::response(

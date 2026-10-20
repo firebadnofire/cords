@@ -155,8 +155,14 @@ up() {
   [[ -f "$SCRIPT_DIR/build-scripts/linux-server-oci-img.sh" ]] ||
     die 'Place cords-up.sh in the Cords repository root, next to build-scripts/.'
 
-  log "Building fresh local image: $IMAGE"
-  ( cd "$SCRIPT_DIR" && bash ./build-scripts/linux-server-oci-img.sh )
+  if [[ "${CORDS_PREBUILT_IMAGE:-}" == "$IMAGE" && "$INSTANCE" != cords ]]; then
+    log "Using explicitly selected prebuilt image: $IMAGE"
+  elif [[ -n "${CORDS_PREBUILT_IMAGE:-}" ]]; then
+    die 'Prebuilt image must match the selected named instance image exactly.'
+  else
+    log "Building fresh local image: $IMAGE"
+    ( cd "$SCRIPT_DIR" && bash ./build-scripts/linux-server-oci-img.sh )
+  fi
   image_exists "$IMAGE" || die "The build did not produce $IMAGE"
 
   log 'Creating private configuration and generating a new database password'

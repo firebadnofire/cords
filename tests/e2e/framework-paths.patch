@@ -1,0 +1,50 @@
+diff --git a/bring-down.sh b/bring-down.sh
+index 83df02f..2fb5720 100755
+--- a/bring-down.sh
++++ b/bring-down.sh
+@@ -27,7 +27,7 @@ fi
+ 
+ . "$CONF_FILE"
+ 
+-RUN_DIR="/var/lib/libvirt/images"
++RUN_DIR="${CORDS_VM_DISK_DIR:?set CORDS_VM_DISK_DIR}"
+ CI_DIR="/var/lib/libvirt/cloud-init"
+ 
+ RUN_IMAGE="$RUN_DIR/${NAME}-run.qcow2"
+diff --git a/bring-up.sh b/bring-up.sh
+index e30c127..b4a79ad 100755
+--- a/bring-up.sh
++++ b/bring-up.sh
+@@ -60,8 +60,8 @@ VM_NETWORK="${VM_NETWORK:-default}"
+ BASE_DIR="$SCRIPT_DIR"
+ BUILD_SCRIPT="$BASE_DIR/build.sh"
+ 
+-RO_DIR="/var/lib/libvirt/ro-images"
+-RUN_DIR="/var/lib/libvirt/images"
++RO_DIR="${CORDS_VM_BASE_DIR:?set CORDS_VM_BASE_DIR}"
++RUN_DIR="${CORDS_VM_DISK_DIR:?set CORDS_VM_DISK_DIR}"
+ CI_DIR="/var/lib/libvirt/cloud-init"
+ 
+ RO_IMAGE="$RO_DIR/$IMAGE"
+@@ -168,7 +168,7 @@ sudo virt-install \
+   --disk path="$CI_ISO",format=raw,device=cdrom \
+   --os-variant "$VM_OS_VARIANT" \
+   --graphics none \
+-  --boot uefi \
++  --boot "uefi,nvram=$RUN_DIR/${NAME}-VARS.qcow2" \
+   --noautoconsole \
+   "${NET_ARGS[@]}"
+ 
+diff --git a/copy-log.sh b/copy-log.sh
+index 0acbab6..11726c3 100755
+--- a/copy-log.sh
++++ b/copy-log.sh
+@@ -29,7 +29,7 @@ fi
+ 
+ . "$CONF_FILE"
+ 
+-RUN_DIR="/var/lib/libvirt/images"
++RUN_DIR="${CORDS_VM_DISK_DIR:?set CORDS_VM_DISK_DIR}"
+ RUN_IMAGE="$RUN_DIR/${NAME}-run.qcow2"
+ 
+ if [ ! -f "$RUN_IMAGE" ]; then

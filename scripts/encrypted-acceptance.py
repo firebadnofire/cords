@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import queue
 import secrets
+import re
+import shlex
 import ssl
 import subprocess
 import tempfile
@@ -102,9 +104,33 @@ class Installation:
         self.process.wait(timeout=15)
 
 
+def deployment_arguments(parser):
+    parser.add_argument("--origin", required=True)
+    parser.add_argument("--host", required=True, choices=("192.168.86.54", "william@192.168.86.54"))
+    parser.add_argument("--deployment-dir", required=True)
+    parser.add_argument("--compose-file", required=True)
+    parser.add_argument("--env-file", required=True)
+    parser.add_argument("--compose-project", required=True)
+
+
+def compose_command(args, command):
+    from pathlib import PurePosixPath
+    directory = PurePosixPath(args.deployment_dir)
+    if not directory.is_absolute() or ".." in directory.parts:
+        raise ValueError("Explicit absolute deployment directory required")
+    if not re.fullmatch(r"cords-e2e-[a-z0-9][a-z0-9-]*", args.compose_project):
+        raise ValueError("Compose project must be an explicitly owned cords-e2e-* project")
+    for name in (args.compose_file, args.env_file):
+        path = PurePosixPath(name)
+        if ".." in path.parts or (path.is_absolute() and not path.is_relative_to(directory)):
+            raise ValueError("Compose and environment files must remain inside the deployment directory")
+    argv = ["docker", "compose", "--project-name", args.compose_project,
+            "--env-file", args.env_file, "-f", args.compose_file, *shlex.split(command)]
+    return "cd " + shlex.quote(str(directory)) + " && " + shlex.join(argv)
+
+
 def remote(args, command):
-    base = "cd /home/william/cords-milestone && docker compose --env-file .env -f deploy/compose.milestone.yaml "
-    return subprocess.run(["ssh", "-o", "BatchMode=yes", args.host, base + command],
+    return subprocess.run(["ssh", "-o", "BatchMode=yes", args.host, compose_command(args, command)],
                           check=True, capture_output=True).stdout
 
 
@@ -143,6 +169,7 @@ def marker_forms(marker):
 
 
 def run(args):
+    compose_command(args, "ps")  # Validate explicit ownership before creating clients.
     root = Path(tempfile.mkdtemp(prefix="cords-acceptance-", dir=args.state_parent))
     report = {"origin": args.origin, "state_root": str(root), "checks": []}
     a = b = None
@@ -254,8 +281,7 @@ if __name__ == "__main__":
     parser.add_argument("--crash-boundaries", action="store_true")
     parser.add_argument("--ca", type=Path, required=True)
     parser.add_argument("--migrations", type=Path, default=Path("migrations/sqlite").resolve())
-    parser.add_argument("--origin", default="https://192.168.86.54:5848")
-    parser.add_argument("--host", default="192.168.86.54")
+    deployment_arguments(parser)
     parser.add_argument("--state-parent", type=Path, default=Path(tempfile.gettempdir()))
     parser.add_argument("--report", type=Path, default=Path("target/encrypted-acceptance.json"))
     run(parser.parse_args())

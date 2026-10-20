@@ -9,12 +9,12 @@ import tempfile
 parser = argparse.ArgumentParser()
 parser.add_argument("--client", type=Path, required=True)
 parser.add_argument("--ca", type=Path, required=True)
-parser.add_argument("--origin", default="https://192.168.86.54:5848")
-parser.add_argument("--host", default="192.168.86.54")
+helpers = runpy.run_path(str(Path(__file__).with_name("encrypted-acceptance.py")))
+helpers["deployment_arguments"](parser)
 parser.add_argument("--migrations", type=Path, default=Path("migrations/sqlite").resolve())
 parser.add_argument("--report", type=Path, default=Path("target/lifecycle-acceptance.json"))
 args = parser.parse_args()
-helpers = runpy.run_path(str(Path(__file__).with_name("encrypted-acceptance.py")))
+helpers["compose_command"](args, "ps")  # Validate ownership before creating clients.
 root = Path(tempfile.mkdtemp(prefix="cords-lifecycle-"))
 clients = []
 pin = None

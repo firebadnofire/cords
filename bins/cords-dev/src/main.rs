@@ -69,7 +69,25 @@ async fn main() -> Result<()> {
                         "authenticate"=>serde_json::to_value(client.authenticate().await?)?,
                         "publish"=>client.publish_key_package().await?,
                         "create"=>json!(client.create_channel(field(&request,"name")?).await?),
+                        "create-with-mode"=>json!(client.create_channel_with_mode(field(&request,"name")?,serde_json::from_value(request["mode"].clone())?).await?),
                         "members"=>serde_json::to_value(client.members().await?)?,
+                        "request-admission"=>serde_json::to_value(client.request_admission().await?)?,
+                        "membership-requests"=>serde_json::to_value(client.membership_requests().await?)?,
+                        "approve"=>serde_json::to_value(client.approve_membership(field(&request,"device")?).await?)?,
+                        "reject"=>{client.reject_membership(field(&request,"device")?).await?;json!(true)},
+                        "role-catalog"=>serde_json::to_value(client.role_catalog().await?)?,
+                        "account-roles"=>serde_json::to_value(client.account_roles(field(&request,"account")?).await?)?,
+                        "role-audit"=>serde_json::to_value(client.role_audit(request["after"].as_u64().unwrap_or(0)).await?)?,
+                        "change-role"=>serde_json::to_value(client.change_role_policy(&serde_json::from_value(request["request"].clone())?).await?)?,
+                        "profile"=>serde_json::to_value(client.account_profile(field(&request,"account")?).await?)?,
+                        "profile-image"=>json!(client.account_profile_image(field(&request,"account")?,field(&request,"sha256")?).await?),
+                        #[cfg(feature="fault-injection")]
+                        "test-publish-foreign-profile"=>serde_json::to_value(client.test_publish_foreign_profile(field(&request,"account")?).await?)?,
+                        "save-profile"=>serde_json::to_value(client.save_account_profile(
+                            serde_json::from_value(request["profile"].clone())?,
+                            request["image"].as_str().map(str::to_owned),
+                            serde_json::from_value(request["expected_heads"].clone())?,
+                        ).await?)?,
                         "channels"=>serde_json::to_value(client.channels().await?)?,
                         "add"=>{client.add_member(field(&request,"route")?,field(&request,"device")?).await?;json!(true)},
                         "remove"=>{client.remove_member(field(&request,"route")?,field(&request,"device")?).await?;json!(true)},
@@ -91,7 +109,7 @@ async fn main() -> Result<()> {
                 }.await;
                 match result {
                     Ok(value)=>emit(&json!({"id":request_id,"ok":true,"result":value})),
-                    Err(error)=>{client.reload().await?;emit(&json!({"id":request_id,"ok":false,"error":error.to_string()}));}
+                    Err(error)=>{client.reload().await?;emit(&json!({"id":request_id,"ok":false,"error":format!("{error:#}")}));}
                 }
             }
             notice=async {match &mut receiver {Some(receiver)=>receiver.recv().await,None=>std::future::pending().await}}=>{

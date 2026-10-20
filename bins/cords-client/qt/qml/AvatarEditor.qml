@@ -73,6 +73,9 @@ CordsDialog {
                 MouseArea {
                     anchors.fill: parent
                     enabled: !editor.operationBusy
+                    // This gesture positions the crop. The surrounding
+                    // ScrollView must not take it over as a scrolling flick.
+                    preventStealing: true
                     cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                     property real previousX: 0
                     property real previousY: 0

@@ -439,6 +439,11 @@ private slots:
         const auto publicChannel = applicant.channels()->get(0).value("id").toString();
         applicant.selectChannel(publicChannel);
         QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy(), 30000);
+        // Existing public history must arrive before this new member sends
+        // anything; first-send initialization must not conceal a loading bug.
+        QTRY_COMPARE_WITH_TIMEOUT(applicant.messages()->rowCount(), 1, 30000);
+        QVERIFY(applicant.state().value("error").toString().isEmpty());
+        QVERIFY(applicantWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/public-history-before-first-send.png"));
         applicant.sendMessage(publicChannel, "Native public reply without a channel join");
         QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy(), 30000);
         QVERIFY2(applicant.state().value("error").toString().isEmpty(), qPrintable(applicant.state().value("error").toString()));
@@ -631,6 +636,27 @@ private slots:
         QVERIFY(decoded);
         QTRY_VERIFY_WITH_TIMEOUT(decoded->ready(), 90000);
         QVERIFY(decoded->error().isEmpty());
+        // The crop must retain a pointer drag even when its enclosing dialog
+        // scrolls. Exercise actual pointer events, not only property changes.
+        auto *previewItem = qobject_cast<QQuickItem *>(preview);
+        QVERIFY(previewItem);
+        window.resize(680, 520);
+        window.raise(); window.requestActivate();
+        QTest::qWait(100);
+        for (const double scale : {2.0, 4.0}) {
+            zoom->setProperty("value", scale);
+            editor->setProperty("centerX", 0.5);
+            editor->setProperty("centerY", 0.5);
+            const auto start = previewItem->mapToScene(QPointF(previewItem->width() / 2, previewItem->height() / 2)).toPoint();
+            QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+            for (int step = 1; step <= 10; ++step)
+                QTest::mouseMove(&window, start + QPoint(step * 8, step * 6), 20);
+            QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, start + QPoint(80, 60));
+            const double expectedX = 0.5 - 80.0 / previewItem->width() / scale;
+            const double expectedY = 0.5 - 60.0 / previewItem->height() / scale;
+            QVERIFY2(qAbs(editor->property("centerX").toDouble() - expectedX) < 0.01, "crop must follow the entire horizontal drag");
+            QVERIFY2(qAbs(editor->property("centerY").toDouble() - expectedY) < 0.01, "crop must follow the entire vertical drag");
+        }
         QTest::qWait(100);
         QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/ui-polish-avatar-crop.png"));
     }

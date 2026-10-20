@@ -10,7 +10,7 @@ not run npm or build Tauri. Workflow parity remains in progress; see
 | `linux-client-tar.sh` | Native Linux x64/ARM64 | Deployed Qt directory tarball |
 | `mac-client-pkg.sh` | Native macOS Intel/Apple Silicon | Qt application PKG |
 | `mac-client-dmg.sh` | macOS with both Rust targets and universal Qt SDK | Universal Qt DMG |
-| `linux-windows-client-crosscomp.sh` | Linux | Explicit unsupported-toolchain error |
+| `linux-windows-client-crosscomp.sh` | Linux x64, Clang/MSVC cross-toolchain | Portable Windows x64 Qt ZIP |
 | `linux-server-tar.sh` | Linux x64/ARM64 | Server tarball |
 | `mac-server-tar.sh` | macOS Intel/Apple Silicon | Server tarball |
 | `linux-server-oci-img.sh` | Linux with Docker/Podman | Locally loaded server image |
@@ -88,9 +88,56 @@ bash build-scripts/linux-client-tar.sh
 Extract the complete folder and run `bin/Cords`. Qt libraries/plugins and
 migrations are deployed in the archive; it is no longer an AppImage. System
 C library, graphics, font and display-server compatibility depends on the build
-host and target distribution. A Qt/MSVC Linux-to-Windows toolchain is not yet
-validated; use the native Windows script for Windows artifacts.
+host and target distribution.
 X11, Wayland and the headless acceptance backend are included explicitly.
+
+## Linux-to-Windows ZIP (supported x64 cross-build)
+
+```sh
+export CORDS_QT_HOST_PREFIX="$HOME/Qt/6.10.3/gcc_64"
+export CORDS_QT_WINDOWS_PREFIX="$HOME/Qt/6.10.3/msvc2022_64"
+bash build-scripts/linux-windows-client-crosscomp.sh
+```
+
+Install Rust 1.97.1 with `x86_64-pc-windows-msvc`, cargo-xwin 0.23.1,
+CMake >=3.24, Ninja, Python >=3.9, and LLVM tools (`clang-cl`, `lld-link`,
+`llvm-lib`, `llvm-rc`, `llvm-mt`). Both Qt SDKs must be **6.10.3**, including
+the desktop components listed above. The Windows SDK is the x64 MSVC 2022
+edition; aqtinstall can download it on Linux. The Linux SDK supplies native
+MOC, RCC and QML tools, while the Windows SDK supplies headers and libraries.
+Put rustup's Cargo ahead of any distribution Cargo in PATH.
+
+The builder uses `cargo xwin env` and its generated CMake toolchain. cargo-xwin
+caches Microsoft's CRT and Windows SDK under the user's cache directory; its
+use is subject to the [Microsoft license described upstream](https://github.com/rust-cross/cargo-xwin#cargo-xwin).
+The builder does not install system packages or require Wine. It compiles the
+Rust bridge, Qt application and Windows test executables, then runs QML lint
+with the Linux host tools. Windows runtime tests must run separately on Windows;
+cross-build success alone does not mean those tests passed.
+
+To run the cross-built media/controller suites on Windows, set
+`CORDS_WINDOWS_TEST_SOURCE_ROOT` to the Windows checkout path and
+`CORDS_WINDOWS_TEST_OUTPUT_DIR` to an existing Windows capture directory before
+building (use forward slashes, for example `C:/work/cords`). Copy the three
+`Cords*Tests.exe` files from the build directory to a separate Windows test
+directory, use the deployed Qt DLL/plugin/QML paths, and run them there. Fixtures
+must match the source snapshot compiled on Linux. Without these overrides,
+fixture paths default to the build checkout, as they do for native builds.
+
+The ZIP uses the same name and directory layout as the native Windows builder.
+It includes the release Qt DLLs and complete release plugin/QML trees so dynamic
+imports and styles remain available without running Windows deployment tools
+on Linux. This makes the archive larger than a minimal native deployment.
+The target needs the Microsoft Visual C++ 2015-2022 x64 runtime. Optionally set
+`CORDS_VC_REDIST` to an existing redistributable installer to include it in the ZIP.
+No installer is executed. Extract the complete folder and run `Cords.exe`.
+
+`CORDS_QT_BUILD_DIR`, `CARGO_TARGET_DIR`, `CORDS_DIST_DIR`, `CORDS_QT_PROFILE`
+and job controls work as above. Cross output defaults to `target/qt-windows-cross`
+and two parallel jobs. Use a separate build directory from native builds.
+ARM64 cross-builds and clean-machine/signing acceptance are outside this path.
+The [October 20 validation report](../docs/reports/build-scripts-cross-validation-2026-10-20.md)
+records the `.54` build and Windows execution evidence.
 
 ## macOS packages
 
@@ -118,7 +165,9 @@ Desktop builds default to optimized Rust `release`. Set `CORDS_QT_PROFILE=dev`
 (or Windows `-Profile dev`) for development validation. `CORDS_QT_BUILD_DIR`,
 `CARGO_TARGET_DIR` and `CORDS_DIST_DIR` select output folders. Unix
 `CORDS_BUILD_JOBS` bounds CMake parallelism; Cargo respects `CARGO_BUILD_JOBS`.
-Builders run QML lint and native/QML tests before packaging.
+Native builders run QML lint and native/QML tests before packaging. The Linux
+Windows cross-builder runs host QML lint and builds the Windows test executables;
+execute those tests on Windows as described above.
 
 `scripts/build-client-qt.py` is the common build/test/install helper. Native OS
 integration, clean-machine dependencies, signing and publication require

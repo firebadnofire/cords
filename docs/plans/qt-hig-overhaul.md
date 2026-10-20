@@ -368,3 +368,40 @@ the selected native fixture passed separately. The runner removed its own
 container/tunnel. `git diff --check` passes. The Windows package is updated at
 `packages/current/Cords.exe`; production server-side list filtering requires
 deployment of the updated server source. No production deployment was performed.
+
+### Crop pointer ownership and new-user public-history verification
+
+The reported crop drag was reproduced with native pointer events in the scrollable
+680×520 editor at zoom 2 and 4. `evidence/avatar-drag-before.log` fails the expected
+full-distance movement check. The enclosing ScrollView was taking the pointer
+gesture after the initial movement. The crop MouseArea now prevents that takeover;
+crop coordinates, bounds, zoom, codec processing, save and cancellation contracts
+are unchanged. The same native test passes in `evidence/avatar-drag-after.log`.
+Inspected `build/ui-polish-avatar-crop.png` with the smaller scrollable editor.
+
+The repeated public-history report was traced to the running executable's path,
+without inspecting personal vault data. The process was using the repository's
+old `dist/cords-client-windows-x86_64-0.1.0/cords-client-windows-x86_64/Cords.exe`
+(SHA256 `ef71e83afb4738b84c90b1d5b12e14067ddee3fe971f17dd178d1b9492cd11c8`),
+which still embeds `channel has not been joined`. The updated external package
+does not contain that error. Do not overwrite or terminate the running personal
+client automatically; the user must restart using the updated external package.
+
+Strengthened the real-service native test to assert pre-existing public history
+on the newly approved account **before its first send**, then verify its reply.
+This prevents send-time initialization from concealing a history-loading failure.
+The disposable fixture uses a separate executable copy so rebuilding tests cannot
+conflict with a running fixture's Windows executable lock.
+
+Final evidence: `evidence/avatar-drag-package-build.log` passes native compilation,
+QML lint and all four CTest suites, then deploys the package to
+`packages/current/Cords.exe`. The existing optional shader DLL/VCINSTALLDIR
+deployment warnings remain. `evidence/avatar-and-new-user-history-native.log`
+passes both Windows interaction scenarios (four QtTest cases including setup and
+cleanup). Inspected `build/public-history-before-first-send.png`: one existing
+public message is visible before the new account has sent, with no join action or
+error. The real-service fixture completed post-UI vault/restart checks and cleaned
+up its own PostgreSQL container and tunnel; two connection-close diagnostics are
+retained in `evidence/public-history-before-send-fixture.log`. No additional backend
+change was needed for this repeat report, and no personal app/vault was closed or
+rewritten. Targeted `git diff --check` passes.

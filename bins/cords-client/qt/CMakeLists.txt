@@ -72,7 +72,12 @@ if(MSVC)
 else()
     target_compile_options(Cords PRIVATE -Wall -Wextra -Wpedantic)
     target_link_libraries(Cords PRIVATE ${CMAKE_DL_LIBS})
-    if(UNIX AND NOT APPLE)
+    if(APPLE)
+        # Rust static archives retain native Keychain/TLS and device-name calls.
+        find_library(CORDS_SECURITY_FRAMEWORK Security REQUIRED)
+        find_library(CORDS_SYSTEM_CONFIGURATION_FRAMEWORK SystemConfiguration REQUIRED)
+        target_link_libraries(Cords PRIVATE ${CORDS_SECURITY_FRAMEWORK} ${CORDS_SYSTEM_CONFIGURATION_FRAMEWORK})
+    elseif(UNIX)
         target_link_libraries(Cords PRIVATE pthread m)
     endif()
 endif()
@@ -105,10 +110,17 @@ if(UNIX AND NOT APPLE)
     # and the bounded headless package acceptance path available as well.
     list(APPEND CORDS_DEPLOY_OPTIONS INCLUDE_PLUGINS qwayland qoffscreen)
 endif()
-qt_generate_deploy_qml_app_script(TARGET Cords OUTPUT_SCRIPT deploy_script NO_UNSUPPORTED_PLATFORM_ERROR ${CORDS_DEPLOY_OPTIONS})
-install(SCRIPT ${deploy_script})
+option(CORDS_QT_DEPLOY "Deploy Qt using the native platform tool" ON)
+if(CORDS_QT_DEPLOY)
+    qt_generate_deploy_qml_app_script(TARGET Cords OUTPUT_SCRIPT deploy_script NO_UNSUPPORTED_PLATFORM_ERROR ${CORDS_DEPLOY_OPTIONS})
+    install(SCRIPT ${deploy_script})
+endif()
 
 enable_testing()
+# Cross-built tests execute on another machine with its own checkout/output paths.
+set(CORDS_TEST_SOURCE_ROOT "${CORDS_ROOT}" CACHE STRING "Source fixture root on the test runtime host")
+set(CORDS_TEST_OUTPUT_DIR "${CMAKE_BINARY_DIR}" CACHE STRING "Capture directory on the test runtime host")
+set(CORDS_TEST_QML_DIR "${CORDS_TEST_SOURCE_ROOT}/bins/cords-client/qt/qml")
 add_test(NAME qml-controls COMMAND Qt6::qmltestrunner -input "${CMAKE_CURRENT_SOURCE_DIR}/tests" -import "${CMAKE_CURRENT_SOURCE_DIR}/qml")
 set_tests_properties(qml-controls PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FORCE_STDERR_LOGGING=1")
 
@@ -117,9 +129,9 @@ target_include_directories(CordsMediaTests PRIVATE "${CORDS_CARGO_TARGET}/cxxbri
 get_target_property(CORDS_NATIVE_LIBRARIES Cords LINK_LIBRARIES)
 target_link_libraries(CordsMediaTests PRIVATE ${CORDS_NATIVE_LIBRARIES} Qt6::Test)
 target_compile_definitions(CordsMediaTests PRIVATE
-    CORDS_TEST_IMAGE="${CORDS_ROOT}/crates/cords-avatar-codec/tests/fixtures/looping-a.jxl"
-    CORDS_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml"
-    CORDS_TEST_CAPTURE="${CMAKE_BINARY_DIR}/native-media.png")
+    CORDS_TEST_IMAGE="${CORDS_TEST_SOURCE_ROOT}/crates/cords-avatar-codec/tests/fixtures/looping-a.jxl"
+    CORDS_QML_DIR="${CORDS_TEST_QML_DIR}"
+    CORDS_TEST_CAPTURE="${CORDS_TEST_OUTPUT_DIR}/native-media.png")
 if(MSVC)
     target_compile_options(CordsMediaTests PRIVATE /utf-8)
 endif()
@@ -129,7 +141,7 @@ set_tests_properties(native-media PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscr
 qt_add_executable(CordsControllerTests tests/tst_controller.cpp cpp/jxlimage.cpp cpp/jxlimage.h cpp/controller.cpp cpp/controller.h cpp/rows.h cpp/rowfilter.h cpp/platformevents.cpp cpp/platformevents.h)
 target_include_directories(CordsControllerTests PRIVATE "${CORDS_CARGO_TARGET}/cxxbridge" "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
 target_link_libraries(CordsControllerTests PRIVATE ${CORDS_NATIVE_LIBRARIES} Qt6::Test Qt6::Network)
-target_compile_definitions(CordsControllerTests PRIVATE CORDS_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml" CORDS_TEST_IMAGE="${CORDS_ROOT}/crates/cords-avatar-codec/tests/fixtures/looping-a.jxl" CORDS_TEST_OUTPUT="${CMAKE_BINARY_DIR}" CORDS_TEST_MIGRATIONS="${CORDS_ROOT}/migrations/sqlite")
+target_compile_definitions(CordsControllerTests PRIVATE CORDS_QML_DIR="${CORDS_TEST_QML_DIR}" CORDS_TEST_IMAGE="${CORDS_TEST_SOURCE_ROOT}/crates/cords-avatar-codec/tests/fixtures/looping-a.jxl" CORDS_TEST_OUTPUT="${CORDS_TEST_OUTPUT_DIR}" CORDS_TEST_MIGRATIONS="${CORDS_TEST_SOURCE_ROOT}/migrations/sqlite")
 if(MSVC)
     target_compile_options(CordsControllerTests PRIVATE /utf-8)
 endif()
@@ -140,3 +152,9 @@ qt_add_executable(CordsRowFilterTests tests/tst_rowfilter.cpp cpp/rows.h cpp/row
 target_include_directories(CordsRowFilterTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
 target_link_libraries(CordsRowFilterTests PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
 add_test(NAME row-filter COMMAND CordsRowFilterTests)
+if(UNIX)
+    # Keep source-QML tests away from the application's generated Cords/qmldir,
+    # whose preferred resource URLs exist only inside the application binary.
+    set_target_properties(CordsMediaTests CordsControllerTests CordsRowFilterTests
+        PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()

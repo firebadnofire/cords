@@ -9,7 +9,13 @@ qt_client_requirements
 for rust_target in aarch64-apple-darwin x86_64-apple-darwin; do
   rustup target list --installed | grep -Fxq "${rust_target}" || die "Rust target is not installed: ${rust_target}"
 done
-lipo "${CORDS_QT_PREFIX}/lib/QtCore.framework/Versions/A/QtCore" -verify_arch arm64 x86_64 || die 'Universal DMG requires a Qt SDK containing both Apple architectures'
+verify_universal() {
+  local binary="$1" architecture
+  for architecture in arm64 x86_64; do
+    lipo "${binary}" -verify_arch "${architecture}" || die "Missing ${architecture} architecture: ${binary}"
+  done
+}
+verify_universal "${CORDS_QT_PREFIX}/lib/QtCore.framework/Versions/A/QtCore"
 version="$(project_version)"
 prepare_dist
 staging_root="$(mktemp -d)"
@@ -21,18 +27,19 @@ cleanup() {
   exit "${status}"
 }
 trap cleanup EXIT
-arm_tests=()
-intel_tests=()
-if [[ "$(host_architecture)" == aarch64 ]]; then arm_tests+=(--tests); else intel_tests+=(--tests); fi
-build_qt_client macos-arm64 "${staging_root}/arm" --rust-target aarch64-apple-darwin --mac-architecture arm64 "${arm_tests[@]}"
-build_qt_client macos-x86_64 "${staging_root}/intel" --rust-target x86_64-apple-darwin --mac-architecture x86_64 "${intel_tests[@]}"
+# Keep both arrays nonempty: Apple's Bash 3.2 rejects empty arrays under set -u.
+arm_arguments=(--rust-target aarch64-apple-darwin --mac-architecture arm64)
+intel_arguments=(--rust-target x86_64-apple-darwin --mac-architecture x86_64)
+if [[ "$(host_architecture)" == aarch64 ]]; then arm_arguments+=(--tests); else intel_arguments+=(--tests); fi
+build_qt_client macos-arm64 "${staging_root}/arm" "${arm_arguments[@]}"
+build_qt_client macos-x86_64 "${staging_root}/intel" "${intel_arguments[@]}"
 application="${staging_root}/arm/Cords.app"
 lipo -create "${application}/Contents/MacOS/Cords" "${staging_root}/intel/Cords.app/Contents/MacOS/Cords" -output "${staging_root}/Cords-universal"
 mv "${staging_root}/Cords-universal" "${application}/Contents/MacOS/Cords"
 # Verify every deployed Mach-O dependency, not just the application executable.
 while IFS= read -r -d '' binary; do
   if file -b "${binary}" | grep -q 'Mach-O'; then
-    lipo "${binary}" -verify_arch arm64 x86_64 || die "Dependency is not universal: ${binary}"
+    verify_universal "${binary}"
   fi
 done < <(find "${application}" -type f -print0)
 sign_qt_app "${application}"
@@ -46,6 +53,6 @@ hdiutil verify "${artifact}"
 hdiutil attach -readonly -nobrowse -mountpoint "${staging_root}/mounted" "${artifact}"
 mounted=true
 codesign --verify --deep --strict "${staging_root}/mounted/Cords.app"
-lipo "${staging_root}/mounted/Cords.app/Contents/MacOS/Cords" -verify_arch arm64 x86_64
+verify_universal "${staging_root}/mounted/Cords.app/Contents/MacOS/Cords"
 write_sha256 "${artifact}"
 log "Created native Qt universal DMG ${artifact}"

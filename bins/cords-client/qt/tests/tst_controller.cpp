@@ -262,7 +262,7 @@ private slots:
         controller.m_state["route"] = "channel-b"; emit controller.stateChanged();
         QCOMPARE(composer->property("text").toString(), QString());
         QVERIFY(!composer->isEnabled() && !send->isEnabled());
-        QVERIFY(feedback->property("text").toString().contains("Join this encrypted conversation"));
+        QVERIFY(feedback->property("text").toString().contains("Waiting for authorization"));
         controller.m_state["route"] = "channel-a"; emit controller.stateChanged();
         QCOMPARE(composer->property("text").toString(), QString("Draft for A"));
         controller.m_state["server"] = "server-b"; emit controller.stateChanged();
@@ -431,6 +431,18 @@ private slots:
         QVERIFY(applicant.state().value("error").toString().isEmpty());
         applicant.loadDirectory("");
         QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy() && applicant.members()->rowCount() == 2, 30000);
+        // Server membership exposes the readable public channel automatically;
+        // the owner's encrypted-only channel must not appear in navigation.
+        applicant.synchronize();
+        QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy() && applicant.channels()->rowCount() == 1, 30000);
+        QCOMPARE(applicant.channels()->get(0).value("name").toString(), QString("Public conversation"));
+        const auto publicChannel = applicant.channels()->get(0).value("id").toString();
+        applicant.selectChannel(publicChannel);
+        QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy(), 30000);
+        applicant.sendMessage(publicChannel, "Native public reply without a channel join");
+        QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy(), 30000);
+        QVERIFY2(applicant.state().value("error").toString().isEmpty(), qPrintable(applicant.state().value("error").toString()));
+        QTRY_COMPARE_WITH_TIMEOUT(applicant.messages()->rowCount(), 2, 30000);
         QVERIFY(applicantWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-approved.png"));
         applicantItem->setParentItem(nullptr); ownerItem->setParentItem(nullptr);
     }

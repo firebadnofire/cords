@@ -1631,12 +1631,16 @@ async fn channels(State(s): State<Service>, headers: HeaderMap) -> Result<Json<V
             Err(error) if error.0 == StatusCode::FORBIDDEN => false,
             Err(error) => return Err(error),
         };
-        let mut view = signed_channel_view(&s, &mut tx, &route).await?;
-        if (!readable || !row.try_get::<bool, _>("joined")?)
+        // Navigation exposes readable channels, not metadata-only invitations.
+        // MLS device eligibility remains independent of account/role grants.
+        if !readable {
+            continue;
+        }
+        let view = signed_channel_view(&s, &mut tx, &route).await?;
+        if !row.try_get::<bool, _>("joined")?
             && view.confidentiality_mode == ConfidentialityMode::Encrypted
         {
-            view.members.clear();
-            view.binding = None;
+            continue;
         }
         result.push(view);
     }

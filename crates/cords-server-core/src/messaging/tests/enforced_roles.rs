@@ -274,16 +274,7 @@ async fn discovery_channel_snapshots_and_welcomes_observe_current_policy() -> Re
     );
     deny_channel(&service, &route, Permission::ReadMessages).await?;
     let discovered = channels(State(service.clone()), headers(&member)?).await?.0;
-    assert_eq!(
-        discovered.len(),
-        1,
-        "view permission retains channel metadata"
-    );
-    assert!(
-        discovered[0].members.is_empty(),
-        "read-denied discovery must conceal the MLS roster"
-    );
-    assert!(discovered[0].binding.is_none());
+    assert!(discovered.is_empty(), "read-denied channels must be absent from navigation");
     for epoch in [None, Some(0)] {
         let denied = channel(
             State(service.clone()),

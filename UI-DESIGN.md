@@ -186,6 +186,7 @@ At narrower widths, collapse the member rail first; expose Members and Info as m
 
 - A compact server-name header opens a real menu with relevant supported actions (server settings, invite, connection/details, etc.).
 - Below it: searchable ordered text channels, expandable/collapsible categories where supported, role/permission-aware creation controls, and stable `#` channel cues.
+- Users join servers and open readable channels; there is no user-facing channel-join operation. Hide channels without read access. Initialize local history and authorized device encryption state automatically, without treating encryption setup as a permission grant.
 - Indicate selected, unread, muted, inaccessible (when visibility policy permits), and temporarily read-only channels differently. Do not infer unread from arbitrary cached list order.
 - Selected rows use a persistent surface treatment; hover actions appear contextually. Align icons and labels across categories.
 - Keep the channel tree scrollable independent of chat, and preserve expanded state and last selection appropriately.

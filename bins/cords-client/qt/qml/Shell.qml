@@ -30,7 +30,7 @@ Item {
         matchingMessages = count;
     }
     readonly property string draftScope: JSON.stringify([desktop.state.account || "", desktop.state.server || "", route])
-    readonly property string composerRestriction: desktop.state.burned ? "This identity has been burned. Sending is unavailable." : desktop.state.revoked ? "This device has been revoked. Sending is unavailable." : desktop.state.admission === "pending" ? "Waiting for administrator approval before you can send." : desktop.state.admission === "rejected" ? "Your membership request was denied. Submit a new request to join." : !route ? "Choose a channel to write a message." : channel.retired ? "This archived channel is read-only." : channel.acknowledgement ? "Acknowledge this channel's public successor before sending." : channel.mode === "encrypted" && !channel.joined ? "Join this encrypted conversation before sending." : ""
+    readonly property string composerRestriction: desktop.state.burned ? "This identity has been burned. Sending is unavailable." : desktop.state.revoked ? "This device has been revoked. Sending is unavailable." : desktop.state.admission === "pending" ? "Waiting for administrator approval before you can send." : desktop.state.admission === "rejected" ? "Your membership request was denied. Submit a new request to join." : !route ? "Choose a channel to write a message." : channel.retired ? "This archived channel is read-only." : channel.acknowledgement ? "Acknowledge this channel's public successor before sending." : channel.mode === "encrypted" && !channel.joined ? "Secure access is not ready on this device. Waiting for authorization." : ""
     function restoreDraft() {
         if (editingScope === draftScope)
             return;
@@ -815,12 +815,6 @@ Item {
                         onClicked: shell.confirm("Public successor", "This is a different channel identity. Its messages are readable by the server. Continue only if you accept this change.", function () {
                             shell.desktop.acknowledgePublic(shell.route);
                         })
-                    }
-                    CordsButton {
-                        text: "Join encrypted conversation"
-                        visible: !!shell.channel.id && !shell.channel.joined && shell.channel.mode === "encrypted" && !shell.channel.retired
-                        enabled: !shell.desktop.busy
-                        onClicked: shell.desktop.joinChannel(shell.route)
                     }
                     Rectangle {
                         objectName: "composerSurface"

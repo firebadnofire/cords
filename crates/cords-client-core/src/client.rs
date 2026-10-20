@@ -101,6 +101,10 @@ struct LocalChannel {
     acknowledged: bool,
     #[serde(default)]
     archived: bool,
+    // Retain signed identity/history after access loss, but remove navigation.
+    // Old vaults refresh their authoritative list before exposing old entries.
+    #[serde(default)]
+    listed: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct ServerSnapshot {
@@ -2105,8 +2109,24 @@ impl Client {
     pub async fn channels(&mut self) -> Result<Vec<Channel>> {
         self.ensure_session().await?;
         let channels: Vec<Channel> = self.get("/api/v1/channels").await?;
+        for local in self.durable.channel_identities.values_mut() {
+            if local.channel.identity.as_ref().is_some_and(|identity| {
+                identity.value.server_id == self.durable.server_id
+            }) {
+                local.listed = false;
+            }
+        }
         let mut verified = Vec::new();
         for channel in channels {
+            // Older servers may still return metadata-only encrypted channels.
+            // A listed channel cannot establish device/MLS authorization.
+            if channel.confidentiality_mode == ConfidentialityMode::Encrypted
+                && !channel.members.iter().any(|contact| {
+                    contact.authorization.value.device_id == self.identity.authorization.value.device_id
+                })
+            {
+                continue;
+            }
             verified.push(self.observe_channel(channel).await?);
         }
         self.persist(&[], &[]).await?;
@@ -2286,7 +2306,7 @@ impl Client {
         channel.requires_public_acknowledgement = downgrade && !acknowledged;
         channel.locally_archived = archived;
         let unchanged = if let Some(old) = &previous {
-            old.archived == archived && canonical(&old.channel)? == canonical(&channel)?
+            old.listed && old.archived == archived && canonical(&old.channel)? == canonical(&channel)?
         } else {
             false
         };
@@ -2296,6 +2316,7 @@ impl Client {
                 channel: channel.clone(),
                 acknowledged,
                 archived,
+                listed: true,
             },
         );
         if !unchanged {
@@ -2422,7 +2443,7 @@ impl Client {
             .channel_identities
             .values()
             .filter(|local| {
-                local
+                local.listed && local
                     .channel
                     .identity
                     .as_ref()
@@ -2880,16 +2901,25 @@ impl Client {
     pub async fn join_channel(&mut self, route: &str) -> Result<()> {
         self.ensure_session().await?;
         let channel = self.fetch_channel(route).await?;
+        self.initialize_channel(&channel).await?;
+        if channel.confidentiality_mode == ConfidentialityMode::Public && !channel.locally_archived {
+            self.sync_route(route).await?;
+        }
+        Ok(())
+    }
+
+    // Local setup for a server-authorized channel, never a membership grant.
+    async fn initialize_channel(&mut self, channel: &Channel) -> Result<()> {
+        let route = channel.channel_id.as_str();
         if channel.locally_archived {
+            return Ok(());
+        }
+        if self.durable.cursors.contains_key(route) {
             return Ok(());
         }
         if channel.confidentiality_mode == ConfidentialityMode::Public {
             self.durable.cursors.entry(route.into()).or_insert(0);
             self.persist(&[], &[]).await?;
-            self.sync_route(route).await?;
-            return Ok(());
-        }
-        if self.durable.cursors.contains_key(route) {
             return Ok(());
         }
         let welcome: Welcome = self
@@ -3051,6 +3081,7 @@ impl Client {
                 message_routes: Vec::new(),
             });
         }
+        self.initialize_channel(&channel).await?;
         let mut fetched = 0;
         let mut messages = Vec::new();
         loop {
@@ -3058,7 +3089,7 @@ impl Client {
                 .durable
                 .cursors
                 .get(route)
-                .context("channel has not been joined")?;
+                .context("channel history initialization is unavailable")?;
             let events: Vec<RouteEvent> = self
                 .get(&format!("/api/v1/routes/{route}/events?after={after}"))
                 .await?;
@@ -3186,7 +3217,7 @@ impl Client {
         self.ensure_session().await?;
         self.flush().await?;
         // Discover retirement and successors even when this device was offline for the notice.
-        self.channels().await?;
+        let channels = self.channels().await?;
         let current = now()?;
         if self
             .durable
@@ -3196,7 +3227,10 @@ impl Client {
         {
             self.members().await?;
         }
-        let routes: Vec<_> = self.durable.cursors.keys().cloned().collect();
+        // Synchronize readable channels automatically, including newly visible
+        // public channels and MLS welcomes granted by an authorized committer.
+        // Keep inaccessible cursors/keys sealed for archives, never poll them.
+        let routes: Vec<_> = channels.into_iter().map(|channel| channel.channel_id).collect();
         let mut result = SyncResult {
             fetched: 0,
             messages: Vec::new(),

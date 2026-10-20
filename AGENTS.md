@@ -581,7 +581,7 @@ The channel creator's device creates the initial MLS group and publishes signed 
 
 The server MUST reject a group binding that does not match the channel, server ID, protocol version, or authorized creator.
 
-Approved server members MAY discover channel names and server-generated channel IDs without being MLS members. That metadata discovery MUST NOT grant ciphertext delivery, history access, or conversation membership. Channel IDs, not names, determine identity; duplicate display names are permitted.
+Server channel navigation MUST expose only channels the current account and device may read under current server policy. Users join servers, not individual channels. Opening or synchronizing a readable channel initializes local history and processes an authorized MLS Welcome automatically; it MUST NOT grant account permissions, enroll an unauthorized device, or expose historical keys. Metadata-only encrypted channels MUST NOT appear as invitations to join. Channel IDs, not names, determine identity; duplicate display names are permitted.
 
 ## 11.7 Membership changes and commit coordination
 

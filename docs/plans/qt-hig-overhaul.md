@@ -307,3 +307,64 @@ Deployment still reports missing optional `dxcompiler.dll`/`dxil.dll` and unset
 `VCINSTALLDIR` warnings; successful compilation and native runtime testing are
 recorded separately from package deployment. This fix does not establish packaged
 runtime acceptance or complete the broader M2 visual/accessibility gate.
+
+### Readable-channel navigation and automatic local setup (HIG §§3, 7, 10)
+
+The user clarified the product contract: users join servers, then open readable
+channels; they do not join individual channels. This explicitly replaces the
+metadata-only discovery allowance in AGENTS §11.6. HIG §3.3 records the interaction
+rule. Role/account read authority and device/MLS eligibility remain independent.
+
+Two concrete failures were traced: listing metadata-only encrypted channels
+exposed a Join action that could only retrieve an already-authorized Welcome;
+public sends failed because the local cursor was never initialized. The server
+list now excludes denied-read channels and encrypted routes without active,
+delivery-enabled device membership. The client also excludes metadata-only
+encrypted results from older servers. A sealed per-channel listed flag removes
+withdrawn entries from navigation while retaining signed identity continuity,
+crypto state and previously received local history. Old vault entries refresh
+before becoming visible. No schema activation or permission grant is introduced.
+
+Normal route synchronization initializes public history or validates an existing
+authorized MLS Welcome automatically. Server synchronization follows the current
+readable list rather than indefinitely polling inaccessible retained cursors.
+The native Join button and join-before-send wording are removed. The internal
+core compatibility operation remains available to existing clients/tests.
+
+Focused service evidence: `evidence/channel-open-service.log` passes the new real
+TLS/PostgreSQL two-vault test covering first public read/send without join,
+denied encrypted access, authorized roster addition/automatic Welcome processing,
+encrypted reply, removal, navigation withdrawal, restart and retained sealed
+history. Broader server and native regression evidence follows below.
+
+Native evidence: `evidence/channel-open-final-build.log` records fresh bridge and
+Windows compilation, QML lint, four passing CTest suites and package deployment.
+The first run correctly failed an assertion demanding the removed Join wording;
+it now checks the authorization explanation while preserving disabled-send/draft
+isolation checks. `evidence/channel-open-native-interaction.log` passes the real
+Windows approval/public messaging scenario: one public channel, no inaccessible
+encrypted channel, automatic history and a successful reply without a join call.
+Inspected `build/admission-native-approved.png` against the reported screenshots:
+history/reply render normally, the raw error and Join button are absent, and the
+public confidentiality label remains. The fixture reopened the vault successfully
+and cleaned up its own database container and tunnel. Two TLS connection-close
+diagnostics and a Qt clipboard-retry warning remain recorded in the fixture/native
+logs rather than suppressed.
+
+The initial broader server run passed 58 tests and exposed two legacy assertions
+requiring metadata-only visibility. Those assertions now require hidden navigation
+both for denied read permission and a device outside the encrypted roster, while
+keeping direct snapshot/Welcome denial checks. A subsequent rebuild hit Windows
+LNK1104 because the native fixture still held the same test executable open. The
+fixture was completed and shut down before rerunning; future concurrent fixtures
+must use a separate executable copy or finish before rebuilding that executable.
+
+Final server evidence: `evidence/channel-open-server-verified.log` passes all 60
+server-core tests against disposable PostgreSQL/TLS services, including current
+policy visibility, Welcome/history denial, automatic public/encrypted setup,
+admission, multi-server synchronization, lifecycle, restart and migration gates.
+Both manual fixture tests were intentionally excluded from this automatic run;
+the selected native fixture passed separately. The runner removed its own
+container/tunnel. `git diff --check` passes. The Windows package is updated at
+`packages/current/Cords.exe`; production server-side list filtering requires
+deployment of the updated server source. No production deployment was performed.

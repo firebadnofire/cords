@@ -1727,6 +1727,9 @@ async fn desktop_admission_acceptance_fixture() -> Result<()> {
         .await?;
     owner.trust(&tls.origin).await?;
     owner.claim_ownership(&code).await?;
+    owner.create_channel("Restricted encrypted").await?;
+    let public = owner.create_channel_with_mode("Public conversation", ConfidentialityMode::Public).await?;
+    owner.send(&public, "Public history without a channel join").await?;
     let applicant = applicant_registry
         .create("Admission applicant", password, false)
         .await?;
@@ -1768,6 +1771,61 @@ async fn desktop_admission_acceptance_fixture() -> Result<()> {
         "approved applicant directory did not contain both accounts"
     );
     applicant.shutdown().await;
+    verify_untouched_role_defaults(&service).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires CORDS_TEST_DATABASE_URL; real TLS and PostgreSQL"]
+async fn readable_channels_initialize_without_user_join_and_hide_access_loss() -> Result<()> {
+    use cords_client_core::client::Client;
+    let (base, _directory, code) = fixture_with_state(false).await?;
+    let service = Service::with_policy(base.0.store.clone(), base.0.identity.clone(), 60, 900, JoinPolicy::ModeratorApproval)?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("test-ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let pass = b"readable channels independent vault test";
+    let mut owner = Client::open(&root.path().join("owner"), &migrations, Some(pass), Some(&ca)).await?;
+    let member_path = root.path().join("member");
+    let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    member.trust(&tls.origin).await?;
+    assert_eq!(member.request_admission().await?.admission_state, "pending");
+    owner.approve_membership(&member.status().device_id).await?;
+    member.request_admission().await?;
+    let secret = owner.create_channel("Restricted encrypted").await?;
+    let public = owner.create_channel_with_mode("Public conversation", ConfidentialityMode::Public).await?;
+    owner.send(&public, "Public history").await?;
+    assert_eq!(member.channels().await?.iter().map(|c| c.channel_id.clone()).collect::<Vec<_>>(), vec![public.clone()]);
+    assert!(member.sync_route(&secret).await.is_err());
+    assert!(member.send(&secret, "must be denied").await.is_err());
+    // No join_channel call: first send initializes the cursor and retrieves history.
+    member.send(&public, "Public reply").await?;
+    assert_eq!(member.history(&public).await?.len(), 2);
+    member.publish_key_package().await?;
+    owner.add_member(&secret, &member.status().device_id).await?;
+    owner.send(&secret, "Authorized encrypted history").await?;
+    let synced = member.synchronize().await?;
+    assert!(synced.messages.iter().any(|m| m.body == "Authorized encrypted history"));
+    member.send(&secret, "Encrypted reply without joining").await?;
+    assert!(member.cached_channels().iter().any(|c| c.channel_id == secret));
+    owner.remove_member(&secret, &member.status().device_id).await?;
+    member.synchronize().await?;
+    assert!(!member.cached_channels().iter().any(|c| c.channel_id == secret));
+    assert!(member.sync_route(&secret).await.is_err());
+    member.shutdown().await;
+    let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
+    member.synchronize().await?;
+    assert_eq!(member.cached_channels().iter().map(|c| c.channel_id.clone()).collect::<Vec<_>>(), vec![public]);
+    // Previously received plaintext remains sealed locally; access loss never
+    // erases identity continuity/history or silently re-enrolls the device.
+    assert!(member.history(&secret).await?.iter().any(|m| m.body == "Authorized encrypted history"));
+    member.shutdown().await;
+    owner.shutdown().await;
     verify_untouched_role_defaults(&service).await?;
     Ok(())
 }
@@ -2245,10 +2303,8 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         .await?
         .0;
     assert_eq!(owner_channels.len(), 1);
-    assert_eq!(other_channels.len(), 1);
+    assert!(other_channels.is_empty(), "server membership does not grant encrypted channel access");
     assert_eq!(owner_channels[0].channel_id, route);
-    assert_eq!(other_channels[0].channel_id, route);
-    assert!(other_channels[0].members.is_empty());
     assert!(
         channel(
             State(s.clone()),
@@ -2274,12 +2330,11 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         900,
         JoinPolicy::ModeratorApproval,
     )?;
-    assert_eq!(
+    assert!(
         channels(State(restarted.clone()), headers(&other_session)?)
             .await?
-            .0[0]
-            .channel_id,
-        route
+            .0.is_empty(),
+        "restart must not reveal a channel outside the authorized device roster"
     );
     assert_eq!(
         ownership_state(State(restarted)).await?.0.value.state,

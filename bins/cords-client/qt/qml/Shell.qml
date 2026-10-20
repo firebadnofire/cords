@@ -946,7 +946,7 @@ Item {
             width: parent.width
             spacing: 12
             CordsLabel {
-                text: "Cords validates HTTPS and pins the server signing identity. Verify the origin before trusting a new server."
+                text: "Cords validates HTTPS and pins the server signing identity, then requests admission. If approval is required, an administrator must accept your request before you can access the server. Verify the origin before continuing."
                 Layout.fillWidth: true
             }
             CordsField {
@@ -955,7 +955,7 @@ Item {
                 Layout.fillWidth: true
             }
             CordsButton {
-                text: "Verify and trust"
+                text: "Verify and request admission"
                 primary: true
                 enabled: !shell.desktop.busy && origin.text.trim().length > 0
                 onClicked: {

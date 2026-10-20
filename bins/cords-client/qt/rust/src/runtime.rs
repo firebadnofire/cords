@@ -895,7 +895,14 @@ impl Worker {
                 self.view.notice = "Local password changed".into();
             }
             Command::Trust(origin) => {
-                client.trust(&origin).await?;
+                let status = client.trust(&origin).await?;
+                // Adding a claimed server includes admission, not just local
+                // trust. Sync must not be the first operation on a non-member.
+                if status.ownership_state == "CLAIMED" {
+                    let status = client.request_admission().await?;
+                    self.view.notice = admission_notice(&status.admission_state).into();
+                }
+                self.server_health.remove(&client.status().server_id);
                 self.reset_server_views();
             }
             Command::SelectServer(server) => {

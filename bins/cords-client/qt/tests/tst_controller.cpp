@@ -340,10 +340,19 @@ private slots:
         applicant.unlockAccount(ready["applicant_account"].toString(), password);
         QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && !applicant.busy(), 30000);
         QVERIFY2(owner.state().value("error").toString().isEmpty(), qPrintable(owner.state().value("error").toString()));
-        if (applicant.state().value("admission").toString() == "rejected") {
-            applicant.authenticate();
-            QTRY_COMPARE_WITH_TIMEOUT(applicant.state().value("admission").toString(), QString("pending"), 30000);
-        }
+        // Exercise the actual Add Server command, rather than a pre-seeded
+        // pending account or a separate Authenticate action.
+        QCOMPARE(applicant.state().value("server").toString(), QString());
+        owner.loadRequests();
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && owner.state().value("requestsLoaded").toBool(), 30000);
+        QCOMPARE(owner.requests()->rowCount(), 0);
+        applicant.trustServer(ready["origin"].toString());
+        QTRY_COMPARE_WITH_TIMEOUT(applicant.state().value("admission").toString(), QString("pending"), 30000);
+        QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy(), 30000);
+        QVERIFY2(applicant.state().value("error").toString().isEmpty(), qPrintable(applicant.state().value("error").toString()));
+        // Repeating the add/status action must not duplicate the request.
+        applicant.trustServer(ready["origin"].toString());
+        QTRY_VERIFY_WITH_TIMEOUT(!applicant.busy(), 30000);
         QCOMPARE(applicant.state().value("admission").toString(), QString("pending"));
         QCOMPARE(applicant.channels()->rowCount(), 0);
         QCOMPARE(applicant.members()->rowCount(), 0);

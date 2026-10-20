@@ -1727,14 +1727,11 @@ async fn desktop_admission_acceptance_fixture() -> Result<()> {
         .await?;
     owner.trust(&tls.origin).await?;
     owner.claim_ownership(&code).await?;
-    let mut applicant = applicant_registry
+    let applicant = applicant_registry
         .create("Admission applicant", password, false)
         .await?;
-    applicant.trust(&tls.origin).await?;
-    assert_eq!(
-        applicant.request_admission().await?.admission_state,
-        "pending"
-    );
+    // Leave admission unsubmitted: the native Add Server command must create
+    // the request. Pre-seeding pending state concealed a missing UI operation.
     let owner_id = owner.status().account_id;
     let applicant_id = applicant.status().account_id;
     owner.shutdown().await;

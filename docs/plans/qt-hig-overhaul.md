@@ -263,3 +263,47 @@ Next dependent M2 units remain encrypted durable drafts (including lock/restart)
 account-strip verified avatar propagation, feedback layout stability, and the full
 state/keyboard/accessibility comparison matrix. No milestone is marked complete
 merely because a package launches.
+
+### Add-server admission regression (HIG §§5.5, 7, 10)
+
+User reports exposed a gap in the previously accepted approval slice: the native
+Add Server command only pinned trust. It never submitted admission, so background
+sync attempted ordinary authentication, displayed a permission-denied error, and
+the administrator correctly retrieved an empty request queue. The prior native
+fixture pre-submitted admission and therefore did not exercise this entry path.
+
+Minimal unit: after verified trust of a claimed server, run the existing typed
+admission operation and present its authoritative outcome. Keep unclaimed-server
+ownership bootstrap separate. Explain admission in the add dialog. Do not infer
+pending membership from a generic 403 or grant access to an applicant.
+
+Regression inventory: Add Server → `Trust` → verified TLS/pinned discovery →
+`request_admission` → durable server request → pending UI → administrator request
+retrieval → reject/resubmit/approve → requester status transition. Start the
+real-service native fixture without trust or admission; assert the original queue
+is empty and repeated Add Server produces one request. Existing pending isolation,
+native screenshots, denial and approval checks remain required.
+
+Validation: `evidence/admission-add-build.log` records a fresh release bridge/native
+build, QML lint, all four CTest suites passing, and deployment to
+`packages/current`. `evidence/admission-add-fixture.log` records a fresh release
+server test build and disposable PostgreSQL 17.10/TLS service. The Windows-platform
+`liveAdmissionWorkflow` passed (`evidence/admission-add-native.log`), including an
+initially empty admin queue, Add Server submission, duplicate-safe repetition,
+pending isolation, native reject/confirm/status/resubmit/approve interactions,
+and the admitted two-account directory. Fixture shutdown reopened the requester
+vault and verified active membership, directory persistence and untouched staged
+role defaults; the fixture's container and SSH tunnel were removed successfully.
+
+Inspected `build/admission-native-pending.png` and
+`build/admission-native-review.png` against the reported screenshots: the raw 403
+and generic empty conversation are replaced by the explicit approval explanation
+and status action; Requests contains the verified applicant, submission time,
+awaiting-review state and working decision controls. Existing saved/trusted-only
+servers can submit through Authenticate / request admission, followed by admin
+Refresh; no existing account or server state is rewritten automatically.
+
+Deployment still reports missing optional `dxcompiler.dll`/`dxil.dll` and unset
+`VCINSTALLDIR` warnings; successful compilation and native runtime testing are
+recorded separately from package deployment. This fix does not establish packaged
+runtime acceptance or complete the broader M2 visual/accessibility gate.

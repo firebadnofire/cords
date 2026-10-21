@@ -234,3 +234,57 @@ also require explicit `--origin`, `--host`, `--deployment-dir`, `--compose-file`
 configuration files must remain inside its absolute deployment directory. They
 no longer select the existing `cords-milestone` deployment implicitly. The new
 VM suite is the preferred split-host entry point and handles admission/bootstrap.
+
+## Packaged role GUI acceptance
+
+The role-specific helpers run on `.54` and reuse the ignored native
+`desktop_role_acceptance_fixture`, real PostgreSQL, TLS 1.3, and native account
+vaults. They do not add a production unlock bypass or activate staged RBAC.
+Build the server-core test binary from the recorded source first. Supply its
+`selection.json` containing `binary` and `binary_sha256`, with a sibling
+`source.json` containing the exact `source` directory under the owned runs root.
+The helper rejects a changed binary or mismatched build receipt.
+
+```sh
+python3 role_desktop_fixture.py /absolute/native-run/selection.json /absolute/owned-run/source
+```
+
+The command prints its unique `RUN` and waits at most 30 minutes for
+`RUN/desktop/stop`. Read `desktop/ready.json`, transfer the complete Windows
+package with its verified hash and the disposable `desktop-input.tar.gz`, then
+open the copied vault in a fresh `profile-*` using `windows-profile.ps1`.
+`windows-sky.mjs` drives the native QML controls through Windows UI Automation and
+records screenshots and accessible state after each action. Keep fixture vaults
+and database dumps private; their identities and public test passwords must never
+be used outside disposable tests.
+
+Forward the fixture's exact localhost TLS port over SSH to `.54`, preserving its
+HTTPS origin. Trust `fixture-ca.pem` only in the test process and retain native
+server-key pinning. No certificate-store changes or verification bypasses are
+needed. Do not expose PostgreSQL beyond `.54` loopback.
+
+After each GUI operation, assert authoritative state with an explicit expectation:
+
+```json
+{"name":"created","revision":1,"roles":{"GUI role":{"color":"#8dc4e7","permissions":[]}},"assignments":0,"audit":["put_role"]}
+```
+
+```sh
+python3 role_desktop_checkpoint.py RUN expectation.json
+python3 role_desktop_member.py RUN CURRENT_REVISION
+```
+
+Checkpoints compare the exact custom-role names, selected definition fields,
+revision, assignment count, and optional assignment targets/role names and audit
+operations. The member helper authenticates an independent native client and
+requires HTTP 403 for preparatory catalog access and an unauthorized role write.
+Run a checkpoint afterward to prove the denied write had no effect. Checkpoints
+are uniquely named and never overwrite earlier evidence. Incorrect expectations
+exit 1; missing artifacts and invalid invocation/ownership inputs exit 2.
+
+For the full GUI fixture, leave exactly one `GUI role` assigned to one test account
+before creating `desktop/stop`; the native server fixture verifies persistence.
+For a preflight that must leave defaults untouched, set
+`CORDS_ROLE_DESKTOP_DEFAULTS_ONLY=1` before starting the fixture. Both modes collect
+JSON/JUnit, logs and a database dump before removing only their owned container.
+Do not count preparatory assignments as active channel-permission enforcement.

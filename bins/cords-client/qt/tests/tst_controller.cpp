@@ -577,6 +577,53 @@ private slots:
         QTRY_VERIFY(!requests->property("modalOpen").toBool());
         requestsItem->setParentItem(nullptr);
     }
+    void roleEditorFollowsReviewedAccountAndServer() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_state = {{"canRoles", true}, {"revision", 7}, {"account", "first-account"}, {"server", "first-server"}};
+        QQmlEngine engine;
+        QQuickWindow window; window.resize(800, 780); window.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/RoleEditor.qml"));
+        QScopedPointer<QObject> editor(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}, {"parent", QVariant::fromValue(window.contentItem())}}));
+        QVERIFY2(editor, qPrintable(component.errorString()));
+        const QVariantMap role{{"id", "custom-role"}, {"name", "Guides"}, {"color", "#80b5db"}, {"permissions", QStringList{}}};
+        for (const auto &scopeKey : {QString("account"), QString("server")}) {
+            for (const auto &confirmationName : {QString("deleteRoleConfirmation"), QString("discardRoleConfirmation")}) {
+                QVERIFY(QMetaObject::invokeMethod(editor.data(), "edit", Q_ARG(QVariant, role), Q_ARG(QVariant, true)));
+                QTRY_VERIFY(editor->property("visible").toBool());
+                QVERIFY(editor->property("canEdit").toBool());
+                auto *confirmation = editor->findChild<QObject *>(confirmationName);
+                QVERIFY(confirmation);
+                QVERIFY(confirmation->property("operation").value<QJSValue>().isCallable());
+                QVERIFY(QMetaObject::invokeMethod(confirmation, "open"));
+                QTRY_VERIFY(confirmation->property("visible").toBool());
+                controller.m_state[scopeKey] = controller.m_state[scopeKey].toString() + "-changed";
+                emit controller.stateChanged();
+                QTRY_VERIFY(!editor->property("visible").toBool());
+                QTRY_VERIFY(!confirmation->property("visible").toBool());
+                QVERIFY(!editor->property("canEdit").toBool());
+                QVERIFY(editor->property("draft").value<QJSValue>().toVariant().toMap().isEmpty());
+                QVERIFY(!confirmation->property("operation").value<QJSValue>().isCallable());
+            }
+        }
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "edit", Q_ARG(QVariant, role), Q_ARG(QVariant, true)));
+        QTRY_VERIFY(editor->property("visible").toBool());
+        controller.m_state["revision"] = 8;
+        emit controller.stateChanged();
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "save"));
+        QVERIFY(!editor->property("submitting").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "removeRole"));
+        QVERIFY(!editor->property("submitting").toBool());
+        auto builtin = role;
+        builtin["id"] = "builtin:default";
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "edit", Q_ARG(QVariant, builtin), Q_ARG(QVariant, true)));
+        QVERIFY(editor->findChild<QObject *>("roleName")->property("readOnly").toBool());
+        QVERIFY(!editor->findChild<QObject *>("rolePriority")->property("enabled").toBool());
+        QVERIFY(!editor->findChild<QObject *>("deleteRole")->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "close"));
+    }
     void administrationDraftsFollowReviewedContext() {
         QTemporaryDir state;
         Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});

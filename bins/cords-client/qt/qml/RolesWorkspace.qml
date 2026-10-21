@@ -80,6 +80,7 @@ ColumnLayout {
         delegate: CordsButton {
             id: role
             required property var row
+            objectName: "roleRow-" + row.id
             width: list.width
             height: 62
             quiet: true

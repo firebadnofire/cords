@@ -214,6 +214,7 @@ ColumnLayout {
                 Layout.topMargin: 16
             }
             CordsCheck {
+                objectName: "rolePermission-" + permission.modelData.id
                 text: permission.modelData.label
                 checked: editor.permissions.includes(permission.modelData.id)
                 enabled: !editor.defaultRole || permission.modelData.safe

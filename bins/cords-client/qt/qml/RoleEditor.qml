@@ -16,21 +16,36 @@ CordsDialog {
     property bool submitting: false
     property bool existing: false
     property string serverId: ""
+    property string localAccount: ""
     readonly property bool dirty: JSON.stringify(draft) !== baseline
-    readonly property bool canEdit: !!desktop.state.canRoles && !desktop.busy
+    readonly property bool canEdit: visible && localAccount === (desktop.state.account || "") && serverId === (desktop.state.server || "") && !!desktop.state.canRoles && !desktop.busy
     readonly property bool valid: !!draft.name && draft.name.trim().length > 0 && /^#[0-9a-fA-F]{6}$/.test(draft.color || "")
     title: existing ? "Edit $" + (draft.name || "role") : "Create role"
     width: Math.min(680, parent ? parent.width - 32 : 680)
     height: Math.min(760, parent ? parent.height - 32 : 760)
     closePolicy: Popup.NoAutoClose
+    onClosed: {
+        discard.close();
+        deletion.close();
+        discard.operation = null;
+        deletion.operation = null;
+        submitting = false;
+        draft = ({});
+        baseline = JSON.stringify(draft);
+        lastPayload = "";
+        requestId = "";
+    }
     function edit(role, isExisting) {
         serverId = desktop.state.server || "";
+        localAccount = desktop.state.account || "";
         draft = Object.assign({}, role);
         existing = isExisting;
         reviewedRevision = desktop.state.revision;
         baseline = JSON.stringify(draft);
         lastPayload = "";
         submitting = false;
+        discard.operation = function () { editor.close(); };
+        deletion.operation = editor.removeRole;
         open();
     }
     function change(key, value) {
@@ -54,7 +69,7 @@ CordsDialog {
         discard.open();
     }
     function save() {
-        if (!canEdit || !valid)
+        if (!canEdit || !valid || reviewedRevision !== desktop.state.revision)
             return;
         const payload = JSON.stringify(draft);
         if (payload !== lastPayload) {
@@ -64,10 +79,21 @@ CordsDialog {
         submitting = true;
         desktop.putRole(draft, reviewedRevision, requestId);
     }
+    function removeRole() {
+        if (!canEdit || !existing || (draft.id || "").startsWith("builtin:") || reviewedRevision !== desktop.state.revision)
+            return;
+        const payload = JSON.stringify(["delete", draft.id, reviewedRevision]);
+        if (payload !== lastPayload) {
+            lastPayload = payload;
+            requestId = desktop.newId();
+        }
+        submitting = true;
+        desktop.deleteRole(draft.id, reviewedRevision, requestId);
+    }
     Connections {
         target: editor.desktop
         function onStateChanged() {
-            if (editor.visible && editor.serverId !== (editor.desktop.state.server || "")) {
+            if (editor.visible && (editor.serverId !== (editor.desktop.state.server || "") || editor.localAccount !== (editor.desktop.state.account || ""))) {
                 editor.close();
                 return;
             }
@@ -137,6 +163,7 @@ CordsDialog {
                         color: /^#[0-9a-fA-F]{6}$/.test(editor.draft.color || "") ? editor.draft.color : Theme.muted
                     }
                     CordsField {
+                        objectName: "roleColor"
                         text: editor.draft.color || ""
                         maximumLength: 7
                         Layout.fillWidth: true
@@ -149,6 +176,7 @@ CordsDialog {
                     font.bold: true
                 }
                 CordsField {
+                    objectName: "roleDescription"
                     text: editor.draft.description || ""
                     maximumLength: 1000
                     Layout.fillWidth: true
@@ -160,6 +188,7 @@ CordsDialog {
                         text: "Priority"
                     }
                     SpinBox {
+                        objectName: "rolePriority"
                         from: 0
                         to: 2147483647
                         value: editor.draft.priority || 0
@@ -179,6 +208,7 @@ CordsDialog {
                     Layout.fillWidth: true
                 }
                 CordsCheck {
+                    objectName: "roleMentionable"
                     text: "Allow this role to be mentioned"
                     checked: !!editor.draft.mentionable
                     onToggled: editor.change("mentionable", checked)
@@ -202,11 +232,13 @@ CordsDialog {
                 onClicked: editor.save()
             }
             CordsButton {
+                objectName: "cancelRoleEditor"
                 text: "Cancel"
                 enabled: !editor.desktop.busy
                 onClicked: editor.requestClose()
             }
             CordsButton {
+                objectName: "deleteRole"
                 text: "Delete role…"
                 destructive: true
                 visible: editor.existing && !(editor.draft.id || "").startsWith("builtin:")
@@ -217,21 +249,16 @@ CordsDialog {
     }
     ConfirmDialog {
         id: discard
+        objectName: "discardRoleConfirmation"
         title: "Discard role edits?"
         explanation: "Your unsaved changes will be lost."
         confirmText: "Discard"
-        operation: function () {
-            editor.close();
-        }
     }
     ConfirmDialog {
         id: deletion
+        objectName: "deleteRoleConfirmation"
         title: "Delete role?"
-        explanation: "Delete $" + (editor.draft.name || "") + ". Existing assignments may prevent deletion; the server validates the operation."
+        explanation: "Delete $" + (editor.draft.name || "") + " and remove its assignments? The server validates your current authority and policy revision."
         confirmText: "Delete role"
-        operation: function () {
-            editor.submitting = true;
-            editor.desktop.deleteRole(editor.draft.id, editor.reviewedRevision, editor.desktop.newId());
-        }
     }
 }

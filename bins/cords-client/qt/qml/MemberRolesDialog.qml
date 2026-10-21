@@ -6,6 +6,7 @@ import QtQuick.Layouts
 
 CordsDialog {
     id: dialog
+    objectName: "memberRolesDialog"
     required property Controller desktop
     property string account: ""
     property string serverId: ""
@@ -112,6 +113,8 @@ CordsDialog {
                     Layout.fillWidth: true
                 }
                 CordsButton {
+                    objectName: "memberRole-" + role.modelData.id
+                    Accessible.name: (role.modelData.id === "builtin:default" ? "Automatic" : dialog.assigned.includes(role.modelData.id) ? "Remove" : "Assign") + " $" + role.modelData.name
                     text: role.modelData.id === "builtin:default" ? "Automatic" : dialog.assigned.includes(role.modelData.id) ? "Remove…" : "Assign"
                     enabled: dialog.loaded && !dialog.desktop.busy && !!dialog.desktop.state.canAssign && role.modelData.id !== "builtin:default"
                     onClicked: {

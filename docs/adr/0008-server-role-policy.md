@@ -48,9 +48,18 @@ boundaries and persistent deduplication are independent of unread/read state.
 Defaults are All Messages with hidden previews; roles never determine notification
 access. Actual packaged tests are required per supported desktop platform.
 
-Checkpoint candidates stay outside automatic migrations until every dependent
-security gate passes. Schema 15 is rejected by the current schema-14 service. Native
-boundary preparation does not itself activate RBAC or establish endpoint coverage.
+Checkpoint candidates stay outside automatic migrations until their dependent
+security gates pass. The integrated enforcement/MLS continuation promotes the
+candidate to normal schema 22 after independent-client removal/recovery, restart,
+and service-boundary validation. Database migration alone does not activate it:
+before opening its listener, `serve` validates native signatures and restricted
+account boundaries against the persistent server identity, then activates the
+current policy transactionally. Server identity mismatch or invalid policy prevents
+startup; invalid or expired device evidence supplies no reconstructed grant.
+Repeated startup preserves assignments and audit history. Preparatory development
+assignments are archived during the one-way upgrade and never become grants.
+The broader moderation and packaged notification milestones remain separate;
+enforcement activation does not claim those features or their acceptance evidence.
 
 ## Deterministic authority
 

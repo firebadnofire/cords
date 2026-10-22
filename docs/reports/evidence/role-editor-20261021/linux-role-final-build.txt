@@ -1,0 +1,33 @@
+[  3%] Built target Cords_copy_res
+[  1%] Running qmlimportscanner for Cords
+[  3%] Copying Cords qml sources into build dir
+[  5%] Built target cords-rust
+Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not UTF-8.
+Qt depends on a UTF-8 locale, and has switched to "C.UTF-8" instead.
+If this causes problems, reconfigure your locale. See the locale(1) manual
+for more information.
+[  5%] Built target generate_qmlls_build_ini_file
+[  5%] Built target Cords_copy_qml
+[  5%] Built target Cords_qmlimportscan
+[  5%] Built target Cords_autogen_timestamp_deps
+[  5%] Built target Cords_autogen
+[  6%] Generating .rcc/qmlcache/Cords_qml/PermissionEditor_qml.cpp, .rcc/qmlcache/Cords_qml/PermissionEditor_qml.cpp.aotstats
+[  6%] Running rcc for resource Cords_raw_qml_0
+[  6%] Generating .rcc/qmlcache/Cords_qml/RoleEditor_qml.cpp, .rcc/qmlcache/Cords_qml/RoleEditor_qml.cpp.aotstats
+Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not UTF-8.
+Qt depends on a UTF-8 locale, and has switched to "C.UTF-8" instead.
+If this causes problems, reconfigure your locale. See the locale(1) manual
+for more information.
+Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not UTF-8.
+Qt depends on a UTF-8 locale, and has switched to "C.UTF-8" instead.
+If this causes problems, reconfigure your locale. See the locale(1) manual
+for more information.
+Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not UTF-8.
+Qt depends on a UTF-8 locale, and has switched to "C.UTF-8" instead.
+If this causes problems, reconfigure your locale. See the locale(1) manual
+for more information.
+[  8%] Building CXX object CMakeFiles/Cords.dir/.qt/rcc/qrc_Cords_raw_qml_0.cpp.o
+[  8%] Building CXX object CMakeFiles/Cords.dir/.rcc/qmlcache/Cords_qml/PermissionEditor_qml.cpp.o
+[ 10%] Building CXX object CMakeFiles/Cords.dir/.rcc/qmlcache/Cords_qml/RoleEditor_qml.cpp.o
+[ 10%] Linking CXX executable bin/Cords
+[100%] Built target Cords

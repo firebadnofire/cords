@@ -1,5 +1,5 @@
--- Checkpoint candidate: not in the automatically applied migration directory.
--- Install only with the server that enforces this policy on every request path.
+-- Current-policy enforcement boundary. Startup must finish native identity
+-- verification and policy validation before opening a listener.
 -- Native identity validation must finish before this schema can serve traffic.
 CREATE TABLE archived_role_assignments (
     account_id TEXT NOT NULL REFERENCES account_heads(account_id),
@@ -59,6 +59,16 @@ WHERE NOT m.active OR NOT m.delivery_active
   OR EXISTS(SELECT 1 FROM pending_policy_removals p
             WHERE p.channel_id=m.channel_id AND p.device_id=m.device_id);
 
+-- Immutable signed evidence survives retries until the corresponding MLS
+-- removal commits. It cannot manufacture an identity revocation or an add.
+CREATE TABLE channel_policy_removal_proofs (
+    channel_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    proof TEXT NOT NULL,
+    PRIMARY KEY(channel_id,device_id),
+    FOREIGN KEY(channel_id,device_id) REFERENCES pending_policy_removals(channel_id,device_id) ON DELETE CASCADE
+);
+
 CREATE TABLE rbac_migration (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton),
     completed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -86,7 +96,7 @@ WHERE c.confidentiality_mode='encrypted' AND m.active AND m.delivery_active AND 
   AND NOT EXISTS(SELECT 1 FROM pending_policy_removals p
                  WHERE p.channel_id=c.id AND p.device_id=d.device_id);
 
--- Keep policy inactive until native verification. Version 15 binaries must
--- refuse this schema; completing migration is not an authorization bypass.
+-- Keep policy inactive until native verification. Older binaries must refuse
+-- this schema; completing SQL migration is not an authorization bypass.
 ALTER TABLE role_policy DROP CONSTRAINT role_policy_active_check;
-UPDATE cords_schema_metadata SET version=16 WHERE singleton=TRUE;
+UPDATE cords_schema_metadata SET version=22 WHERE singleton=TRUE;

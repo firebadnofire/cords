@@ -1,0 +1,218 @@
+MSBuild version 17.14.51+25f168cee for .NET Framework
+
+  Checking File Globs
+  1>Checking Build System
+  Running qmlimportscanner for Cords
+  Generating E:/codex-build/cords-qt-cargo/release/cords_qt_bridge.lib
+  Copying Cords qml resources into build dir
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+      Finished `release` profile [optimized] target(s) in 0.52s
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+  Copying Cords qml sources into build dir
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+  1>Automatic MOC and UIC for target Cords
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+  Running AUTOMOC file extraction for target Cords
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+  Running moc --collect-json for target Cords
+  Automatic QML type registration for target Cords
+  Running rcc for resource qmake_Cords
+  Generating .rcc/qmlcache/Cords_qmlcache_loader.cpp
+  Running rcc for resource Cords_raw_qml_0
+  Running rcc for resource cords-icon
+  Building Custom Rule C:/Users/william/Desktop/git/cords/bins/cords-client/qt/CMakeLists.txt
+  Generating .rcc/qmlcache/Cords_qml/AccountCard_qml.cpp, .rcc/qmlcache/Cords_qml/AccountCard_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/AccountPicker_qml.cpp, .rcc/qmlcache/Cords_qml/AccountPicker_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/AccountTile_qml.cpp, .rcc/qmlcache/Cords_qml/AccountTile_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/AdminPane_qml.cpp, .rcc/qmlcache/Cords_qml/AdminPane_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/AvatarEditor_qml.cpp, .rcc/qmlcache/Cords_qml/AvatarEditor_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/ConfirmDialog_qml.cpp, .rcc/qmlcache/Cords_qml/ConfirmDialog_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/ConversationInfo_qml.cpp, .rcc/qmlcache/Cords_qml/ConversationInfo_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsAvatar_qml.cpp, .rcc/qmlcache/Cords_qml/CordsAvatar_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsButton_qml.cpp, .rcc/qmlcache/Cords_qml/CordsButton_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsCheck_qml.cpp, .rcc/qmlcache/Cords_qml/CordsCheck_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsComboBox_qml.cpp, .rcc/qmlcache/Cords_qml/CordsComboBox_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsDialog_qml.cpp, .rcc/qmlcache/Cords_qml/CordsDialog_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsEmptyState_qml.cpp, .rcc/qmlcache/Cords_qml/CordsEmptyState_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsField_qml.cpp, .rcc/qmlcache/Cords_qml/CordsField_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsIcon_qml.cpp, .rcc/qmlcache/Cords_qml/CordsIcon_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsIconButton_qml.cpp, .rcc/qmlcache/Cords_qml/CordsIconButton_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsLabel_qml.cpp, .rcc/qmlcache/Cords_qml/CordsLabel_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsMenu_qml.cpp, .rcc/qmlcache/Cords_qml/CordsMenu_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsMenuItem_qml.cpp, .rcc/qmlcache/Cords_qml/CordsMenuItem_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/CordsRoleChip_qml.cpp, .rcc/qmlcache/Cords_qml/CordsRoleChip_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/HistoryView_qml.cpp, .rcc/qmlcache/Cords_qml/HistoryView_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/LocalAccountRemoval_qml.cpp, .rcc/qmlcache/Cords_qml/LocalAccountRemoval_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/Main_qml.cpp, .rcc/qmlcache/Cords_qml/Main_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/MemberList_qml.cpp, .rcc/qmlcache/Cords_qml/MemberList_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/MemberRolesDialog_qml.cpp, .rcc/qmlcache/Cords_qml/MemberRolesDialog_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/MemberWorkspace_qml.cpp, .rcc/qmlcache/Cords_qml/MemberWorkspace_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/PermissionEditor_qml.cpp, .rcc/qmlcache/Cords_qml/PermissionEditor_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/ProfilePopup_qml.cpp, .rcc/qmlcache/Cords_qml/ProfilePopup_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/RequestsWorkspace_qml.cpp, .rcc/qmlcache/Cords_qml/RequestsWorkspace_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/RoleEditor_qml.cpp, .rcc/qmlcache/Cords_qml/RoleEditor_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/RoleMembersWorkspace_qml.cpp, .rcc/qmlcache/Cords_qml/RoleMembersWorkspace_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/RolesWorkspace_qml.cpp, .rcc/qmlcache/Cords_qml/RolesWorkspace_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/ServerClaim_qml.cpp, .rcc/qmlcache/Cords_qml/ServerClaim_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/ServerProfileForm_qml.cpp, .rcc/qmlcache/Cords_qml/ServerProfileForm_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/SettingsPane_qml.cpp, .rcc/qmlcache/Cords_qml/SettingsPane_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/Shell_qml.cpp, .rcc/qmlcache/Cords_qml/Shell_qml.cpp.aotstats
+  Generating .rcc/qmlcache/Cords_qml/Theme_qml.cpp, .rcc/qmlcache/Cords_qml/Theme_qml.cpp.aotstats
+  qrc_Cords_raw_qml_0.cpp
+  qrc_cords-icon.cpp
+  qrc_qmake_Cords.cpp
+  AccountCard_qml.cpp
+  AccountPicker_qml.cpp
+  AccountTile_qml.cpp
+  AdminPane_qml.cpp
+  AvatarEditor_qml.cpp
+  ConfirmDialog_qml.cpp
+  ConversationInfo_qml.cpp
+  CordsAvatar_qml.cpp
+  CordsButton_qml.cpp
+  CordsCheck_qml.cpp
+  CordsComboBox_qml.cpp
+  CordsDialog_qml.cpp
+  CordsEmptyState_qml.cpp
+  CordsField_qml.cpp
+  CordsIconButton_qml.cpp
+  CordsIcon_qml.cpp
+  CordsLabel_qml.cpp
+  Generating Code...
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+  Compiling...
+  CordsMenuItem_qml.cpp
+  CordsMenu_qml.cpp
+  CordsRoleChip_qml.cpp
+  HistoryView_qml.cpp
+  LocalAccountRemoval_qml.cpp
+  Main_qml.cpp
+  MemberList_qml.cpp
+  MemberRolesDialog_qml.cpp
+  MemberWorkspace_qml.cpp
+  PermissionEditor_qml.cpp
+  ProfilePopup_qml.cpp
+  RequestsWorkspace_qml.cpp
+  RoleEditor_qml.cpp
+  RoleMembersWorkspace_qml.cpp
+  RolesWorkspace_qml.cpp
+  ServerClaim_qml.cpp
+  ServerProfileForm_qml.cpp
+  SettingsPane_qml.cpp
+  Shell_qml.cpp
+  Theme_qml.cpp
+  Generating Code...
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(171,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(174,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(179,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(194,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qmetatype.h(458,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(685,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtCore\qvariant.h(690,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+C:\Users\william\AppData\Local\Cords\Qt\6.10.3\msvc2022_64\include\QtQml\qjsengine.h(112,1): warning C4702: unreachable code [E:\CordsBuild\build\Cords.vcxproj]
+  Compiling...
+  Cords_qmlcache_loader.cpp
+  Generating Code...
+  cords_qmltyperegistrations.cpp
+     Creating library E:/CordsBuild/build/Release/Cords.lib and object E:/CordsBuild/build/Release/Cords.exp
+  Cords.vcxproj -> E:\CordsBuild\build\Release\Cords.exe

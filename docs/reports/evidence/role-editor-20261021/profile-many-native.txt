@@ -1,0 +1,7 @@
+********* Start testing of ControllerTest *********
+Config: Using QtTest library 6.10.3, Qt 6.10.3 (x86_64-little_endian-lp64 shared (dynamic) release build; by GCC 11.4.1 20231218 (Red Hat 11.4.1-3)), opensuse-tumbleweed 20261016
+PASS   : ControllerTest::initTestCase()
+PASS   : ControllerTest::profileRoleControlsRequireFreshExactTargetActions()
+PASS   : ControllerTest::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 507ms
+********* Finished testing of ControllerTest *********

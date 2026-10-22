@@ -18,6 +18,8 @@ CordsDialog {
     property string lastPayload: ""
     property string requestId: ""
     property bool loaded: false
+    readonly property var target: desktop.state.roleTarget || ({})
+    readonly property bool current: !!target.loaded && target.account === account && target.revision === reviewedRevision && target.revision === desktop.state.revision
     title: "Member roles"
     height: Math.min(580, parent ? parent.height - 32 : 580)
     closePolicy: desktop.busy ? Popup.NoAutoClose : Popup.CloseOnEscape
@@ -43,6 +45,7 @@ CordsDialog {
         desktop.loadAccountRoles(account);
     }
     function changeRole(role, remove) {
+        if (!current || desktop.busy || !(remove ? target.removable || [] : target.assignable || []).includes(role)) return;
         const payload = JSON.stringify([account, role, remove, reviewedRevision]);
         if (payload !== lastPayload) {
             lastPayload = payload;
@@ -116,7 +119,7 @@ CordsDialog {
                     objectName: "memberRole-" + role.modelData.id
                     Accessible.name: (role.modelData.id === "builtin:default" ? "Automatic" : dialog.assigned.includes(role.modelData.id) ? "Remove" : "Assign") + " $" + role.modelData.name
                     text: role.modelData.id === "builtin:default" ? "Automatic" : dialog.assigned.includes(role.modelData.id) ? "Remove…" : "Assign"
-                    enabled: dialog.loaded && !dialog.desktop.busy && !!dialog.desktop.state.canAssign && role.modelData.id !== "builtin:default"
+                    enabled: dialog.loaded && dialog.current && !dialog.desktop.busy && (dialog.assigned.includes(role.modelData.id) ? dialog.target.removable || [] : dialog.target.assignable || []).includes(role.modelData.id)
                     onClicked: {
                         if (dialog.assigned.includes(role.modelData.id)) {
                             confirm.explanation = "Remove $" + role.modelData.name + " from account " + dialog.account + "? This can remove access when enforced policy is active.";

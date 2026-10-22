@@ -332,11 +332,12 @@ session_seconds = 900
 `server.join_policy` defaults to `moderator_approval`. A verified new device then
 receives a pending response and cannot authenticate until the owner approves it
 in Server settings → Members. Set `join_policy = "public"` explicitly only when
-immediate admission is intended. Admission does not grant `channel.create`:
-only the claimed owner can create channels in this implementation. Approval
-does not add a device to an MLS conversation; an authorized existing channel
-member must separately add it before ciphertext and history are available.
-Existing memberships and channel records are not rewritten by the migration.
+immediate admission is intended. Current account roles determine channel creation
+and access; the claimed owner's authority is independent of those roles. Account
+admission and device approval remain separate checks. Approval alone supplies no
+MLS keys: an eligible existing device must commit the authorized roster change.
+Opening a readable encrypted channel processes an available verified Welcome;
+new devices do not automatically receive old history keys.
 
 Protect it:
 
@@ -365,6 +366,15 @@ curl --fail --silent --show-error --output /dev/null http://127.0.0.1:4849/healt
 ```
 
 Stop the foreground process after readiness succeeds.
+
+Schema 22 includes the current-policy upgrade. `serve` verifies the persistent
+server identity and native account/device evidence and activates enforcement
+before opening the listener. Policy validation failures or server identity mismatches stop startup;
+inspect the reported error rather than bypassing validation. Repeated startup is
+safe. The upgrade archives preparatory role assignments without granting them,
+preserves role definitions and ownership, and retains encrypted-channel device
+exclusions and history bounds. Restore from the database and identity backup if
+rollback is required; do not run an older binary against the advanced schema.
 
 ### 6. Install a Linux systemd service
 

@@ -57,7 +57,7 @@ impl PostgresStore {
             sqlx::query_scalar("SELECT version FROM cords_schema_metadata WHERE singleton = TRUE")
                 .fetch_optional(&self.pool)
                 .await?;
-        if version != Some(17) {
+        if version != Some(22) {
             return Err(StorageError::SchemaVersion);
         }
         Ok(())

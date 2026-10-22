@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuite name="ControllerTest" timestamp="2026&#x002D;10&#x002D;21T13:27:14" hostname="server" tests="7" failures="0" errors="0" skipped="0" time="1.486">
+  <properties>
+    <property name="QTestVersion" value="6.10.3"/>
+    <property name="QtVersion" value="6.10.3"/>
+    <property name="QtBuild" value="Qt 6.10.3 (x86_64&#x002D;little_endian&#x002D;lp64 shared (dynamic) release build; by GCC 11.4.1 20231218 (Red Hat 11.4.1&#x002D;3))"/>
+  </properties>
+  <testcase name="initTestCase" classname="ControllerTest" time="0.000"/>
+  <testcase name="inlineRoleEditorPreservesDraftAndSearches" classname="ControllerTest" time="0.515"/>
+  <testcase name="profileRolePresentationTracksModelChanges" classname="ControllerTest" time="0.118"/>
+  <testcase name="administrationDraftsAndVirtualization" classname="ControllerTest" time="0.537">
+    <system-err>
+      <![CDATA[QTemporaryDir: Unable to remove "/tmp/CordsControllerTests-SEVGAA" most likely due to the presence of read-only files.]]>
+    </system-err>
+  </testcase>
+  <testcase name="roleEditorFollowsReviewedAccountAndServer" classname="ControllerTest" time="0.143"/>
+  <testcase name="administrationDraftsFollowReviewedContext" classname="ControllerTest" time="0.173"/>
+  <testcase name="cleanupTestCase" classname="ControllerTest" time="0.000"/>
+</testsuite>

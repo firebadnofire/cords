@@ -8,7 +8,7 @@ use cords_client_core::{
 };
 use cords_protocol::{
     messaging::ConfidentialityMode,
-    roles::{RoleCatalog, RoleChangeRequest},
+    roles::{Permission, RoleCatalog, RoleChangeRequest},
 };
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -47,6 +47,8 @@ pub(super) enum Command {
     CreateChannel(String, bool),
     ReplaceChannel(String, String, bool),
     RetireChannel(String),
+    Recoveries(String),
+    RecoverChannel(String, String),
     Acknowledge(String),
     Join(String),
     Publish,
@@ -54,6 +56,7 @@ pub(super) enum Command {
     Sync,
     Directory(String),
     Requests,
+    RequestProfile(String),
     ServerProfile,
     SaveServerProfile(cords_protocol::server_profile::ServerProfileChange),
     Approve(String),
@@ -63,6 +66,7 @@ pub(super) enum Command {
     Revoke,
     Roles,
     AccountRoles(String),
+    RoleMembers(String, bool, String),
     RoleChange(RoleChangeRequest),
     Audit(u64),
     Profile(String),
@@ -170,6 +174,27 @@ pub(super) fn empty_profile() -> ffi::Profile {
         pending: String::new(),
     }
 }
+fn empty_role_members() -> ffi::RoleMembers {
+    ffi::RoleMembers {
+        role: String::new(),
+        assigned: true,
+        revision: 0,
+        loaded: false,
+        next_after: String::new(),
+        member_count: 0,
+        rows: Vec::new(),
+    }
+}
+fn empty_role_target() -> ffi::RoleTarget {
+    ffi::RoleTarget {
+        account: String::new(),
+        revision: 0,
+        loaded: false,
+        assigned: Vec::new(),
+        assignable: Vec::new(),
+        removable: Vec::new(),
+    }
+}
 pub(super) fn empty_snapshot() -> ffi::Snapshot {
     ffi::Snapshot {
         completed: 0,
@@ -189,6 +214,7 @@ pub(super) fn empty_snapshot() -> ffi::Snapshot {
         can_create: false,
         can_approve: false,
         can_roles: false,
+        can_create_roles: false,
         can_assign: false,
         can_audit: false,
         revoked: false,
@@ -214,8 +240,14 @@ pub(super) fn empty_snapshot() -> ffi::Snapshot {
         devices: Vec::new(),
         requests: Vec::new(),
         requests_loaded: false,
+        recoveries: Vec::new(),
+        recoveries_loaded: false,
+        recovery_after: String::new(),
+        can_recover: false,
         server_profile: ffi::ServerPresentation::default(),
         roles: Vec::new(),
+        role_target: empty_role_target(),
+        role_members: empty_role_members(),
         audit: Vec::new(),
         profile: empty_profile(),
         avatar_draft: ffi::AvatarDraft::default(),
@@ -253,9 +285,11 @@ pub(super) struct Worker {
     alert_targets: VecDeque<Approved>,
     directory_refresh: Option<DirectoryRefresh>,
     directory_due: Instant,
+    role_due: Instant,
     metadata_retry: Instant,
     server_profile_due: Instant,
     profile_attempts: BTreeMap<String, Instant>,
+    recoveries: BTreeMap<String, cords_protocol::roles::ChannelRecoveryCandidate>,
     people: BTreeMap<String, ffi::PersonRow>,
     history_scope: (String, String, String),
     history_end: Option<String>,
@@ -310,9 +344,11 @@ impl Worker {
             alert_targets: VecDeque::new(),
             directory_refresh: None,
             directory_due: Instant::now(),
+            role_due: Instant::now(),
             metadata_retry: Instant::now(),
             server_profile_due: Instant::now(),
             profile_attempts: BTreeMap::new(),
+            recoveries: BTreeMap::new(),
             people: BTreeMap::new(),
             history_scope: (String::new(), String::new(), String::new()),
             history_end: None,
@@ -772,6 +808,7 @@ impl Worker {
         let legacy = self.view.legacy;
         let completed = self.view.completed;
         self.view = empty_snapshot();
+        self.recoveries.clear();
         self.view.completed = completed;
         self.view.accounts = accounts;
         self.view.legacy = legacy;
@@ -1016,6 +1053,55 @@ impl Worker {
             Command::CreateChannel(name, public) => {
                 self.view.route = client.create_channel_with_mode(&name, mode(public)).await?;
             }
+            Command::Recoveries(after) => {
+                let candidates = client.recovery_candidates(&after).await?;
+                if after.is_empty() {
+                    self.recoveries.clear();
+                    self.view.recoveries.clear();
+                }
+                self.view.recovery_after = if candidates.len() == 16 {
+                    candidates
+                        .last()
+                        .map(|candidate| candidate.predecessor.value.channel_id.clone())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                for candidate in candidates {
+                    let id = candidate.predecessor.value.channel_id.clone();
+                    self.view.recoveries.retain(|row| row.id != id);
+                    self.view.recoveries.push(ffi::RecoveryRow {
+                        id: id.clone(),
+                        epoch: candidate.channel_epoch,
+                        revision: candidate.policy_revision,
+                        committer_available: candidate.committer_available,
+                    });
+                    self.recoveries.insert(id, candidate);
+                }
+                self.view.recoveries_loaded = true;
+            }
+            Command::RecoverChannel(route, name) => {
+                let candidate = self
+                    .recoveries
+                    .get(&route)
+                    .context("Refresh recovery candidates before continuing")?;
+                let status = client.status();
+                ensure!(
+                    candidate.server_id == status.server_id
+                        && candidate.account_id == status.account_id
+                        && candidate.device_id == status.device_id,
+                    "Recovery belongs to another account or server; refresh candidates"
+                );
+                ensure!(
+                    !candidate.committer_available,
+                    "A current eligible committer can finish this removal"
+                );
+                let successor = client.recover_channel(candidate, &name).await?;
+                self.recoveries.remove(&route);
+                self.view.recoveries.retain(|row| row.id != route);
+                self.view.route = successor;
+                self.view.notice = "Fresh encrypted successor created. Original local history remains a separate partial archive.".into();
+            }
             Command::ReplaceChannel(route, name, public) => {
                 self.view.route = client.replace_channel(&route, &name, mode(public)).await?;
             }
@@ -1076,6 +1162,24 @@ impl Worker {
             Command::Requests => {
                 self.requests().await?;
             }
+            Command::RequestProfile(device) => {
+                let request = self
+                    .view
+                    .requests
+                    .iter()
+                    .find(|row| row.id == device && row.has_profile)
+                    .context(
+                        "Request profile is no longer available; refresh membership requests",
+                    )?;
+                let account = request.account.clone();
+                let profile = client.membership_request_profile(&device, &account).await?;
+                if let Some(agreed) = &profile.state.agreed
+                    && let Some(row) = self.view.requests.iter_mut().find(|row| row.id == device)
+                {
+                    row.name.clone_from(&agreed.display_name);
+                }
+                self.cache_person(&account, &profile.state, profile.image.as_deref());
+            }
             Command::Approve(device) => {
                 client.approve_membership(&device).await?;
                 self.requests().await?;
@@ -1098,22 +1202,63 @@ impl Worker {
                 self.view.notice = "Device revoked".into();
             }
             Command::Roles => {
-                let catalog = client.role_catalog().await?;
-                self.catalog(catalog)?;
+                if client.supports_role_policy() {
+                    client.effective_actions(None).await?;
+                }
+                let workspace = client.role_workspace().await?;
+                self.role_workspace(workspace)?;
             }
             Command::AccountRoles(account) => {
-                let result = client.account_roles(&account).await?;
-                for member in &mut self.view.members {
-                    if member.id == account {
-                        member.roles = result.role_ids.iter().cloned().collect();
-                    }
+                self.load_role_target(&account).await?;
+            }
+            Command::RoleMembers(role, assigned, after) => {
+                self.view.role_members = empty_role_members();
+                let page = client.role_members(&role, assigned, &after).await?;
+                if page.catalog.revision != self.view.revision || self.view.roles.is_empty() {
+                    let workspace = client.role_workspace().await?;
+                    anyhow::ensure!(
+                        workspace.catalog.revision == page.catalog.revision,
+                        "Role policy changed while loading members. Refresh the page."
+                    );
+                    self.role_workspace(workspace)?;
                 }
-                self.catalog(result.catalog)?;
+                self.view.role_members = ffi::RoleMembers {
+                    role: page.role_id,
+                    assigned: page.assigned,
+                    revision: page.catalog.revision,
+                    loaded: true,
+                    next_after: page.next_after.unwrap_or_default(),
+                    member_count: page.member_count,
+                    rows: page
+                        .members
+                        .into_iter()
+                        .map(|row| ffi::RoleMemberRow {
+                            account: row.account_id,
+                            can_assign: row.can_assign,
+                            can_remove: row.can_remove,
+                        })
+                        .collect(),
+                };
             }
             Command::RoleChange(request) => {
+                let target = match &request.change {
+                    cords_protocol::roles::RoleChange::AssignRole { account_id, .. }
+                    | cords_protocol::roles::RoleChange::RevokeRole { account_id, .. } => {
+                        account_id.clone()
+                    }
+                    _ => self.view.role_target.account.clone(),
+                };
+                self.view.role_target = empty_role_target();
+                self.view.role_members = empty_role_members();
                 client.change_role_policy(&request).await?;
-                let catalog = client.role_catalog().await?;
-                self.catalog(catalog)?;
+                if client.supports_role_policy() {
+                    client.effective_actions(None).await?;
+                }
+                let workspace = client.role_workspace().await?;
+                self.role_workspace(workspace)?;
+                if !target.is_empty() {
+                    self.load_role_target(&target).await?;
+                }
                 self.view.notice = "Role policy saved".into();
             }
             Command::Audit(after) => {
@@ -1133,7 +1278,12 @@ impl Worker {
                     }));
             }
             Command::Profile(account) => {
+                let role_metadata = client.role_policy_enforced() || self.view.can_roles;
+                self.view.role_target = empty_role_target();
                 self.profile(&account).await?;
+                if role_metadata {
+                    self.load_role_target(&account).await?;
+                }
             }
             Command::ProfileName(name, heads) => {
                 let account = client.status().account_id;
@@ -1463,9 +1613,16 @@ impl Worker {
         self.view.devices.clear();
         self.view.requests.clear();
         self.view.requests_loaded = false;
+        self.recoveries.clear();
+        self.view.recoveries.clear();
+        self.view.recoveries_loaded = false;
+        self.view.recovery_after.clear();
         self.view.server_profile = ffi::ServerPresentation::default();
         self.server_profile_due = Instant::now();
         self.view.roles.clear();
+        self.view.role_target = empty_role_target();
+        self.view.can_create_roles = false;
+        self.view.role_members = empty_role_members();
         self.view.audit.clear();
         self.view.profile = empty_profile();
         self.server_icon_draft = None;
@@ -1480,6 +1637,7 @@ impl Worker {
         self.profile_attempts.clear();
         self.directory_refresh = None;
         self.directory_due = Instant::now();
+        self.role_due = Instant::now();
         self.metadata_retry = Instant::now();
         self.view.revision = 0;
         self.view.roles_active = false;
@@ -1530,6 +1688,20 @@ impl Worker {
 
     async fn presentation(&mut self) -> Result<()> {
         let client = self.client.as_mut().context("Account locked")?;
+        if client.supports_role_policy() && Instant::now() >= self.role_due {
+            self.role_due = Instant::now() + Duration::from_secs(30);
+            let actions = client.effective_actions(None).await?;
+            if actions.active || actions.owner {
+                let workspace = client.role_workspace().await?;
+                let target = self.view.role_target.account.clone();
+                self.view.role_target = empty_role_target();
+                self.role_workspace(workspace)?;
+                if !target.is_empty() {
+                    self.load_role_target(&target).await?;
+                }
+            }
+            return Ok(());
+        }
         if client.supports_server_profile() && Instant::now() >= self.server_profile_due {
             client.server_profile().await?;
             self.server_profile_due = Instant::now() + Duration::from_secs(30);
@@ -1573,17 +1745,32 @@ impl Worker {
         } else {
             let mut accounts: Vec<_> = self
                 .view
-                .messages
+                .role_members
+                .rows
                 .iter()
-                .rev()
-                .take(100)
-                .map(|message| message.account.clone())
+                .map(|row| row.account.clone())
                 .collect();
+            accounts.extend(
+                self.view
+                    .messages
+                    .iter()
+                    .rev()
+                    .take(100)
+                    .map(|message| message.account.clone())
+                    .collect::<Vec<_>>(),
+            );
             accounts.extend(self.view.members.iter().map(|member| member.id.clone()));
             let mut unique = std::collections::BTreeSet::new();
             accounts.retain(|account| unique.insert(account.clone()));
             accounts.truncate(128);
-            self.people.retain(|account, _| accounts.contains(account));
+            self.people.retain(|account, _| {
+                accounts.contains(account)
+                    || self
+                        .view
+                        .requests
+                        .iter()
+                        .any(|row| row.has_profile && row.account == *account)
+            });
             self.profile_attempts
                 .retain(|account, _| accounts.contains(account));
             if let Some(account) = accounts.into_iter().find(|account| {
@@ -1654,6 +1841,7 @@ impl Worker {
             .await?
             .into_iter()
             .map(|request| ffi::RequestRow {
+                has_profile: request.has_profile && !request.identity_burned,
                 id: request.device_id,
                 account: request.account_id,
                 name: request
@@ -1666,7 +1854,47 @@ impl Worker {
         self.view.requests_loaded = true;
         Ok(())
     }
+    async fn load_role_target(&mut self, account: &str) -> Result<()> {
+        self.view.role_target = empty_role_target();
+        let result = self
+            .client
+            .as_mut()
+            .context("Account locked")?
+            .role_target_actions(account)
+            .await?;
+        for member in &mut self.view.members {
+            if member.id == account {
+                member.roles = result.role_ids.iter().cloned().collect();
+            }
+        }
+        if result.catalog.revision != self.view.revision || self.view.roles.is_empty() {
+            self.view.can_create_roles = false;
+            self.catalog(result.catalog.clone())?;
+        }
+        self.view.role_target = ffi::RoleTarget {
+            account: result.target_account_id,
+            revision: result.catalog.revision,
+            loaded: true,
+            assigned: result.role_ids.into_iter().collect(),
+            assignable: result.assignable.into_iter().collect(),
+            removable: result.removable.into_iter().collect(),
+        };
+        Ok(())
+    }
+    fn role_workspace(&mut self, workspace: cords_protocol::roles::RoleWorkspace) -> Result<()> {
+        self.catalog(workspace.catalog)?;
+        self.view.can_create_roles = workspace.can_create;
+        for row in &mut self.view.roles {
+            row.editable = workspace.editable.contains(&row.id);
+            row.deletable = workspace.deletable.contains(&row.id);
+            row.member_count = workspace.counts.get(&row.id).copied().unwrap_or(0);
+        }
+        Ok(())
+    }
     fn catalog(&mut self, catalog: RoleCatalog) -> Result<()> {
+        if catalog.revision != self.view.role_members.revision {
+            self.view.role_members = empty_role_members();
+        }
         self.view.revision = catalog.revision;
         self.view.roles_active = catalog.active;
         self.view.roles = catalog
@@ -1674,6 +1902,9 @@ impl Worker {
             .into_iter()
             .map(|role| {
                 Ok(ffi::RoleRow {
+                    editable: false,
+                    deletable: false,
+                    member_count: 0,
                     id: role.id,
                     name: role.name,
                     color: role.color,
@@ -1796,6 +2027,18 @@ impl Worker {
             .pointer("/membership/capabilities")
             .and_then(serde_json::Value::as_array);
         let has = |capability: &str| {
+            if client.role_policy_enforced() {
+                return serde_json::from_value::<Permission>(serde_json::Value::String(
+                    capability.into(),
+                ))
+                .is_ok_and(|permission| {
+                    client
+                        .cached_effective_actions(None)
+                        .is_some_and(|actions| {
+                            actions.active && actions.permissions.contains(&permission)
+                        })
+                });
+            }
             capabilities.is_some_and(|values| {
                 values
                     .iter()
@@ -1821,10 +2064,18 @@ impl Worker {
             has_icon: presentation.is_some_and(|profile| profile.icon.is_some()),
         };
         self.view.can_create = has("channel.create");
-        self.view.can_approve = has("server.manage") || has("server.member.approve");
-        self.view.can_roles = has("server.manage") || has("server.roles.manage");
-        self.view.can_assign = has("server.manage") || has("server.roles.assign");
-        self.view.can_audit = has("server.manage") || has("server.audit.read");
+        let legacy_manage = !client.role_policy_enforced() && has("server.manage");
+        self.view.can_approve =
+            legacy_manage || has("server.member.approve") || has("server.device.approve");
+        self.view.can_roles = legacy_manage || has("server.roles.manage");
+        self.view.can_assign = legacy_manage || has("server.roles.assign");
+        self.view.can_audit = legacy_manage || has("server.audit.read");
+        self.view.can_recover = client.role_policy_enforced()
+            && client
+                .cached_effective_actions(None)
+                .is_some_and(|actions| {
+                    actions.owner && actions.permissions.contains(&Permission::CreateChannels)
+                });
         self.view.servers = server_rows(client, &self.server_health, &self.server_order);
         // Bound copied Qt snapshot media independently of the 128 MiB disk cache.
         // Prioritize the selected server; remaining rail entries retain initials
@@ -1853,7 +2104,7 @@ impl Worker {
             .cached_channels()
             .into_iter()
             .map(|channel| ffi::ChannelRow {
-                id: channel.channel_id,
+                id: channel.channel_id.clone(),
                 name: channel.name,
                 mode: if channel.confidentiality_mode == ConfidentialityMode::Public {
                     "public"
@@ -1872,7 +2123,54 @@ impl Worker {
                         .as_ref()
                         .is_some_and(|transition| transition.value.retired),
                 acknowledgement: channel.requires_public_acknowledgement,
-                can_manage: channel.creator_device_id == self.view.device || has("channel.manage"),
+                can_manage: if client.role_policy_enforced() {
+                    client
+                        .cached_effective_actions(Some(&channel.channel_id))
+                        .is_some_and(|actions| {
+                            actions.active
+                                && actions.permissions.contains(&Permission::ManageChannel)
+                        })
+                } else {
+                    channel.creator_device_id == self.view.device || has("channel.manage")
+                },
+                can_roster: !channel.locally_archived
+                    && channel.confidentiality_mode == ConfidentialityMode::Encrypted
+                    && if client.role_policy_enforced() {
+                        client
+                            .cached_effective_actions(Some(&channel.channel_id))
+                            .is_some_and(|actions| {
+                                actions.permissions.contains(&Permission::CommitMls)
+                                    && actions
+                                        .permissions
+                                        .contains(&Permission::ManageChannelMembers)
+                            })
+                    } else {
+                        channel.creator_device_id == self.view.device || has("channel.manage")
+                    },
+                can_retire: !channel.locally_archived
+                    && if client.role_policy_enforced() {
+                        client
+                            .cached_effective_actions(Some(&channel.channel_id))
+                            .is_some_and(|actions| {
+                                actions.permissions.contains(&Permission::RetireChannel)
+                            })
+                    } else {
+                        channel.creator_device_id == self.view.device || has("channel.manage")
+                    },
+                can_replace: !channel.locally_archived
+                    && self.view.can_create
+                    && client
+                        .cached_effective_actions(None)
+                        .is_some_and(|actions| actions.owner)
+                    && if client.role_policy_enforced() {
+                        client
+                            .cached_effective_actions(Some(&channel.channel_id))
+                            .is_some_and(|actions| {
+                                actions.permissions.contains(&Permission::ManageChannel)
+                            })
+                    } else {
+                        channel.creator_device_id == self.view.device || has("channel.manage")
+                    },
             })
             .collect();
         if !self

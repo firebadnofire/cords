@@ -45,6 +45,41 @@ pub enum Error {
     Identity,
     #[error("RBAC migration time is outside the supported range")]
     Time,
+    #[error("RBAC startup policy validation failed")]
+    Policy(#[from] super::persistence::Error),
+    #[error("RBAC startup requires a complete native boundary and valid role catalog")]
+    Incomplete,
+}
+
+/// Prepare the durable boundary and enable the validated current-policy engine
+/// before opening any listener. Repeated startup preserves definitions, explicit
+/// assignments, history bounds and audit state. Failure leaves traffic closed.
+/// # Errors
+/// Rejects mismatched identity, invalid policy or incomplete native preparation.
+pub async fn activate(
+    store: &PostgresStore,
+    server_id: &str,
+    server_key: &str,
+    now: u64,
+) -> Result<(), Error> {
+    prepare(store, server_id, server_key, now).await?;
+    let mut tx = store.pool().begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('server-ownership',0))")
+        .execute(&mut *tx)
+        .await?;
+    let snapshot = super::persistence::load(&mut tx).await?;
+    let completed: bool =
+        sqlx::query_scalar("SELECT completed FROM rbac_migration WHERE singleton=TRUE FOR UPDATE")
+            .fetch_one(&mut *tx)
+            .await?;
+    if !completed || snapshot.policy.is_none() {
+        return Err(Error::Incomplete);
+    }
+    sqlx::query("UPDATE role_policy SET active=TRUE WHERE singleton=TRUE AND NOT active")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Complete the frozen migration boundary exactly once, without changing any

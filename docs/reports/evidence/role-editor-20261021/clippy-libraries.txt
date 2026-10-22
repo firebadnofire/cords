@@ -1,0 +1,129 @@
+    Checking cords-protocol v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-protocol)
+   Compiling cords-avatar-codec v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-avatar-codec)
+    Checking cords-storage v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-storage)
+warning: casting `i32` to `usize` may lose the sign of the value
+  --> crates\cords-avatar-codec\src\encoding.rs:75:30
+   |
+75 |             ensure!(length + count as usize <= 5_000_000, "Cropped image exceeds 5 MB; zoom in or select a smaller image");
+   |                              ^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_sign_loss
+   = note: `-W clippy::cast-sign-loss` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_sign_loss)]`
+
+warning: casting `i32` to `usize` may lose the sign of the value
+  --> crates\cords-avatar-codec\src\encoding.rs:76:41
+   |
+76 |             self.output.resize(length + count as usize, 0);
+   |                                         ^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_sign_loss
+
+warning: `cords-avatar-codec` (lib) generated 2 warnings
+    Checking cords-crypto v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-crypto)
+    Checking cords-identity v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-identity)
+    Checking cords-client-core v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-client-core)
+    Checking cords-server-core v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-server-core)
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates\cords-server-core\src\messaging.rs:486:45
+    |
+486 |                 .access(&decision.subject, &Default::default(), &Default::default())
+    |                                             ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#default_trait_access
+    = note: `-W clippy::default-trait-access` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::default_trait_access)]`
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates\cords-server-core\src\messaging.rs:486:66
+    |
+486 |                 .access(&decision.subject, &Default::default(), &Default::default())
+    |                                                                  ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#default_trait_access
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates\cords-server-core\src\messaging.rs:597:36
+    |
+597 |                 .access(&subject, &Default::default(), &Default::default())
+    |                                    ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#default_trait_access
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates\cords-server-core\src\messaging.rs:597:57
+    |
+597 |                 .access(&subject, &Default::default(), &Default::default())
+    |                                                         ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#default_trait_access
+
+warning: this function has too many lines (109/100)
+   --> crates\cords-server-core\src\messaging.rs:663:1
+    |
+663 | pub fn router(service: Service) -> Router {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_lines
+    = note: `-W clippy::too-many-lines` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::too_many_lines)]`
+
+warning: this function has too many lines (112/100)
+    --> crates\cords-server-core\src\messaging.rs:1826:1
+     |
+1826 | / async fn replace_channel(
+1827 | |     State(s): State<Service>,
+1828 | |     headers: HeaderMap,
+1829 | |     Path(route): Path<String>,
+1830 | |     Json(request): Json<ChannelReplace>,
+1831 | | ) -> Result<Json<String>> {
+     | |_________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_lines
+
+warning: this function has too many lines (107/100)
+    --> crates\cords-server-core\src\messaging.rs:2139:1
+     |
+2139 | / async fn roster(
+2140 | |     State(s): State<Service>,
+2141 | |     headers: HeaderMap,
+2142 | |     Path(route): Path<String>,
+2143 | |     Json(request): Json<RosterRequest>,
+2144 | | ) -> Result<Json<RosterOperation>> {
+     | |__________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_lines
+
+warning: this function has too many lines (138/100)
+    --> crates\cords-server-core\src\messaging.rs:2267:1
+     |
+2267 | / async fn commit(
+2268 | |     State(s): State<Service>,
+2269 | |     headers: HeaderMap,
+2270 | |     Path(route): Path<String>,
+2271 | |     Json(request): Json<CommitUpload>,
+2272 | | ) -> Result<Json<RouteEvent>> {
+     | |_____________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_lines
+
+warning: calling `BTreeSet::default()` is more clear than this expression
+   --> crates\cords-server-core\src\messaging\role_workspace.rs:136:22
+    |
+136 |         permissions: Default::default(),
+    |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeSet::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#default_trait_access
+
+warning: this boolean expression can be simplified
+   --> crates\cords-server-core\src\messaging\server_profile.rs:218:8
+    |
+218 |     if !profile.icon.is_some_and(|icon| icon.sha256 == digest) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `profile.icon.is_none_or(|icon| icon.sha256 != digest)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#nonminimal_bool
+    = note: `-W clippy::nonminimal-bool` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::nonminimal_bool)]`
+
+warning: `cords-server-core` (lib) generated 10 warnings (run `cargo clippy --fix --lib -p cords-server-core -- ` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.12s

@@ -1,0 +1,65 @@
+{
+  "host": "192.168.86.54",
+  "server": "isolated PostgreSQL 17 and verified test TLS",
+  "native_platform": "Qt 6.10.3 Linux offscreen, software rendering",
+  "source_base": "7d1ea39648e1fdb703508cb60f9ff7a1587dff5a",
+  "local_changed_source_sha256": {
+    "UI-DESIGN.md": "dd35a6b4e32a7f34b350e2e771bf9d6585e3f57f6768ac9d3ce6a5cf3e3b84d7",
+    "bins/cords-client/qt/cpp/controller.cpp": "f8a9ce0f80668c3eec64d803a28cc5ad2efc544ab63559ad50a8c828745d5d09",
+    "bins/cords-client/qt/cpp/controller.h": "4e56e62a638a209fb979d12f0c94551a5239221dd853b09580989764d480ac8b",
+    "bins/cords-client/qt/qml/RequestsWorkspace.qml": "07f3f1730239a856cd845fb19b7db454ac2adaf81b3f6f9db8fbbdc489129b7c",
+    "bins/cords-client/qt/qml/Shell.qml": "b6c8779d194825c9901efdfe0347f4fc1880e80c07831e7191684fee4f545384",
+    "bins/cords-client/qt/rust/src/lib.rs": "46ffc0166b3c91c839683b7c22833b4c2b3bf8c4385a26871ab7bab8bbe58f94",
+    "bins/cords-client/qt/rust/src/runtime.rs": "0b32768a9dda08cec6e4f8e573839d22199d1b0460313c8d1ad9c7e49babb699",
+    "bins/cords-client/qt/tests/tst_controller.cpp": "e31cba11ffe7d044c9a6e23118a906773dff2bec4c31cf42708a401802352e5c",
+    "crates/cords-client-core/src/client.rs": "218732660e9446495b02f3071172433aaa4bea9b93ca4e721aaf51e2a6fd422a",
+    "crates/cords-client-core/src/client_profiles.rs": "3ddc24a85f65e9dc5478f2cdb5972e39b6d73b87893bcc791dfaa0818c57b355",
+    "crates/cords-protocol/src/messaging.rs": "fbbc4208889a71888544400babd3b33dc9620be78e979506a87469d20bc8b64b",
+    "crates/cords-protocol/src/profiles.rs": "ceea6ebf2b31cc555f2fbffff140c7fc7827842b39de06bf0d5ae0eadfd21bf6",
+    "crates/cords-protocol/src/profiles/tests.rs": "0f33d30ce6853d495ddddf03bc7b0181ac2ae5a02d38b7af7358ded33fa28c98",
+    "crates/cords-server-core/src/lib.rs": "58ada067d9c3135d071ccee92e51dc491b7ec22d7ceed3c53991a3db07efad72",
+    "crates/cords-server-core/src/messaging.rs": "5bff4c4776ad96d77e955537b89d87cfca8b775d128667f1df442d85cbc22b53",
+    "crates/cords-server-core/src/messaging/profiles.rs": "1a7c1953a4debe8fa6a2a23e12f77b376a704ae8b4032dc4d8c667efa6e0bdb9",
+    "crates/cords-server-core/src/messaging/tests.rs": "68035f389742515ec8b841e00adf3ac6f48f519553a3fd675fd1ba1af1c44261",
+    "crates/cords-server-core/src/messaging/tests/directory.rs": "0dbfea1af237af47c23388472749cf146f9b15f522404f9fb58f8024eec3b5f4",
+    "crates/cords-server-core/src/messaging/tests/profiles.rs": "33ed0f329de02747f9774af94c69b13086f246cf926c8807275a5fb4a9366810",
+    "crates/cords-storage/src/lib.rs": "ab99a74824dc508e6302a5734a11c41865ad60d6acef8c13e282b510e6af4edc",
+    "docs/adr/README.md": "236ea04c516d441a50527de4f162e76915f8149c1e2fc186c0fc0dbae5619de3",
+    "migrations/postgres/202610210001_admission_profiles.sql": "c70031a794a5d57414031cbc7ac54c9e9f5fe61c40bcf109263dba5dbff21eac"
+  },
+  "two_client": {
+    "passed": true,
+    "seconds": 80.94,
+    "checks": [
+      "pre-admission signed avatar",
+      "pending update",
+      "cached rollback rejection",
+      "unauthorized access denied",
+      "idempotent retry",
+      "two vault reopen persistence",
+      "signature tampering rejected",
+      "approval and normal publication"
+    ]
+  },
+  "native_slots": [
+    "liveAdmissionWorkflow",
+    "productionQmlHoverProfilesAndLayouts",
+    "conversationEmptyHistoryStates"
+  ],
+  "windows_build": {
+    "passed": true,
+    "configuration": "Release MSVC / Qt 6.10.3",
+    "executable": "E:\\CordsBuild\\build\\Release\\Cords.exe",
+    "bytes": 32502784,
+    "sha256": "4d72338d59d869450ae24e66ea3980c18300c338fbb168061dc9d381015b2d06",
+    "log": "E:/CordsBuild/evidence/admission-windows-build.txt",
+    "gui_acceptance": false
+  },
+  "production_deployment": false,
+  "limitations": [
+    "debug sandbox initialized before time-limited challenges",
+    "native GUI verified on Linux offscreen, not Windows GUI or packaged runtime",
+    "strict Clippy blocked by pre-existing avatar/runtime/server-profile warnings"
+  ],
+  "test_container": "cords-e2e-admission-pfp-20261021-b185 (stopped, retained)"
+}

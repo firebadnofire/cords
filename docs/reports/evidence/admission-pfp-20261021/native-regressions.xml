@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuite name="ControllerTest" timestamp="2026&#x002D;10&#x002D;21T12:28:35" hostname="server" tests="4" failures="0" errors="0" skipped="0" time="8.918">
+  <properties>
+    <property name="QTestVersion" value="6.10.3"/>
+    <property name="QtVersion" value="6.10.3"/>
+    <property name="QtBuild" value="Qt 6.10.3 (x86_64&#x002D;little_endian&#x002D;lp64 shared (dynamic) release build; by GCC 11.4.1 20231218 (Red Hat 11.4.1&#x002D;3))"/>
+  </properties>
+  <testcase name="initTestCase" classname="ControllerTest" time="0.000"/>
+  <testcase name="productionQmlHoverProfilesAndLayouts" classname="ControllerTest" time="8.720">
+    <system-out>
+      <![CDATA[Rendered message grouping count 1]]>
+    </system-out>
+  </testcase>
+  <testcase name="conversationEmptyHistoryStates" classname="ControllerTest" time="0.197"/>
+  <testcase name="cleanupTestCase" classname="ControllerTest" time="0.000"/>
+</testsuite>

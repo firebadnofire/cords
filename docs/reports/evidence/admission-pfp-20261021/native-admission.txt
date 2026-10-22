@@ -1,0 +1,27 @@
+********* Start testing of ControllerTest *********
+Config: Using QtTest library 6.10.3, Qt 6.10.3 (x86_64-little_endian-lp64 shared (dynamic) release build; by GCC 11.4.1 20231218 (Red Hat 11.4.1-3)), opensuse-tumbleweed 20261016
+PASS   : ControllerTest::initTestCase()
+QWARN  : ControllerTest::liveAdmissionWorkflow() This plugin does not support raise()
+QINFO  : ControllerTest::liveAdmissionWorkflow() Click native admission action "rejectMembershipRequestAction"
+QWARN  : ControllerTest::liveAdmissionWorkflow() This plugin does not support raise()
+QINFO  : ControllerTest::liveAdmissionWorkflow() Native admission action returned "rejectMembershipRequestAction"
+QINFO  : ControllerTest::liveAdmissionWorkflow() Click native admission action "confirmOperation"
+QWARN  : ControllerTest::liveAdmissionWorkflow() This plugin does not support raise()
+QINFO  : ControllerTest::liveAdmissionWorkflow() Native admission action returned "confirmOperation"
+QINFO  : ControllerTest::liveAdmissionWorkflow() Rejection persisted; requester status QVariant(QString, "pending")
+QINFO  : ControllerTest::liveAdmissionWorkflow() Click native admission action "emptyStateAction"
+QWARN  : ControllerTest::liveAdmissionWorkflow() This plugin does not support raise()
+QINFO  : ControllerTest::liveAdmissionWorkflow() Native admission action returned "emptyStateAction"
+QINFO  : ControllerTest::liveAdmissionWorkflow() Click native admission action "emptyStateAction"
+QWARN  : ControllerTest::liveAdmissionWorkflow() This plugin does not support raise()
+QINFO  : ControllerTest::liveAdmissionWorkflow() Native admission action returned "emptyStateAction"
+QINFO  : ControllerTest::liveAdmissionWorkflow() Click native admission action "approveMembershipRequest"
+QWARN  : ControllerTest::liveAdmissionWorkflow() This plugin does not support raise()
+QINFO  : ControllerTest::liveAdmissionWorkflow() Native admission action returned "approveMembershipRequest"
+QINFO  : ControllerTest::liveAdmissionWorkflow() Click native admission action "emptyStateAction"
+QWARN  : ControllerTest::liveAdmissionWorkflow() This plugin does not support raise()
+QINFO  : ControllerTest::liveAdmissionWorkflow() Native admission action returned "emptyStateAction"
+PASS   : ControllerTest::liveAdmissionWorkflow()
+PASS   : ControllerTest::cleanupTestCase()
+Totals: 3 passed, 0 failed, 0 skipped, 0 blacklisted, 10774ms
+********* Finished testing of ControllerTest *********

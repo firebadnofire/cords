@@ -190,6 +190,10 @@ impl Statement for IdentityBurn {
 #[serde(untagged)]
 pub enum PolicyRemoval {
     Revocation(Signed<DeviceRevocation>),
+    ServerPolicy {
+        device_id: String,
+        policy: Signed<crate::roles::ChannelAccessRemoval>,
+    },
     Account {
         device_id: String,
         proof: DepartureProof,
@@ -347,6 +351,8 @@ pub struct MembershipRequest {
     pub status: String,
     #[serde(default)]
     pub identity_burned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_profile: bool,
     #[serde(default)]
     pub user_card: Option<Signed<UserCard>>,
     #[serde(default)]
@@ -366,8 +372,12 @@ pub struct ChallengeRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_policy_version: Option<u16>,
     pub proof: Signed<Challenge>,
     pub idempotency_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_profile: Option<crate::profiles::AdmissionProfile>,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -395,6 +405,8 @@ impl Statement for OwnershipProof {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnershipClaim {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_policy_version: Option<u16>,
     pub claim_code: String,
     pub contact: Contact,
     pub device_proof: Signed<Challenge>,
@@ -416,6 +428,8 @@ impl Statement for OwnershipRecoveryProof {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnershipRecoveryClaim {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_policy_version: Option<u16>,
     pub recovery_code: String,
     pub contact: Contact,
     pub device_proof: Signed<Challenge>,
@@ -425,6 +439,7 @@ pub struct OwnershipRecoveryClaim {
 impl std::fmt::Debug for OwnershipRecoveryClaim {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OwnershipRecoveryClaim")
+            .field("role_policy_version", &self.role_policy_version)
             .field("recovery_code", &"[REDACTED]")
             .field("contact", &self.contact)
             .field("device_proof", &self.device_proof)
@@ -436,6 +451,7 @@ impl std::fmt::Debug for OwnershipRecoveryClaim {
 impl std::fmt::Debug for OwnershipClaim {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OwnershipClaim")
+            .field("role_policy_version", &self.role_policy_version)
             .field("claim_code", &"[REDACTED]")
             .field("contact", &self.contact)
             .field("device_proof", &self.device_proof)
@@ -543,6 +559,8 @@ impl Statement for ChannelTransition {
 #[serde(deny_unknown_fields)]
 pub struct ChannelReplace {
     pub record: Signed<ChannelSuccession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<Signed<crate::roles::ChannelRemovalRecovery>>,
     pub idempotency_key: String,
 }
 
@@ -604,6 +622,10 @@ impl Signed<PublicMessage> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Channel {
+    /// Current authenticated device's delivery boundary, never an MLS key grant.
+    /// Only a valid fresh Welcome can establish replacement local MLS state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joined_sequence: Option<u64>,
     pub channel_id: String,
     pub name: String,
     pub creator_device_id: String,
@@ -741,6 +763,7 @@ mod tests {
             expires_at: 2,
         };
         let request = OwnershipClaim {
+            role_policy_version: Some(1),
             claim_code: "secret-owner-code-that-must-not-appear".into(),
             contact,
             device_proof: Signed {

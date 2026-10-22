@@ -70,6 +70,9 @@ pub mod ffi {
         retired: bool,
         acknowledgement: bool,
         can_manage: bool,
+        can_roster: bool,
+        can_retire: bool,
+        can_replace: bool,
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct MessageRow {
@@ -78,6 +81,13 @@ pub mod ffi {
         author: String,
         body: String,
         timestamp: u64,
+    }
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RecoveryRow {
+        id: String,
+        epoch: u64,
+        revision: u64,
+        committer_available: bool,
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct MemberRow {
@@ -102,6 +112,7 @@ pub mod ffi {
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct RequestRow {
+        has_profile: bool,
         requested_at: u64,
         id: String,
         account: String,
@@ -110,6 +121,9 @@ pub mod ffi {
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct RoleRow {
+        editable: bool,
+        deletable: bool,
+        member_count: u64,
         id: String,
         name: String,
         color: String,
@@ -117,6 +131,36 @@ pub mod ffi {
         priority: u32,
         permissions: Vec<String>,
         mentionable: bool,
+    }
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RolePositionRow {
+        id: String,
+        priority: u32,
+    }
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RoleMemberRow {
+        account: String,
+        can_assign: bool,
+        can_remove: bool,
+    }
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RoleMembers {
+        role: String,
+        assigned: bool,
+        revision: u64,
+        loaded: bool,
+        next_after: String,
+        member_count: u64,
+        rows: Vec<RoleMemberRow>,
+    }
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RoleTarget {
+        account: String,
+        revision: u64,
+        loaded: bool,
+        assigned: Vec<String>,
+        assignable: Vec<String>,
+        removable: Vec<String>,
     }
     #[derive(Clone, Debug, PartialEq, Eq)]
     struct AuditRow {
@@ -201,6 +245,7 @@ pub mod ffi {
         can_create: bool,
         can_approve: bool,
         can_roles: bool,
+        can_create_roles: bool,
         can_assign: bool,
         can_audit: bool,
         revoked: bool,
@@ -226,7 +271,13 @@ pub mod ffi {
         devices: Vec<DeviceRow>,
         requests: Vec<RequestRow>,
         requests_loaded: bool,
+        recoveries: Vec<RecoveryRow>,
+        recoveries_loaded: bool,
+        recovery_after: String,
+        can_recover: bool,
         roles: Vec<RoleRow>,
+        role_target: RoleTarget,
+        role_members: RoleMembers,
         audit: Vec<AuditRow>,
         profile: Profile,
         avatar_draft: AvatarDraft,
@@ -296,6 +347,8 @@ pub mod ffi {
             is_public: bool,
         ) -> Result<()>;
         fn retire_channel(self: &Desktop, channel: String) -> Result<()>;
+        fn load_recoveries(self: &Desktop, after: String) -> Result<()>;
+        fn recover_channel(self: &Desktop, channel: String, name: String) -> Result<()>;
         fn acknowledge_public(self: &Desktop, channel: String) -> Result<()>;
         fn join_channel(self: &Desktop, channel: String) -> Result<()>;
         fn publish_keys(self: &Desktop) -> Result<()>;
@@ -312,6 +365,7 @@ pub mod ffi {
             request_id: String,
         ) -> Result<()>;
         fn load_requests(self: &Desktop) -> Result<()>;
+        fn load_request_profile(self: &Desktop, device: String) -> Result<()>;
         fn approve_request(self: &Desktop, device: String) -> Result<()>;
         fn reject_request(self: &Desktop, device: String) -> Result<()>;
         fn add_device(self: &Desktop, channel: String, device: String) -> Result<()>;
@@ -319,6 +373,18 @@ pub mod ffi {
         fn revoke_device(self: &Desktop) -> Result<()>;
         fn load_roles(self: &Desktop) -> Result<()>;
         fn load_account_roles(self: &Desktop, account: String) -> Result<()>;
+        fn load_role_members(
+            self: &Desktop,
+            role: String,
+            assigned: bool,
+            after: String,
+        ) -> Result<()>;
+        fn reorder_roles(
+            self: &Desktop,
+            positions: Vec<RolePositionRow>,
+            revision: u64,
+            request_id: String,
+        ) -> Result<()>;
         fn put_role(self: &Desktop, role: RoleRow, revision: u64, request_id: String)
         -> Result<()>;
         fn delete_role(
@@ -693,6 +759,16 @@ impl Desktop {
     }
     /// # Errors
     /// Returns a worker submission or input validation error.
+    pub fn load_recoveries(&self, after: String) -> Result<()> {
+        self.submit(Command::Recoveries(after))
+    }
+    /// # Errors
+    /// Returns a worker submission or input validation error.
+    pub fn recover_channel(&self, channel: String, name: String) -> Result<()> {
+        self.submit(Command::RecoverChannel(channel, name))
+    }
+    /// # Errors
+    /// Returns a worker submission or input validation error.
     pub fn acknowledge_public(&self, channel: String) -> Result<()> {
         self.submit(Command::Acknowledge(channel))
     }
@@ -752,6 +828,11 @@ impl Desktop {
         self.submit(Command::Requests)
     }
     /// # Errors
+    /// Returns a worker submission error.
+    pub fn load_request_profile(&self, device: String) -> Result<()> {
+        self.submit(Command::RequestProfile(device))
+    }
+    /// # Errors
     /// Returns a worker submission or input validation error.
     pub fn approve_request(&self, device: String) -> Result<()> {
         self.submit(Command::Approve(device))
@@ -787,6 +868,11 @@ impl Desktop {
         self.submit(Command::AccountRoles(account))
     }
     /// # Errors
+    /// Returns a worker submission or signed page validation error.
+    pub fn load_role_members(&self, role: String, assigned: bool, after: String) -> Result<()> {
+        self.submit(Command::RoleMembers(role, assigned, after))
+    }
+    /// # Errors
     /// Returns a worker submission or input validation error.
     pub fn put_role(&self, role: ffi::RoleRow, revision: u64, request_id: String) -> Result<()> {
         let permissions = role
@@ -808,6 +894,34 @@ impl Desktop {
                         permissions,
                         mentionable: role.mentionable,
                     },
+                },
+            },
+        ))
+    }
+    /// # Errors
+    /// Returns worker submission, bounds or revision conversion errors.
+    pub fn reorder_roles(
+        &self,
+        positions: Vec<ffi::RolePositionRow>,
+        revision: u64,
+        request_id: String,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            positions.len() <= cords_protocol::roles::MAX_ROLES,
+            "too many role positions"
+        );
+        self.submit(Command::RoleChange(
+            cords_protocol::roles::RoleChangeRequest {
+                expected_revision: revision.try_into()?,
+                request_id,
+                change: cords_protocol::roles::RoleChange::ReorderRoles {
+                    positions: positions
+                        .into_iter()
+                        .map(|row| cords_protocol::roles::RolePosition {
+                            role_id: row.id,
+                            priority: row.priority,
+                        })
+                        .collect(),
                 },
             },
         ))

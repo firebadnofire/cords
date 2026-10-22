@@ -1,0 +1,96 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="admission-profile-two-client" tests="1" failures="0" errors="0" time="80.94"><testcase name="admission_picture_two_clients_before_approval_and_restart" classname="cords_server_core.messaging.tests.profiles" time="80.94"><system-out>warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::AccountRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2368:43: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2368 |   cxxbridge1$rust_vec$cords$AccountRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2235:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::AccountRow&gt;*' to 'void cxxbridge1$rust_vec$cords$AccountRow$new(const rust::cxxbridge1::Vec&lt;cords::AccountRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2235 | void cxxbridge1$rust_vec$cords$AccountRow$new(::rust::Vec&lt;::cords::AccountRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::ServerRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2404:42: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2404 |   cxxbridge1$rust_vec$cords$ServerRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2245:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::ServerRow&gt;*' to 'void cxxbridge1$rust_vec$cords$ServerRow$new(const rust::cxxbridge1::Vec&lt;cords::ServerRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2245 | void cxxbridge1$rust_vec$cords$ServerRow$new(::rust::Vec&lt;::cords::ServerRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::ChannelRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2440:43: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2440 |   cxxbridge1$rust_vec$cords$ChannelRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2255:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::ChannelRow&gt;*' to 'void cxxbridge1$rust_vec$cords$ChannelRow$new(const rust::cxxbridge1::Vec&lt;cords::ChannelRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2255 | void cxxbridge1$rust_vec$cords$ChannelRow$new(::rust::Vec&lt;::cords::ChannelRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::MessageRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2476:43: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2476 |   cxxbridge1$rust_vec$cords$MessageRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2265:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::MessageRow&gt;*' to 'void cxxbridge1$rust_vec$cords$MessageRow$new(const rust::cxxbridge1::Vec&lt;cords::MessageRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2265 | void cxxbridge1$rust_vec$cords$MessageRow$new(::rust::Vec&lt;::cords::MessageRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::MemberRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2512:42: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2512 |   cxxbridge1$rust_vec$cords$MemberRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2275:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::MemberRow&gt;*' to 'void cxxbridge1$rust_vec$cords$MemberRow$new(const rust::cxxbridge1::Vec&lt;cords::MemberRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2275 | void cxxbridge1$rust_vec$cords$MemberRow$new(::rust::Vec&lt;::cords::MemberRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::PersonRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2548:42: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2548 |   cxxbridge1$rust_vec$cords$PersonRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2285:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::PersonRow&gt;*' to 'void cxxbridge1$rust_vec$cords$PersonRow$new(const rust::cxxbridge1::Vec&lt;cords::PersonRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2285 | void cxxbridge1$rust_vec$cords$PersonRow$new(::rust::Vec&lt;::cords::PersonRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::DeviceRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2584:42: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2584 |   cxxbridge1$rust_vec$cords$DeviceRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2295:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::DeviceRow&gt;*' to 'void cxxbridge1$rust_vec$cords$DeviceRow$new(const rust::cxxbridge1::Vec&lt;cords::DeviceRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2295 | void cxxbridge1$rust_vec$cords$DeviceRow$new(::rust::Vec&lt;::cords::DeviceRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::RequestRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2620:43: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2620 |   cxxbridge1$rust_vec$cords$RequestRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2305:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::RequestRow&gt;*' to 'void cxxbridge1$rust_vec$cords$RequestRow$new(const rust::cxxbridge1::Vec&lt;cords::RequestRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2305 | void cxxbridge1$rust_vec$cords$RequestRow$new(::rust::Vec&lt;::cords::RequestRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::RoleRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2656:40: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2656 |   cxxbridge1$rust_vec$cords$RoleRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2315:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::RoleRow&gt;*' to 'void cxxbridge1$rust_vec$cords$RoleRow$new(const rust::cxxbridge1::Vec&lt;cords::RoleRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2315 | void cxxbridge1$rust_vec$cords$RoleRow$new(::rust::Vec&lt;::cords::RoleRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::AuditRow]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2692:41: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2692 |   cxxbridge1$rust_vec$cords$AuditRow$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2325:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::AuditRow&gt;*' to 'void cxxbridge1$rust_vec$cords$AuditRow$new(const rust::cxxbridge1::Vec&lt;cords::AuditRow&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2325 | void cxxbridge1$rust_vec$cords$AuditRow$new(::rust::Vec&lt;::cords::AuditRow&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::Alert]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2728:38: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2728 |   cxxbridge1$rust_vec$cords$Alert$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2335:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::Alert&gt;*' to 'void cxxbridge1$rust_vec$cords$Alert$new(const rust::cxxbridge1::Vec&lt;cords::Alert&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2335 | void cxxbridge1$rust_vec$cords$Alert$new(::rust::Vec&lt;::cords::Alert&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc: In constructor 'rust::cxxbridge1::Vec&lt;T&gt;::Vec() [with T = cords::Snapshot]':
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2788:41: warning: '&lt;unknown&gt;' may be used uninitialized [-Wmaybe-uninitialized]
+warning: cords-qt-bridge@0.1.0:  2788 |   cxxbridge1$rust_vec$cords$Snapshot$new(this);
+warning: cords-qt-bridge@0.1.0:       |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~
+warning: cords-qt-bridge@0.1.0: /home/william/codex-build/cords-qt-linux-cargo/debug/build/cords-qt-bridge-cd0c267a42feec46/out/cxxbridge/sources/cords-qt-bridge/src/lib.rs.cc:2353:6: note: by argument 1 of type 'const rust::cxxbridge1::Vec&lt;cords::Snapshot&gt;*' to 'void cxxbridge1$rust_vec$cords$Snapshot$new(const rust::cxxbridge1::Vec&lt;cords::Snapshot&gt;*)' declared here
+warning: cords-qt-bridge@0.1.0:  2353 | void cxxbridge1$rust_vec$cords$Snapshot$new(::rust::Vec&lt;::cords::Snapshot&gt; const *ptr) noexcept;
+warning: cords-qt-bridge@0.1.0:       |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   Compiling cords-server-core v0.1.0 (/home/william/cords-e2e-admission-pfp-20261021-b185/source/crates/cords-server-core)
+    Finished `test` profile [unoptimized] target(s) in 2.89s
+     Running unittests src/lib.rs (/home/william/codex-build/cords-qt-linux-cargo/debug/deps/cords_server_core-512a2c9355e76572)
+
+running 1 test
+test messaging::tests::profiles::admission_picture_two_clients_before_approval_and_restart has been running for over 60 seconds
+test messaging::tests::profiles::admission_picture_two_clients_before_approval_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 62 filtered out; finished in 80.94s
+
+</system-out></testcase></testsuite>

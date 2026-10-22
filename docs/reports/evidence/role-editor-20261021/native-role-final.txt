@@ -1,0 +1,42 @@
+********* Start testing of ControllerTest *********
+Config: Using QtTest library 6.10.3, Qt 6.10.3 (x86_64-little_endian-lp64 shared (dynamic) release build; by GCC 11.4.1 20231218 (Red Hat 11.4.1-3)), opensuse-tumbleweed 20261016
+PASS   : ControllerTest::initTestCase()
+QINFO  : ControllerTest::productionQmlHoverProfilesAndLayouts() Rendered message grouping count 1
+PASS   : ControllerTest::productionQmlHoverProfilesAndLayouts()
+PASS   : ControllerTest::composerSeparatesDraftScopesAndExplainsDisabledSending()
+QWARN  : ControllerTest::nativeComponentThemesAndSizing() This plugin does not support raise()
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "dark" 1 QVariant(int, 14) 14 36 36
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "dark" 1.5 QVariant(int, 21) 21 42 42
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "dark" 2 QVariant(int, 28) 28 50 50
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "midnight" 1 QVariant(int, 14) 14 36 36
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "midnight" 1.5 QVariant(int, 21) 21 42 42
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "midnight" 2 QVariant(int, 28) 28 50 50
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "light" 1 QVariant(int, 14) 14 36 36
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "light" 1.5 QVariant(int, 21) 21 42 42
+QINFO  : ControllerTest::nativeComponentThemesAndSizing() Rendered theme sizing "light" 2 QVariant(int, 28) 28 50 50
+PASS   : ControllerTest::nativeComponentThemesAndSizing()
+SKIP   : ControllerTest::liveRoleManagementWorkflow() Explicit disposable native role fixture not selected
+   Loc: [/home/william/cords-e2e-role-editor-20261021/source/bins/cords-client/qt/tests/tst_controller.cpp(329)]
+SKIP   : ControllerTest::liveAdmissionWorkflow() Explicit disposable native admission fixture not selected
+   Loc: [/home/william/cords-e2e-role-editor-20261021/source/bins/cords-client/qt/tests/tst_controller.cpp(402)]
+PASS   : ControllerTest::conversationEmptyHistoryStates()
+PASS   : ControllerTest::administrationDraftsAndVirtualization()
+PASS   : ControllerTest::inlineRoleEditorPreservesDraftAndSearches()
+PASS   : ControllerTest::roleMemberPagesRequireFreshHintsAndPreserveFailedReceipts()
+PASS   : ControllerTest::roleEditorRequiresCurrentTargetMetadata()
+PASS   : ControllerTest::roleReorderKeepsProtectedAnchorsAndSupportsKeyboardAndDrag()
+PASS   : ControllerTest::recoveryPresentationUsesScopedCandidatesAndExplicitConfirmation()
+QWARN  : ControllerTest::profileRolePresentationTracksModelChanges() QTemporaryDir: Unable to remove "/tmp/CordsControllerTests-qXyKAa" most likely due to the presence of read-only files.
+PASS   : ControllerTest::profileRolePresentationTracksModelChanges()
+PASS   : ControllerTest::profileRoleControlsRequireFreshExactTargetActions()
+PASS   : ControllerTest::roleEditorFollowsReviewedAccountAndServer()
+PASS   : ControllerTest::administrationDraftsFollowReviewedContext()
+PASS   : ControllerTest::serverProfileDraftSurvivesConcurrentRefresh()
+QWARN  : ControllerTest::nativeAvatarCropPreview() This plugin does not support raise()
+PASS   : ControllerTest::nativeAvatarCropPreview()
+PASS   : ControllerTest::accountPickerUsesRealVaultAuthentication()
+PASS   : ControllerTest::historyRowsKeepPersistentAnchorsAcrossPrependAndPrune()
+PASS   : ControllerTest::pendingNetworkLockClearsViewAndReopensVault()
+PASS   : ControllerTest::cleanupTestCase()
+Totals: 21 passed, 0 failed, 2 skipped, 0 blacklisted, 94031ms
+********* Finished testing of ControllerTest *********

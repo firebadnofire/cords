@@ -16,6 +16,84 @@ fn policy() -> Result<Policy, PolicyError> {
     Policy::new(default_roles(), DeviceAdmission::AccountAuthorized)
 }
 
+#[test]
+fn complete_reorder_checks_old_and_new_authority_without_intermediate_catalogs()
+-> Result<(), PolicyError> {
+    use cords_protocol::roles::RolePosition;
+    let mut roles = default_roles();
+    let id = uuid::Uuid::now_v7().to_string();
+    roles.push(Role {
+        id: id.clone(),
+        name: "Helpers".into(),
+        color: "#123456".into(),
+        description: String::new(),
+        priority: 20,
+        permissions: BTreeSet::new(),
+        mentionable: false,
+    });
+    let policy = Policy::new(roles, DeviceAdmission::AccountAuthorized)?;
+    let owner = Subject {
+        owner: true,
+        ..subject(&[])
+    };
+    let mut positions: Vec<RolePosition> = policy
+        .roles()
+        .values()
+        .map(|role| RolePosition {
+            role_id: role.id.clone(),
+            priority: role.priority,
+        })
+        .collect();
+    // Final admin/moderator order is valid even though editing admin first would
+    // temporarily put it below the previous moderator rank.
+    for position in &mut positions {
+        if position.role_id == ADMIN_ROLE {
+            position.priority = 60;
+        }
+        if position.role_id == MODERATOR_ROLE {
+            position.priority = 40;
+        }
+    }
+    policy.reorder(&owner, &positions)?;
+    assert!(policy.reorder(&subject(&[]), &positions).is_err());
+    assert!(policy.reorder(&subject(&[ADMIN_ROLE]), &positions).is_err());
+    let mut duplicate = positions.clone();
+    duplicate[0] = duplicate[1].clone();
+    assert!(policy.reorder(&owner, &duplicate).is_err());
+    assert!(policy.reorder(&owner, &positions[1..]).is_err());
+    let mut substituted = positions.clone();
+    substituted[0].role_id = "unknown".into();
+    assert!(policy.reorder(&owner, &substituted).is_err());
+    let mut default = positions.clone();
+    default
+        .iter_mut()
+        .find(|position| position.role_id == DEFAULT_ROLE)
+        .unwrap()
+        .priority = 1;
+    assert!(policy.reorder(&owner, &default).is_err());
+    let mut lower: Vec<RolePosition> = policy
+        .roles()
+        .values()
+        .map(|role| RolePosition {
+            role_id: role.id.clone(),
+            priority: role.priority,
+        })
+        .collect();
+    lower
+        .iter_mut()
+        .find(|position| position.role_id == id)
+        .unwrap()
+        .priority = 21;
+    policy.reorder(&subject(&[ADMIN_ROLE]), &lower)?;
+    lower
+        .iter_mut()
+        .find(|position| position.role_id == id)
+        .unwrap()
+        .priority = 200;
+    assert!(policy.reorder(&subject(&[ADMIN_ROLE]), &lower).is_err());
+    Ok(())
+}
+
 fn rule(allow: &[Permission], deny: &[Permission]) -> Override {
     Override {
         allow: allow.iter().copied().collect(),

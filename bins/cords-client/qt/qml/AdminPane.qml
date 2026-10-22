@@ -9,6 +9,20 @@ Item {
     objectName: "serverSettings"
     required property Controller desktop
     property string route: ""
+    property int channelRevision: 0
+    Connections {
+        target: admin.desktop.channels
+        function onChanged() { ++admin.channelRevision; }
+    }
+    readonly property var channelActions: {
+        const revision = channelRevision;
+        for (let index = 0; index < desktop.channels.count; ++index) {
+            const channel = desktop.channels.get(index);
+            if (channel.id === route)
+                return channel;
+        }
+        return ({});
+    }
     readonly property string scope: JSON.stringify([desktop.state.account || "", desktop.state.server || ""])
     onScopeChanged: {
         ownerCode.clear();
@@ -36,6 +50,10 @@ Item {
     signal profileRequested(string account)
     signal closeRequested
     function requestClose() {
+        if (rolesWorkspace.editorOpen && !desktop.busy && !rolesWorkspace.confirmationOpen) {
+            rolesWorkspace.leave(function () { admin.closeRequested(); });
+            return;
+        }
         if (modalOpen || (desktop.busy && serverProfileForm.dirty))
             return;
         if (serverProfileForm.dirty) {
@@ -55,6 +73,10 @@ Item {
         selectPage(page)
     readonly property bool modalOpen: serverProfileForm.modalOpen || requestsWorkspace.modalOpen || rolesWorkspace.modalOpen || membersWorkspace.modalOpen || confirmation.visible
     function selectPage(index) {
+        if (page === 3 && index !== 3 && rolesWorkspace.dirty) {
+            rolesWorkspace.leave(function () { admin.selectPage(index); });
+            return;
+        }
         page = index;
         if (desktop.busy)
             return;
@@ -66,6 +88,8 @@ Item {
             desktop.loadRequests();
         else if (page === 3)
             desktop.loadRoles();
+        else if (page === 4 && desktop.state.canRecover)
+            desktop.loadRecoveries("");
         else if (page === 5 && desktop.state.canAudit)
             desktop.loadAudit(0);
     }
@@ -166,13 +190,13 @@ Item {
                     RowLayout {
                         CordsButton {
                             text: "Add device"
-                            enabled: !admin.desktop.busy && !!admin.route && !!targetDevice.text
+                            enabled: !admin.desktop.busy && !!admin.channelActions.canRoster && !!targetDevice.text
                             onClicked: admin.desktop.addDevice(admin.route, targetDevice.text)
                         }
                         CordsButton {
                             text: "Remove device…"
                             destructive: true
-                            enabled: !admin.desktop.busy && !!admin.route && !!targetDevice.text
+                            enabled: !admin.desktop.busy && !!admin.channelActions.canRoster && !!targetDevice.text
                             onClicked: {
                                 confirmation.title = "Remove channel device";
                                 confirmation.explanation = "Remove " + targetDevice.text + " from channel " + admin.route + ". New keys require a successful MLS commit.";
@@ -204,7 +228,7 @@ Item {
                     }
                     CordsButton {
                         text: "Create authenticated successor…"
-                        enabled: !admin.desktop.busy && !!admin.route && !!replacementName.text
+                        enabled: !admin.desktop.busy && !!admin.channelActions.canReplace && !!replacementName.text
                         onClicked: {
                             confirmation.title = "Replace channel identity";
                             confirmation.explanation = "Retire " + admin.route + " and create " + replacementName.text + " as a distinct " + (replacementPublic.checked ? "public" : "encrypted") + " channel. Old local history stays separate.";
@@ -220,7 +244,7 @@ Item {
                     CordsButton {
                         text: "Retire selected channel…"
                         destructive: true
-                        enabled: !admin.desktop.busy && !!admin.route
+                        enabled: !admin.desktop.busy && !!admin.channelActions.canRetire
                         onClicked: {
                             confirmation.title = "Retire channel";
                             confirmation.explanation = "Retire channel " + admin.route + ". Its identity and local archive remain distinct from future channels.";
@@ -235,6 +259,78 @@ Item {
                         text: "Category editing, resource permission overrides and moderation are unavailable through the current client API."
                         color: Theme.secondary
                         Layout.fillWidth: true
+                    }
+                    ColumnLayout {
+                        visible: !!admin.desktop.state.canRecover
+                        Layout.fillWidth: true
+                        CordsLabel {
+                            text: "Blocked encrypted channels"
+                            font.pixelSize: Theme.headingSize
+                        }
+                        CordsLabel {
+                            text: "A current eligible committer must finish pending removals when available. If none remains, the owner can explicitly create a fresh encrypted successor. Availability here describes server eligibility; it does not prove a device is online."
+                            Layout.fillWidth: true
+                            color: Theme.secondary
+                        }
+                        CordsButton {
+                            objectName: "refreshChannelRecoveries"
+                            text: "Refresh blocked channels"
+                            enabled: !admin.desktop.busy
+                            onClicked: admin.desktop.loadRecoveries("")
+                        }
+                        CordsLabel {
+                            visible: !!admin.desktop.state.recoveriesLoaded && admin.desktop.recoveries.count === 0
+                            text: "No encrypted channels have pending removals."
+                            Layout.fillWidth: true
+                        }
+                        Repeater {
+                            model: admin.desktop.state.canRecover ? admin.desktop.recoveries : null
+                            delegate: ColumnLayout {
+                                id: recovery
+                                required property var row
+                                Layout.fillWidth: true
+                                CordsLabel {
+                                    text: recovery.row.id + " · epoch " + recovery.row.epoch
+                                    wrapMode: Text.WrapAnywhere
+                                    Layout.fillWidth: true
+                                }
+                                CordsLabel {
+                                    text: recovery.row.committerAvailable ? "An eligible committer remains. Bring that device online to finish the removal." : "No eligible committer remains. A fresh encrypted group is available."
+                                    color: Theme.warning
+                                    Layout.fillWidth: true
+                                }
+                                CordsField {
+                                    id: recoveryName
+                                    objectName: "channelRecoveryName"
+                                    visible: !recovery.row.committerAvailable
+                                    placeholderText: "Fresh encrypted successor name"
+                                    maximumLength: 100
+                                    Layout.fillWidth: true
+                                }
+                                CordsButton {
+                                    objectName: "recoverEncryptedChannel"
+                                    text: "Create fresh encrypted successor…"
+                                    visible: !recovery.row.committerAvailable
+                                    enabled: !admin.desktop.busy && recoveryName.text.trim().length > 0
+                                    onClicked: {
+                                        confirmation.title = "Recover blocked encrypted channel";
+                                        confirmation.explanation = "Retire " + recovery.row.id + " and create a distinct encrypted channel with fresh keys. No old keys or history transfer. Your existing local history remains a separate partial archive. Pending operations in the original channel will be canceled and audited. The server rechecks eligibility before applying recovery.";
+                                        const channel = recovery.row.id;
+                                        const name = recoveryName.text.trim();
+                                        confirmation.operation = admin.scopedOperation(function () {
+                                            admin.desktop.recoverChannel(channel, name);
+                                        });
+                                        confirmation.open();
+                                    }
+                                }
+                            }
+                        }
+                        CordsButton {
+                            visible: !!admin.desktop.state.recoveryAfter
+                            text: "Load more blocked channels"
+                            enabled: !admin.desktop.busy
+                            onClicked: admin.desktop.loadRecoveries(admin.desktop.state.recoveryAfter)
+                        }
                     }
                 }
                 ColumnLayout {

@@ -6,6 +6,213 @@ use cords_protocol::profiles::{
 };
 
 #[tokio::test]
+#[ignore = "requires isolated PostgreSQL and TLS on the E2E host"]
+#[allow(clippy::too_many_lines)]
+async fn admission_picture_two_clients_before_approval_and_restart() -> Result<()> {
+    use cords_client_core::client::Client;
+    // Debug Wasmtime compilation is substantially slower than the production
+    // build; initialize the sandbox before issuing time-limited device proofs.
+    let bytes = include_bytes!("../../../../cords-avatar-codec/tests/fixtures/animated16.png.jxl");
+    tokio::task::spawn_blocking(|| cords_avatar_codec::validate(bytes)).await??;
+    let (base, _directory, code) = fixture_with_state(false).await?;
+    let service = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let tls = https_fixture(&service, &certificate).await?;
+    let root = tempfile::tempdir()?;
+    let ca = root.path().join("ca.pem");
+    std::fs::write(&ca, certificate.cert.pem())?;
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let pass = b"disposable admission profile test vault";
+    let owner_path = root.path().join("owner");
+    let applicant_path = root.path().join("applicant");
+    let mut owner = Client::open(&owner_path, &migrations, Some(pass), Some(&ca)).await?;
+    let mut applicant = Client::open(&applicant_path, &migrations, Some(pass), Some(&ca)).await?;
+    owner.trust(&tls.origin).await?;
+    owner.claim_ownership(&code).await?;
+    // Save the account picture locally before requesting any membership.
+    let avatar = ProfileAvatar {
+        sha256: hash(bytes),
+        bytes: u32::try_from(bytes.len())?,
+        width: 1,
+        height: 1,
+        shape: "square".into(),
+    };
+    applicant
+        .save_account_profile(
+            AccountProfile {
+                display_name: "Pending picture".into(),
+                avatar: Some(avatar.clone()),
+            },
+            Some(STANDARD.encode(bytes)),
+            vec![],
+        )
+        .await?;
+    applicant.trust(&tls.origin).await?;
+    assert_eq!(
+        applicant.request_admission().await?.admission_state,
+        "pending"
+    );
+    let requests = owner.membership_requests().await?;
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].has_profile);
+    assert!(
+        applicant
+            .membership_request_profile(&requests[0].device_id, &requests[0].account_id)
+            .await
+            .is_err()
+    );
+    assert!(applicant.account_directory("").await.is_err());
+    let profile = owner
+        .membership_request_profile(&requests[0].device_id, &requests[0].account_id)
+        .await?;
+    assert_eq!(
+        profile.image.as_deref(),
+        Some(STANDARD.encode(bytes).as_str())
+    );
+    assert_eq!(
+        profile
+            .state
+            .agreed
+            .context("missing agreed profile")?
+            .avatar,
+        Some(avatar.clone())
+    );
+    let old_payload: String =
+        sqlx::query_scalar("SELECT admission_profile FROM membership_requests WHERE device_id=$1")
+            .bind(&requests[0].device_id)
+            .fetch_one(service.0.store.pool())
+            .await?;
+    let mut updated_avatar = avatar.clone();
+    updated_avatar.shape = "circle".into();
+    let own = applicant.account_profile(&requests[0].account_id).await?;
+    applicant
+        .save_account_profile(
+            AccountProfile {
+                display_name: "Updated pending picture".into(),
+                avatar: Some(updated_avatar.clone()),
+            },
+            None,
+            own.state.heads,
+        )
+        .await?;
+    applicant.request_admission().await?;
+    assert_eq!(
+        owner
+            .membership_request_profile(&requests[0].device_id, &requests[0].account_id)
+            .await?
+            .state
+            .agreed
+            .context("missing updated profile")?
+            .avatar,
+        Some(updated_avatar.clone())
+    );
+    let current_payload: String =
+        sqlx::query_scalar("SELECT admission_profile FROM membership_requests WHERE device_id=$1")
+            .bind(&requests[0].device_id)
+            .fetch_one(service.0.store.pool())
+            .await?;
+    sqlx::query("UPDATE membership_requests SET admission_profile=$2 WHERE device_id=$1")
+        .bind(&requests[0].device_id)
+        .bind(old_payload)
+        .execute(service.0.store.pool())
+        .await?;
+    assert_eq!(
+        owner
+            .membership_request_profile(&requests[0].device_id, &requests[0].account_id)
+            .await?
+            .state
+            .agreed
+            .context("known profile was rolled back")?
+            .avatar,
+        Some(updated_avatar)
+    );
+    sqlx::query("UPDATE membership_requests SET admission_profile=$2 WHERE device_id=$1")
+        .bind(&requests[0].device_id)
+        .bind(current_payload)
+        .execute(service.0.store.pool())
+        .await?;
+    let http = reqwest::Client::builder()
+        .add_root_certificate(reqwest::Certificate::from_pem(
+            certificate.cert.pem().as_bytes(),
+        )?)
+        .build()?;
+    let response = http
+        .get(format!(
+            "{}/api/v1/membership-requests/{}/profile",
+            tls.origin, requests[0].device_id
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    // A repeat is idempotent, and both request data and verified media survive reopening.
+    applicant.request_admission().await?;
+    assert_eq!(
+        owner.membership_requests().await?[0].requested_at,
+        requests[0].requested_at
+    );
+    owner.shutdown().await;
+    applicant.shutdown().await;
+    let mut owner = Client::open(&owner_path, &migrations, Some(pass), Some(&ca)).await?;
+    let mut applicant = Client::open(&applicant_path, &migrations, Some(pass), Some(&ca)).await?;
+    let request = owner.membership_requests().await?.remove(0);
+    assert_eq!(
+        owner
+            .membership_request_profile(&request.device_id, &request.account_id)
+            .await?
+            .image,
+        Some(STANDARD.encode(bytes))
+    );
+    assert_eq!(applicant.status().admission_state, "pending");
+    // Server-side tampering is rejected independently by the receiving client.
+    let stored: String =
+        sqlx::query_scalar("SELECT admission_profile FROM membership_requests WHERE device_id=$1")
+            .bind(&request.device_id)
+            .fetch_one(service.0.store.pool())
+            .await?;
+    let mut forged: cords_protocol::profiles::AdmissionProfile = serde_json::from_str(&stored)?;
+    forged.records[0].revision.value.profile.display_name = "Forged".into();
+    sqlx::query("UPDATE membership_requests SET admission_profile=$2 WHERE device_id=$1")
+        .bind(&request.device_id)
+        .bind(json(&forged)?)
+        .execute(service.0.store.pool())
+        .await?;
+    assert!(
+        owner
+            .membership_request_profile(&request.device_id, &request.account_id)
+            .await
+            .is_err()
+    );
+    sqlx::query("UPDATE membership_requests SET admission_profile=$2 WHERE device_id=$1")
+        .bind(&request.device_id)
+        .bind(stored)
+        .execute(service.0.store.pool())
+        .await?;
+    owner.approve_membership(&request.device_id).await?;
+    assert!(
+        owner
+            .membership_request_profile(&request.device_id, &request.account_id)
+            .await
+            .is_err()
+    );
+    applicant.synchronize().await?;
+    assert_eq!(applicant.status().admission_state, "active");
+    assert_eq!(
+        owner.account_profile(&request.account_id).await?.image,
+        Some(STANDARD.encode(bytes))
+    );
+    owner.shutdown().await;
+    applicant.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 #[ignore = "requires isolated PostgreSQL and TLS"]
 #[allow(clippy::too_many_lines)] // One two-server, offline/restart and revocation scenario.
 async fn profiles_two_native_accounts_two_servers_and_sealed_restart() -> Result<()> {

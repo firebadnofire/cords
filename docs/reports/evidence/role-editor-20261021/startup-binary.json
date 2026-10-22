@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "fresh normal migrations verify and activate before readiness",
+    "restart preserves identity and policy without new audit entries",
+    "invalid stored policy exits before opening listener and remains inactive"
+  ],
+  "transport": "loopback HTTP backend",
+  "passed": true
+}

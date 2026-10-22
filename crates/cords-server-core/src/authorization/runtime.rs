@@ -35,6 +35,8 @@ pub struct Decision {
     pub revision: i64,
     pub subject: Subject,
     pub permissions: BTreeSet<Permission>,
+    /// Role/category/channel eligibility before an explicit account enrollment.
+    pub policy_eligible: bool,
     /// Permission to enroll, independent of possession of current MLS state.
     pub account_eligible: bool,
     /// Durable delivery authorization only, not proof of client-held secrets.
@@ -161,6 +163,7 @@ pub async fn load(
         revision: snapshot.revision,
         permissions: policy.server_permissions(&subject)?,
         subject,
+        policy_eligible: false,
         account_eligible: false,
         device_participating: false,
     };
@@ -197,6 +200,7 @@ async fn channel_access(
     let channel: Overrides = serde_json::from_str(row.try_get("overrides")?)?;
     let access = policy.access(&decision.subject, &category, &channel)?;
     decision.permissions = access.permissions;
+    decision.policy_eligible = access.eligible;
     decision.account_eligible = access.eligible
         && (!row.try_get::<bool, _>("account_restricted")?
             || row.try_get::<bool, _>("included")?);
@@ -221,4 +225,49 @@ async fn channel_access(
         decision.permissions.remove(&Permission::CommitMls);
     }
     Ok(())
+}
+
+/// Conservative availability of durable commit authority, not online presence or
+/// possession of client secrets. Callers retain the policy and channel locks.
+/// No target account locks are taken after policy/channel locks: revocation
+/// serializes delivery changes on the same channel; admission writers serialize
+/// on policy. Identity evidence for each device is read as one coherent query.
+/// # Errors
+/// Unready or malformed state blocks recovery rather than implying no committer.
+pub async fn has_eligible_committer(
+    tx: &mut Tx<'_>,
+    channel: &str,
+    server: &str,
+    key: &str,
+    now: u64,
+) -> Result<bool, Error> {
+    let snapshot = persistence::load(tx).await?;
+    if !snapshot.active {
+        return Err(Error::NotReady);
+    }
+    let policy = snapshot.policy.ok_or(Error::NotReady)?;
+    let mut after = String::new();
+    loop {
+        let devices: Vec<(String, String)> = sqlx::query_as("SELECT m.device_id,d.account_id FROM channel_members m JOIN device_contacts d ON d.device_id=m.device_id WHERE m.channel_id=$1 AND m.active AND m.delivery_active AND m.device_id>$2 ORDER BY m.device_id LIMIT 256")
+            .bind(channel).bind(&after).fetch_all(&mut **tx).await?;
+        if devices.is_empty() {
+            return Ok(false);
+        }
+        for (device, account) in devices {
+            after.clone_from(&device);
+            let subject = subject(tx, &account, &device, server, key, now).await?;
+            let mut decision = Decision {
+                revision: snapshot.revision,
+                permissions: policy.server_permissions(&subject)?,
+                subject,
+                policy_eligible: false,
+                account_eligible: false,
+                device_participating: false,
+            };
+            channel_access(tx, &policy, &mut decision, &device, channel).await?;
+            if decision.permissions.contains(&Permission::CommitMls) {
+                return Ok(true);
+            }
+        }
+    }
 }

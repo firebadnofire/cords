@@ -203,7 +203,7 @@ impl Policy {
     /// Validates both the previous and proposed role to prevent raising its rank/capabilities.
     /// # Errors
     /// Rejects built-in deletion, self-elevation, equal/higher-rank changes and invalid policy.
-    pub fn authorize_edit(
+    fn authorize_edit_fields(
         &self,
         actor: &Subject,
         id: &str,
@@ -247,6 +247,19 @@ impl Policy {
                 return Err(PolicyError::Denied);
             }
         }
+        Ok(())
+    }
+
+    /// Validate authority against both the previous and proposed definition.
+    /// # Errors
+    /// Rejects invalid catalogs, protected roles and escalation.
+    pub fn authorize_edit(
+        &self,
+        actor: &Subject,
+        id: &str,
+        proposed: Option<&Role>,
+    ) -> Result<(), PolicyError> {
+        self.authorize_edit_fields(actor, id, proposed)?;
         let mut roles = self.roles.clone();
         if let Some(role) = proposed {
             roles.insert(id.into(), role.clone());
@@ -255,6 +268,46 @@ impl Policy {
         }
         Self::new(roles.into_values().collect(), self.device_admission)?;
         Ok(())
+    }
+
+    /// Validate a complete reorder atomically, without an unsafe intermediate
+    /// hierarchy while multiple positions change.
+    /// # Errors
+    /// Rejects duplicate/missing IDs and previous or proposed protected authority.
+    pub fn reorder(
+        &self,
+        actor: &Subject,
+        positions: &[cords_protocol::roles::RolePosition],
+    ) -> Result<Vec<Role>, PolicyError> {
+        if positions.len() != self.roles.len() {
+            return Err(PolicyError::Invalid);
+        }
+        let mut seen = BTreeSet::new();
+        let mut proposed = Vec::with_capacity(positions.len());
+        for position in positions {
+            if !seen.insert(&position.role_id) {
+                return Err(PolicyError::Invalid);
+            }
+            let old = self
+                .roles
+                .get(&position.role_id)
+                .ok_or(PolicyError::UnknownRole)?;
+            let mut role = old.clone();
+            role.priority = position.priority;
+            if old.priority != role.priority {
+                self.authorize_edit_fields(actor, &role.id, Some(&role))?;
+            }
+            proposed.push(role);
+        }
+        // A no-op still requires management; a catalog snapshot is not authority.
+        if !self
+            .server_permissions(actor)?
+            .contains(&Permission::ManageRoles)
+        {
+            return Err(PolicyError::Denied);
+        }
+        Self::new(proposed.clone(), self.device_admission)?;
+        Ok(proposed)
     }
 
     /// # Errors

@@ -1,0 +1,7 @@
+    Checking cords-protocol v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-protocol)
+    Checking cords-crypto v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-crypto)
+    Checking cords-identity v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-identity)
+    Checking cords-client-core v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-client-core)
+    Checking cords-server-core v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-server-core)
+    Checking cords-qt-bridge v0.1.0 (C:\Users\william\Desktop\git\cords\bins\cords-client\qt\rust)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.30s

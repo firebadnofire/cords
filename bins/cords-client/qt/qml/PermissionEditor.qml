@@ -6,6 +6,9 @@ ColumnLayout {
     id: editor
     property var permissions: []
     property bool defaultRole: false
+    property string query: ""
+    readonly property var unavailable: ["server.invite.create", "server.invite.manage", "server.member.kick", "server.member.ban", "server.member.timeout", "server.moderation.read", "channel.messages.manage", "channel.emojis.manage", "mention_roles", "server.roles.mentionability"]
+    readonly property var matching: capabilities.filter(value => !query.trim() || (value.group + " " + value.label + " " + value.description + " " + value.id).toLowerCase().includes(query.trim().toLowerCase()))
     signal permissionToggled(string id, bool checked)
     spacing: 8
     readonly property var capabilities: [
@@ -199,34 +202,45 @@ ColumnLayout {
             "safe": false
         }
     ]
+    CordsLabel {
+        visible: editor.matching.length === 0
+        text: "No permissions match your search."
+        color: Theme.secondary
+        Layout.fillWidth: true
+    }
     Repeater {
-        model: editor.capabilities
+        model: editor.matching
         delegate: ColumnLayout {
             id: permission
             required property var modelData
             required property int index
             Layout.fillWidth: true
             CordsLabel {
-                visible: permission.index === 0 || editor.capabilities[permission.index - 1].group !== permission.modelData.group
+                visible: permission.index === 0 || editor.matching[permission.index - 1].group !== permission.modelData.group
                 text: permission.modelData.group
                 font.bold: true
                 font.pixelSize: 17
                 Layout.topMargin: 16
             }
-            CordsCheck {
-                objectName: "rolePermission-" + permission.modelData.id
-                text: permission.modelData.label
-                checked: editor.permissions.includes(permission.modelData.id)
-                enabled: !editor.defaultRole || permission.modelData.safe
+            RowLayout {
                 Layout.fillWidth: true
-                onToggled: editor.permissionToggled(permission.modelData.id, checked)
+                CordsLabel {
+                    text: permission.modelData.label
+                    Layout.fillWidth: true
+                }
+                CordsCheck {
+                    objectName: "rolePermission-" + permission.modelData.id
+                    Accessible.name: permission.modelData.label
+                    checked: editor.permissions.includes(permission.modelData.id)
+                    enabled: !editor.unavailable.includes(permission.modelData.id) && (!editor.defaultRole || permission.modelData.safe)
+                    onToggled: editor.permissionToggled(permission.modelData.id, checked)
+                }
             }
             CordsLabel {
-                text: permission.modelData.description + (editor.defaultRole && !permission.modelData.safe ? " Not allowed on the default role." : "")
+                text: permission.modelData.description + (editor.unavailable.includes(permission.modelData.id) ? " Unavailable: the corresponding operation is not implemented. Existing values are preserved." : editor.defaultRole && !permission.modelData.safe ? " Not allowed on the default role." : "")
                 color: Theme.secondary
                 font.pixelSize: Theme.captionSize
                 Layout.fillWidth: true
-                Layout.leftMargin: 28
             }
         }
     }

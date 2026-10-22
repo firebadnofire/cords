@@ -190,6 +190,7 @@ async fn public_channel_signatures_identity_and_succession() -> Result<()> {
         .context("missing identity")?;
     let successor = id();
     let request = ChannelReplace {
+        recovery: None,
         record: owner.sign_device(ChannelSuccession {
             version: 1,
             server_id: s.0.identity.server_id(),
@@ -295,6 +296,7 @@ async fn public_channel_signatures_identity_and_succession() -> Result<()> {
         .context("successor identity")?;
     let third = id();
     let chain = ChannelReplace {
+        recovery: None,
         record: owner.sign_device(ChannelSuccession {
             version: 1,
             server_id: s.0.identity.server_id(),
@@ -499,9 +501,21 @@ async fn fixture_with_state(
     let migrations =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/postgres");
     assert!(store.require_current().await.is_err());
-    store.migrate(&migrations).await?;
-    store.migrate(&migrations).await?;
-    store.require_current().await?;
+    // Deliberate legacy-upgrade fixture: service behavior before the normal
+    // activation migration remains covered independently of enforced fixtures.
+    let legacy = tempfile::tempdir()?;
+    for file in std::fs::read_dir(&migrations)? {
+        let file = file?;
+        if file.file_name() != "202610210005_enforced_rbac.sql" {
+            std::fs::copy(file.path(), legacy.path().join(file.file_name()))?;
+        }
+    }
+    store.migrate(legacy.path()).await?;
+    store.migrate(legacy.path()).await?;
+    assert!(
+        store.require_current().await.is_err(),
+        "legacy fixture must never satisfy the production startup gate"
+    );
     let directory = tempfile::tempdir()?;
     let (identity, _) =
         crate::ServerIdentity::load_or_create(&directory.path().join("server.key"))?;
@@ -555,6 +569,21 @@ async fn https_fixture_at(
     certificate: &rcgen::CertifiedKey<rcgen::KeyPair>,
     address: &str,
 ) -> Result<TestHttps> {
+    https_fixture_der(
+        service,
+        certificate.cert.der().to_vec(),
+        certificate.signing_key.serialize_der(),
+        address,
+    )
+    .await
+}
+
+async fn https_fixture_der(
+    service: &Service,
+    certificate: Vec<u8>,
+    key: Vec<u8>,
+    address: &str,
+) -> Result<TestHttps> {
     use hyper_util::{
         rt::{TokioExecutor, TokioIo},
         server::conn::auto::Builder,
@@ -567,8 +596,8 @@ async fn https_fixture_at(
     .with_protocol_versions(&[&rustls::version::TLS13])?
     .with_no_client_auth()
     .with_single_cert(
-        vec![certificate.cert.der().clone()],
-        rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.signing_key.serialize_der()).into(),
+        vec![rustls::pki_types::CertificateDer::from(certificate)],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(key).into(),
     )?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     let origin = format!("https://localhost:{}", listener.local_addr()?.port());
@@ -818,6 +847,8 @@ async fn join(s: &Service, identity: &Identity, contact: Contact) -> Result<Sess
     )
     .await?;
     let request = SessionRequest {
+        role_policy_version: Some(1),
+        admission_profile: None,
         proof: identity.sign_device(challenge)?,
         idempotency_key: id(),
     };
@@ -841,6 +872,7 @@ async fn ownership_request(
     .await?
     .0;
     Ok(OwnershipClaim {
+        role_policy_version: Some(1),
         claim_code: code.into(),
         contact,
         device_proof: identity.sign_device(challenge.clone())?,
@@ -1017,6 +1049,7 @@ async fn owner_burn_lockdown_recovery_is_atomic_one_time_and_revokes_old_authori
     .await?
     .0;
     let request = OwnershipRecoveryClaim {
+        role_policy_version: Some(1),
         recovery_code: recovery_code.to_string(),
         contact,
         device_proof: next.sign_device(ch.clone())?,
@@ -1697,6 +1730,7 @@ async fn desktop_role_acceptance_fixture() -> Result<()> {
 #[tokio::test]
 #[ignore = "manual native admission acceptance; requires a new fixture directory and stop file"]
 async fn desktop_admission_acceptance_fixture() -> Result<()> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use cords_client_core::accounts::AccountRegistry;
     let root = std::path::PathBuf::from(std::env::var("CORDS_ROLE_DESKTOP_FIXTURE")?);
     anyhow::ensure!(
@@ -1728,11 +1762,34 @@ async fn desktop_admission_acceptance_fixture() -> Result<()> {
     owner.trust(&tls.origin).await?;
     owner.claim_ownership(&code).await?;
     owner.create_channel("Restricted encrypted").await?;
-    let public = owner.create_channel_with_mode("Public conversation", ConfidentialityMode::Public).await?;
-    owner.send(&public, "Public history without a channel join").await?;
-    let applicant = applicant_registry
+    let public = owner
+        .create_channel_with_mode("Public conversation", ConfidentialityMode::Public)
+        .await?;
+    owner
+        .send(&public, "Public history without a channel join")
+        .await?;
+    let mut applicant = applicant_registry
         .create("Admission applicant", password, false)
         .await?;
+    let avatar_bytes = include_bytes!("../../../cords-avatar-codec/tests/fixtures/looping-a.jxl");
+    let info = tokio::task::spawn_blocking(|| cords_avatar_codec::validate(avatar_bytes)).await??;
+    applicant
+        .save_account_profile(
+            cords_protocol::profiles::AccountProfile {
+                display_name: "Admission applicant".into(),
+                avatar: Some(cords_protocol::profiles::ProfileAvatar {
+                    sha256: hash(avatar_bytes),
+                    bytes: u32::try_from(avatar_bytes.len())?,
+                    width: u16::try_from(info.width)?,
+                    height: u16::try_from(info.height)?,
+                    shape: "square".into(),
+                }),
+            },
+            Some(STANDARD.encode(avatar_bytes)),
+            vec![],
+        )
+        .await?;
+    std::fs::write(root.join("applicant-avatar.jxl"), avatar_bytes)?;
     // Leave admission unsubmitted: the native Add Server command must create
     // the request. Pre-seeding pending state concealed a missing UI operation.
     let owner_id = owner.status().account_id;
@@ -1780,15 +1837,28 @@ async fn desktop_admission_acceptance_fixture() -> Result<()> {
 async fn readable_channels_initialize_without_user_join_and_hide_access_loss() -> Result<()> {
     use cords_client_core::client::Client;
     let (base, _directory, code) = fixture_with_state(false).await?;
-    let service = Service::with_policy(base.0.store.clone(), base.0.identity.clone(), 60, 900, JoinPolicy::ModeratorApproval)?;
+    let service = Service::with_policy(
+        base.0.store.clone(),
+        base.0.identity.clone(),
+        60,
+        900,
+        JoinPolicy::ModeratorApproval,
+    )?;
     let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
     let tls = https_fixture(&service, &certificate).await?;
     let root = tempfile::tempdir()?;
     let ca = root.path().join("test-ca.pem");
     std::fs::write(&ca, certificate.cert.pem())?;
-    let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+    let migrations =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
     let pass = b"readable channels independent vault test";
-    let mut owner = Client::open(&root.path().join("owner"), &migrations, Some(pass), Some(&ca)).await?;
+    let mut owner = Client::open(
+        &root.path().join("owner"),
+        &migrations,
+        Some(pass),
+        Some(&ca),
+    )
+    .await?;
     let member_path = root.path().join("member");
     let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
     owner.trust(&tls.origin).await?;
@@ -1798,32 +1868,76 @@ async fn readable_channels_initialize_without_user_join_and_hide_access_loss() -
     owner.approve_membership(&member.status().device_id).await?;
     member.request_admission().await?;
     let secret = owner.create_channel("Restricted encrypted").await?;
-    let public = owner.create_channel_with_mode("Public conversation", ConfidentialityMode::Public).await?;
+    let public = owner
+        .create_channel_with_mode("Public conversation", ConfidentialityMode::Public)
+        .await?;
     owner.send(&public, "Public history").await?;
-    assert_eq!(member.channels().await?.iter().map(|c| c.channel_id.clone()).collect::<Vec<_>>(), vec![public.clone()]);
+    assert_eq!(
+        member
+            .channels()
+            .await?
+            .iter()
+            .map(|c| c.channel_id.clone())
+            .collect::<Vec<_>>(),
+        vec![public.clone()]
+    );
     assert!(member.sync_route(&secret).await.is_err());
     assert!(member.send(&secret, "must be denied").await.is_err());
     // No join_channel call: first send initializes the cursor and retrieves history.
     member.send(&public, "Public reply").await?;
     assert_eq!(member.history(&public).await?.len(), 2);
     member.publish_key_package().await?;
-    owner.add_member(&secret, &member.status().device_id).await?;
+    owner
+        .add_member(&secret, &member.status().device_id)
+        .await?;
     owner.send(&secret, "Authorized encrypted history").await?;
     let synced = member.synchronize().await?;
-    assert!(synced.messages.iter().any(|m| m.body == "Authorized encrypted history"));
-    member.send(&secret, "Encrypted reply without joining").await?;
-    assert!(member.cached_channels().iter().any(|c| c.channel_id == secret));
-    owner.remove_member(&secret, &member.status().device_id).await?;
+    assert!(
+        synced
+            .messages
+            .iter()
+            .any(|m| m.body == "Authorized encrypted history")
+    );
+    member
+        .send(&secret, "Encrypted reply without joining")
+        .await?;
+    assert!(
+        member
+            .cached_channels()
+            .iter()
+            .any(|c| c.channel_id == secret)
+    );
+    owner
+        .remove_member(&secret, &member.status().device_id)
+        .await?;
     member.synchronize().await?;
-    assert!(!member.cached_channels().iter().any(|c| c.channel_id == secret));
+    assert!(
+        !member
+            .cached_channels()
+            .iter()
+            .any(|c| c.channel_id == secret)
+    );
     assert!(member.sync_route(&secret).await.is_err());
     member.shutdown().await;
     let mut member = Client::open(&member_path, &migrations, Some(pass), Some(&ca)).await?;
     member.synchronize().await?;
-    assert_eq!(member.cached_channels().iter().map(|c| c.channel_id.clone()).collect::<Vec<_>>(), vec![public]);
+    assert_eq!(
+        member
+            .cached_channels()
+            .iter()
+            .map(|c| c.channel_id.clone())
+            .collect::<Vec<_>>(),
+        vec![public]
+    );
     // Previously received plaintext remains sealed locally; access loss never
     // erases identity continuity/history or silently re-enrolls the device.
-    assert!(member.history(&secret).await?.iter().any(|m| m.body == "Authorized encrypted history"));
+    assert!(
+        member
+            .history(&secret)
+            .await?
+            .iter()
+            .any(|m| m.body == "Authorized encrypted history")
+    );
     member.shutdown().await;
     owner.shutdown().await;
     verify_untouched_role_defaults(&service).await?;
@@ -2008,6 +2122,27 @@ async fn role_catalog_owner_api_is_signed_persistent_and_does_not_activate_acces
         },
     };
     let assignment_receipt = owner.change_role_policy(&assign).await?;
+    let workspace = owner.role_workspace().await?;
+    assert_eq!(workspace.catalog.revision, 3);
+    assert_eq!(workspace.counts[cords_protocol::roles::DEFAULT_ROLE], 2);
+    assert_eq!(workspace.counts[cords_protocol::roles::ADMIN_ROLE], 1);
+    assert!(workspace.editable.contains(&role.id));
+    assert!(workspace.deletable.contains(&role.id));
+    assert!(workspace.can_create);
+    let target_actions = owner
+        .role_target_actions(&member.status().account_id)
+        .await?;
+    assert!(!target_actions.catalog.active);
+    assert!(target_actions.assignable.is_empty());
+    assert!(target_actions.removable.is_empty());
+    assert!(member.role_workspace().await.is_err());
+    assert!(
+        member
+            .role_target_actions(&owner.status().account_id)
+            .await
+            .is_err()
+    );
+
     let assigned = owner.account_roles(&member.status().account_id).await?;
     assert_eq!(assigned.catalog.revision, 3);
     assert_eq!(
@@ -2125,6 +2260,41 @@ async fn role_catalog_owner_api_is_signed_persistent_and_does_not_activate_acces
     };
     assert!(owner.change_role_policy(&unknown).await.is_err());
     assert_eq!(owner.role_audit(3).await?, removals);
+    let reorder = RoleChangeRequest {
+        expected_revision: 4,
+        request_id: id(),
+        change: RoleChange::ReorderRoles {
+            positions: catalog
+                .roles
+                .iter()
+                .map(|entry| cords_protocol::roles::RolePosition {
+                    role_id: entry.id.clone(),
+                    priority: if entry.id == role.id {
+                        25
+                    } else {
+                        entry.priority
+                    },
+                })
+                .collect(),
+        },
+    };
+    let receipt = owner.change_role_policy(&reorder).await?;
+    assert_eq!(receipt.revision, 5);
+    assert_eq!(owner.change_role_policy(&reorder).await?, receipt);
+    assert_eq!(
+        owner
+            .role_catalog()
+            .await?
+            .roles
+            .iter()
+            .find(|entry| entry.id == role.id)
+            .context("reordered role")?
+            .priority,
+        25
+    );
+    let audit = owner.role_audit(4).await?;
+    assert_eq!(audit.entries.len(), 1);
+    assert_eq!(audit.entries[0].operation, "reorder_roles");
     Ok(())
 }
 async fn grant_fixture_owner(s: &Service, mut session: Session) -> Result<Session> {
@@ -2195,6 +2365,8 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
     .await?
     .0;
     let pending_request = SessionRequest {
+        role_policy_version: Some(1),
+        admission_profile: None,
         proof: other.sign_device(pending_challenge)?,
         idempotency_key: id(),
     };
@@ -2303,7 +2475,10 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
         .await?
         .0;
     assert_eq!(owner_channels.len(), 1);
-    assert!(other_channels.is_empty(), "server membership does not grant encrypted channel access");
+    assert!(
+        other_channels.is_empty(),
+        "server membership does not grant encrypted channel access"
+    );
     assert_eq!(owner_channels[0].channel_id, route);
     assert!(
         channel(
@@ -2333,7 +2508,8 @@ async fn approval_and_shared_channel_identity_survive_restart() -> Result<()> {
     assert!(
         channels(State(restarted.clone()), headers(&other_session)?)
             .await?
-            .0.is_empty(),
+            .0
+            .is_empty(),
         "restart must not reveal a channel outside the authorized device roster"
     );
     assert_eq!(
@@ -2377,6 +2553,8 @@ async fn rejected_request_stays_nonmember_and_public_policy_is_explicit() -> Res
         session(
             State(approval.clone()),
             Json(SessionRequest {
+                role_policy_version: Some(1),
+                admission_profile: None,
                 proof: other.sign_device(ch)?,
                 idempotency_key: id(),
             })
@@ -2421,6 +2599,8 @@ async fn rejected_request_stays_nonmember_and_public_policy_is_explicit() -> Res
         session(
             State(approval.clone()),
             Json(SessionRequest {
+                role_policy_version: Some(1),
+                admission_profile: None,
                 proof: other.sign_device(ch)?,
                 idempotency_key: id(),
             })
@@ -2455,6 +2635,8 @@ async fn rejected_request_stays_nonmember_and_public_policy_is_explicit() -> Res
         session(
             State(approval.clone()),
             Json(SessionRequest {
+                role_policy_version: Some(1),
+                admission_profile: None,
                 proof: other.sign_device(retry_challenge)?,
                 idempotency_key: id(),
             })
@@ -2560,6 +2742,8 @@ async fn authentication_rejections_and_idempotent_session_recovery() -> Result<(
     )
     .await?;
     let bad = SessionRequest {
+        role_policy_version: Some(1),
+        admission_profile: None,
         proof: b.sign_device(challenge.clone())?,
         idempotency_key: id(),
     };
@@ -2570,6 +2754,8 @@ async fn authentication_rejections_and_idempotent_session_recovery() -> Result<(
         session(
             State(s.clone()),
             Json(SessionRequest {
+                role_policy_version: Some(1),
+                admission_profile: None,
                 proof: a.sign_device(altered)?,
                 idempotency_key: id()
             })
@@ -2578,6 +2764,8 @@ async fn authentication_rejections_and_idempotent_session_recovery() -> Result<(
         .is_err()
     );
     let request = SessionRequest {
+        role_policy_version: Some(1),
+        admission_profile: None,
         proof: a.sign_device(challenge.clone())?,
         idempotency_key: id(),
     };
@@ -2635,6 +2823,8 @@ async fn reject_expired_challenge(s: &Service, a: &Identity, contact: Contact) -
         session(
             State(s.clone()),
             Json(SessionRequest {
+                role_policy_version: Some(1),
+                admission_profile: None,
                 proof: a.sign_device(expired)?,
                 idempotency_key: id()
             })
@@ -3158,7 +3348,10 @@ async fn native_desktop_administrator_can_review_real_requests() -> Result<()> {
     tokio::task::spawn_blocking(move || -> Result<()> {
         use cords_qt_bridge::{Desktop, ffi::Snapshot, start_desktop};
         fn wait(desktop: &Desktop, completed: u64) -> Result<Snapshot> {
-            let deadline = std::time::Instant::now() + Duration::from_secs(40);
+            wait_for(desktop, completed, Duration::from_secs(40))
+        }
+        fn wait_for(desktop: &Desktop, completed: u64, timeout: Duration) -> Result<Snapshot> {
+            let deadline = std::time::Instant::now() + timeout;
             while std::time::Instant::now() < deadline {
                 for view in desktop.take_updates()? {
                     if view.completed >= completed {
@@ -3172,7 +3365,7 @@ async fn native_desktop_administrator_can_review_real_requests() -> Result<()> {
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            anyhow::bail!("Desktop operation timed out")
+            anyhow::bail!("Desktop operation {completed} timed out")
         }
         let migrations =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
@@ -3251,10 +3444,13 @@ async fn native_desktop_administrator_can_review_real_requests() -> Result<()> {
                 .to_string_lossy()
                 .into(),
         )?;
-        let draft = wait(&owner, 8)?.server_icon_draft;
+        // Cold debug Wasmtime compilation is part of the bounded 120-second
+        // image pipeline. Allow its deadline plus worker handoff overhead;
+        // ordinary network/account commands retain the 40-second test bound.
+        let draft = wait_for(&owner, 8, Duration::from_secs(130))?.server_icon_draft;
         assert!(!draft.id.is_empty());
         owner.save_server_icon(draft.id, 0.5, 0.5, 1.0, "circle".into())?;
-        let branded = wait(&owner, 9)?;
+        let branded = wait_for(&owner, 9, Duration::from_secs(130))?;
         assert!(branded.server_profile.has_icon);
         assert!(
             branded

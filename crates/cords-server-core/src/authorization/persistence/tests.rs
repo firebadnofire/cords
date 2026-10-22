@@ -32,6 +32,100 @@ fn actor() -> Subject {
         roles: BTreeSet::new(),
     }
 }
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn reorder_commits_one_revision_and_audit_with_retry_and_rollback() -> Result<()> {
+    use cords_protocol::roles::RolePosition;
+    let store = store().await?;
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/postgres");
+    store.migrate(&source).await?;
+    sqlx::query("INSERT INTO account_heads VALUES('owner','opaque')")
+        .execute(store.pool())
+        .await?;
+    sqlx::query("INSERT INTO device_contacts VALUES('owner-device','owner','opaque')")
+        .execute(store.pool())
+        .await?;
+    let mut roles = Vec::new();
+    for (revision, name, priority) in [(0, "First", 10), (1, "Second", 20)] {
+        let role = Role {
+            id: uuid::Uuid::now_v7().to_string(),
+            name: name.into(),
+            color: "#123456".into(),
+            description: String::new(),
+            priority,
+            permissions: BTreeSet::new(),
+            mentionable: false,
+        };
+        assert_eq!(
+            commit(
+                &store,
+                &request(revision, Change::PutRole { role: role.clone() })
+            )
+            .await?,
+            revision + 1
+        );
+        roles.push(role);
+    }
+    let mut tx = store.pool().begin().await?;
+    let snapshot = load(&mut tx).await?;
+    let positions: Vec<_> = snapshot
+        .policy
+        .context("initialized")?
+        .roles()
+        .values()
+        .map(|role| RolePosition {
+            role_id: role.id.clone(),
+            priority: if role.id == roles[0].id {
+                20
+            } else if role.id == roles[1].id {
+                10
+            } else {
+                role.priority
+            },
+        })
+        .collect();
+    tx.rollback().await?;
+    let reorder = request(
+        2,
+        Change::ReorderRoles {
+            positions: positions.clone(),
+        },
+    );
+    let mut tx = store.pool().begin().await?;
+    assert_eq!(
+        apply(&mut tx, &actor(), "owner-device", None, &reorder).await?,
+        3
+    );
+    tx.rollback().await?;
+    let mut invalid = positions.clone();
+    invalid.pop();
+    assert!(
+        commit(
+            &store,
+            &request(2, Change::ReorderRoles { positions: invalid })
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(commit(&store, &reorder).await?, 3);
+    assert_eq!(commit(&store, &reorder).await?, 3);
+    let mut tx = store.pool().begin().await?;
+    let snapshot = load(&mut tx).await?;
+    assert_eq!(snapshot.revision, 3);
+    let policy = snapshot.policy.context("initialized")?;
+    assert_eq!(policy.roles()[&roles[0].id].priority, 20);
+    assert_eq!(policy.roles()[&roles[1].id].priority, 10);
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM role_policy_changes WHERE operation='reorder_roles'",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    assert_eq!(audits, 1);
+    tx.rollback().await?;
+    store.migrate(&source).await?;
+    Ok(())
+}
 fn request(revision: i64, change: Change) -> Request {
     Request {
         expected_revision: revision,

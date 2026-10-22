@@ -293,6 +293,19 @@ async fn main() -> Result<()> {
                     settings.server.join_policy.as_str(),
                 )
                 .context("failed to sign server metadata")?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .context("server clock is before the Unix epoch")?
+                .as_secs();
+            cords_server_core::authorization::migration::activate(
+                &store,
+                &identity.server_id(),
+                &metadata.metadata.server_signing_key,
+                now,
+            )
+            .await
+            .context("current-policy activation failed; no listener was opened")?;
+            info!("native identity boundary verified; current role policy enforced");
             let service = cords_server_core::messaging::Service::with_policy(
                 store.clone(),
                 identity.clone(),
@@ -301,8 +314,12 @@ async fn main() -> Result<()> {
                 settings.server.join_policy,
             )
             .map_err(|_| anyhow::anyhow!("authentication lifetime configuration is invalid"))?;
-            let app = router(AppState::new(metadata).with_identity(identity).with_store(store))
-                .merge(cords_server_core::messaging::router(service));
+            let app = router(
+                AppState::new(metadata)
+                    .with_identity(identity)
+                    .with_store(store),
+            )
+            .merge(cords_server_core::messaging::router(service));
             let listener = TcpListener::bind(settings.server.listen)
                 .await
                 .with_context(|| format!("failed to bind {}", settings.server.listen))?;

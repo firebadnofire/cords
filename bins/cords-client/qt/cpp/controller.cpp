@@ -2,6 +2,8 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QUuid>
+#include <limits>
+#include <stdexcept>
 
 namespace {
 rust::String rs(const QString &text) { const auto bytes = text.toUtf8(); return {bytes.constData(), static_cast<size_t>(bytes.size())}; }
@@ -38,12 +40,13 @@ void Controller::apply(const cords::Snapshot &s) {
     if (!s.unlocked) m_locking = false;
     m_accounts.replace(rows(s.accounts, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"avatar", qs(r.avatar)}, {"shape", qs(r.shape)}, {"xMilli", r.x_milli}, {"yMilli", r.y_milli}, {"zoomMilli", r.zoom_milli}}; }));
     m_servers.replace(rows(s.servers, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", r.name.empty() ? qs(r.origin) : qs(r.name)}, {"origin", qs(r.origin)}, {"image", qs(r.image)}, {"shape", qs(r.shape)}, {"state", qs(r.state)}, {"selected", r.selected}, {"archived", r.archived}, {"connected", r.connected}, {"error", qs(r.error)}, {"unread", r.unread}}; }));
-    m_channels.replace(rows(s.channels, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"mode", qs(r.mode)}, {"epoch", QVariant::fromValue(r.epoch)}, {"joined", r.joined}, {"retired", r.retired}, {"acknowledgement", r.acknowledgement}, {"canManage", r.can_manage}}; }));
+    m_channels.replace(rows(s.channels, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"mode", qs(r.mode)}, {"epoch", QVariant::fromValue(r.epoch)}, {"joined", r.joined}, {"retired", r.retired}, {"acknowledgement", r.acknowledgement}, {"canManage", r.can_manage}, {"canRoster", r.can_roster}, {"canRetire", r.can_retire}, {"canReplace", r.can_replace}}; }));
     m_messages.replace(rows(s.messages, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"author", qs(r.author)}, {"body", qs(r.body)}, {"timestamp", QVariant::fromValue(r.timestamp)}}; }));
     m_members.replace(rows(s.members, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"roles", strings(r.roles)}, {"group", qs(r.group)}, {"color", qs(r.color)}}; }));
     m_devices.replace(rows(s.devices, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"name", qs(r.name)}, {"generation", QVariant::fromValue(r.generation)}}; }));
-    m_requests.replace(rows(s.requests, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"name", qs(r.name)}, {"status", qs(r.state)}, {"requestedAt", QVariant::fromValue(r.requested_at)}}; }));
-    m_roles.replace(rows(s.roles, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"color", qs(r.color)}, {"description", qs(r.description)}, {"priority", r.priority}, {"permissions", strings(r.permissions)}, {"mentionable", r.mentionable}}; }));
+    m_requests.replace(rows(s.requests, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"account", qs(r.account)}, {"name", qs(r.name)}, {"status", qs(r.state)}, {"hasProfile", r.has_profile}, {"requestedAt", QVariant::fromValue(r.requested_at)}}; }));
+    m_roles.replace(rows(s.roles, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"name", qs(r.name)}, {"color", qs(r.color)}, {"description", qs(r.description)}, {"priority", r.priority}, {"permissions", strings(r.permissions)}, {"mentionable", r.mentionable}, {"editable", r.editable}, {"deletable", r.deletable}, {"memberCount", QVariant::fromValue(r.member_count)}}; }));
+    m_recoveries.replace(rows(s.recoveries, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"epoch", QVariant::fromValue(r.epoch)}, {"revision", QVariant::fromValue(r.revision)}, {"committerAvailable", r.committer_available}}; }));
     m_audit.replace(rows(s.audit, [](const auto &r) -> QVariantMap { return {{"id", QVariant::fromValue(r.revision)}, {"actor", qs(r.actor)}, {"operation", qs(r.operation)}, {"target", qs(r.target)}, {"timestamp", QVariant::fromValue(r.timestamp)}}; }));
     m_notifications.replace(rows(s.notifications, [](const auto &r) -> QVariantMap { return {{"id", qs(r.id)}, {"label", qs(r.label)}, {"body", qs(r.body)}}; }));
     QVariantMap people;
@@ -53,18 +56,23 @@ void Controller::apply(const cords::Snapshot &s) {
         {"unlocked", s.unlocked}, {"legacy", s.legacy}, {"account", qs(s.account)}, {"device", qs(s.device)},
         {"server", qs(s.server)}, {"origin", qs(s.origin)}, {"ownership", qs(s.ownership)}, {"admission", qs(s.admission)}, {"joinPolicy", strings(s.join_policy)},
         {"route", qs(s.route)}, {"error", qs(s.error)}, {"notice", qs(s.notice)}, {"connected", s.connected},
-        {"canCreate", s.can_create}, {"canApprove", s.can_approve}, {"requestsLoaded", s.requests_loaded}, {"canRoles", s.can_roles}, {"canAssign", s.can_assign},
+        {"canCreate", s.can_create}, {"canApprove", s.can_approve}, {"requestsLoaded", s.requests_loaded}, {"canRoles", s.can_roles}, {"canCreateRoles", s.can_create_roles}, {"canAssign", s.can_assign},
         {"canAudit", s.can_audit}, {"revoked", s.revoked}, {"burned", s.burned}, {"revision", QVariant::fromValue(s.revision)},
         {"rolesActive", s.roles_active}, {"directoryAfter", qs(s.directory_after)}, {"auditAfter", QVariant::fromValue(s.audit_after)},
         {"serverIconDraft", QVariantMap{{"id", qs(s.server_icon_draft.id)}, {"image", qs(s.server_icon_draft.image)}, {"width", s.server_icon_draft.width}, {"height", s.server_icon_draft.height}}},
         {"avatarDraft", QVariantMap{{"id", qs(s.avatar_draft.id)}, {"image", qs(s.avatar_draft.image)}, {"width", s.avatar_draft.width}, {"height", s.avatar_draft.height}}},
         {"serverProfile", QVariantMap{{"supported", s.server_profile.supported}, {"loaded", s.server_profile.loaded}, {"canEdit", s.server_profile.can_edit}, {"revision", QVariant::fromValue(s.server_profile.revision)}, {"name", qs(s.server_profile.name)}, {"description", qs(s.server_profile.description)}, {"background", qs(s.server_profile.background)}, {"image", qs(s.server_profile.image)}, {"shape", qs(s.server_profile.shape)}, {"hasIcon", s.server_profile.has_icon}}},
+        {"roleTarget", QVariantMap{{"account", qs(s.role_target.account)}, {"revision", QVariant::fromValue(s.role_target.revision)}, {"loaded", s.role_target.loaded}, {"assigned", strings(s.role_target.assigned)}, {"assignable", strings(s.role_target.assignable)}, {"removable", strings(s.role_target.removable)}}},
+        {"roleMembers", QVariantMap{{"role", qs(s.role_members.role)}, {"assigned", s.role_members.assigned}, {"revision", QVariant::fromValue(s.role_members.revision)}, {"loaded", s.role_members.loaded}, {"nextAfter", qs(s.role_members.next_after)}, {"memberCount", QVariant::fromValue(s.role_members.member_count)}, {"rows", QVariant::fromValue(rows(s.role_members.rows, [](const auto &r) -> QVariantMap { return {{"account", qs(r.account)}, {"canAssign", r.can_assign}, {"canRemove", r.can_remove}}; }))}}},
         {"profile", profile(s.profile)}, {"preferences", preferences(s.preferences)}, {"platformWarning", m_platformWarning},
         {"serverMuted", s.server_muted}, {"routeMuted", s.route_muted}, {"notificationStatus", m_notificationStatus}};
     m_state.insert("historyOlder", s.history_older);
     m_state.insert("historyNewer", s.history_newer);
     m_state.insert("historyBrowsing", s.history_browsing);
     m_state.insert("historyLoaded", s.history_loaded);
+    m_state.insert("canRecover", s.can_recover);
+    m_state.insert("recoveriesLoaded", s.recoveries_loaded);
+    m_state.insert("recoveryAfter", qs(s.recovery_after));
     if (s.completed != m_completed) { m_completed = s.completed; m_busy = false; emit busyChanged(); }
     emit stateChanged();
 }
@@ -82,6 +90,8 @@ ONE(archiveServer, archive_server) ONE(selectChannel, select_channel) ONE(retire
 ONE(olderMessages, older_messages) ONE(latestMessages, latest_messages)
 ONE(acknowledgePublic, acknowledge_public) ONE(joinChannel, join_channel) ONE(loadDirectory, load_directory)
 ONE(approveRequest, approve_request) ONE(rejectRequest, reject_request) ONE(loadAccountRoles, load_account_roles)
+ONE(loadRequestProfile, load_request_profile)
+ONE(loadRecoveries, load_recoveries) TWO(recoverChannel, recover_channel)
 ONE(loadProfile, load_profile) TWO(unlockAccount, unlock_account) TWO(removeAccount, remove_account)
 TWO(sendMessage, send_message) TWO(addDevice, add_device) TWO(removeDevice, remove_device)
 #undef SIMPLE
@@ -94,6 +104,7 @@ void Controller::hideWhileLocking() {
     m_busy = true;
     m_servers.replace({}); m_channels.replace({}); m_messages.replace({});
     m_members.replace({}); m_devices.replace({}); m_requests.replace({});
+    m_recoveries.replace({});
     m_roles.replace({}); m_audit.replace({}); m_notifications.replace({});
     m_state = {{"unlocked", false}, {"legacy", m_state.value("legacy")}, {"notice", tr("Locking account…")}, {"platformWarning", m_platformWarning}};
     emit busyChanged(); emit stateChanged();
@@ -137,11 +148,25 @@ void Controller::createChannel(QString name, bool isPublic) { submit([&] { m_des
 void Controller::replaceChannel(QString channel, QString name, bool isPublic) { submit([&] { m_desktop->replace_channel(rs(channel), rs(name), isPublic); }); }
 void Controller::loadAudit(quint64 after) { submit([&] { m_desktop->load_audit(after); }); }
 void Controller::putRole(QVariantMap value, quint64 revision, QString requestId) {
-    submit([&] { m_desktop->put_role(cords::RoleRow{rs(value["id"].toString()), rs(value["name"].toString()), rs(value["color"].toString()), rs(value["description"].toString()),
+    submit([&] { m_desktop->put_role(cords::RoleRow{false, false, 0, rs(value["id"].toString()), rs(value["name"].toString()), rs(value["color"].toString()), rs(value["description"].toString()),
         value["priority"].toUInt(), rustStrings(value["permissions"].toStringList()), value["mentionable"].toBool()}, revision, rs(requestId)); });
+}
+void Controller::reorderRoles(QVariantList positions, quint64 revision, QString requestId) {
+    submit([&] {
+        rust::Vec<cords::RolePositionRow> rows;
+        for (const auto &position : positions) {
+            const auto row = position.toMap();
+            bool valid = false;
+            const auto priority = row.value("priority").toULongLong(&valid);
+            if (!valid || priority > std::numeric_limits<quint32>::max()) throw std::runtime_error("Invalid role priority");
+            rows.push_back({rs(row.value("id").toString()), static_cast<quint32>(priority)});
+        }
+        m_desktop->reorder_roles(std::move(rows), revision, rs(requestId));
+    });
 }
 void Controller::deleteRole(QString role, quint64 revision, QString requestId) { submit([&] { m_desktop->delete_role(rs(role), revision, rs(requestId)); }); }
 void Controller::assignRole(QString account, QString role, bool remove, quint64 revision, QString requestId) { submit([&] { m_desktop->assign_role(rs(account), rs(role), remove, revision, rs(requestId)); }); }
+void Controller::loadRoleMembers(QString role, bool assigned, QString after) { submit([&] { m_desktop->load_role_members(rs(role), assigned, rs(after)); }); }
 void Controller::saveProfileName(QString name, QStringList heads) { submit([&] { m_desktop->save_profile_name(rs(name), rustStrings(heads)); }); }
 void Controller::savePreferences(QVariantMap p) {
     submit([&] { m_desktop->save_preferences(cords::Preferences{rs(p["name"].toString()), rs(p["theme"].toString()), p["compact"].toBool(), p.value("textScalePercent", 100).toUInt(), p.value("serverIconSize", 48).toUInt(), p["reducedMotion"].toBool(),

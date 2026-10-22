@@ -324,6 +324,86 @@ private slots:
         QTRY_VERIFY(!menu->property("opened").toBool());
         item->setParentItem(nullptr);
     }
+    void liveRoleManagementWorkflow() {
+        const auto fixturePath = qEnvironmentVariable("CORDS_NATIVE_ROLE_FIXTURE");
+        if (fixturePath.isEmpty()) QSKIP("Explicit disposable native role fixture not selected");
+        QFile file(fixturePath + "/ready.json");
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto ready = QJsonDocument::fromJson(file.readAll()).object();
+        QCOMPARE(ready["fixture"].toString(), QString("native-roles-v1"));
+        Controller owner(ready["owner_state"].toString(), QStringLiteral(CORDS_TEST_MIGRATIONS), ready["ca"].toString());
+        Controller member(ready["member_state"].toString(), QStringLiteral(CORDS_TEST_MIGRATIONS), ready["ca"].toString());
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.state().isEmpty() && !member.state().isEmpty(), 10000);
+        const auto password = QStringLiteral("Native role fixture only 9841!");
+        owner.unlockAccount(ready["owner_account"].toString(), password);
+        member.unlockAccount(ready["member_account"].toString(), password);
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && !member.busy(), 30000);
+        QVERIFY2(owner.state().value("error").toString().isEmpty(), qPrintable(owner.state().value("error").toString()));
+        QVERIFY2(member.state().value("error").toString().isEmpty(), qPrintable(member.state().value("error").toString()));
+        owner.loadRoles();
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy(), 30000);
+        QVERIFY(owner.state().value("rolesActive").toBool());
+        QQmlEngine engine;
+        QQuickWindow ownerWindow, memberWindow;
+        ownerWindow.setColor(QColor("#25262b")); ownerWindow.resize(700, 700); ownerWindow.show();
+        memberWindow.setColor(QColor("#25262b")); memberWindow.resize(500, 700); memberWindow.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/RoleMembersWorkspace.qml"));
+        QScopedPointer<QObject> workspace(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&owner)},
+            {"parent", QVariant::fromValue(ownerWindow.contentItem())}, {"width", 680}, {"roleId", ready["role"].toString()}, {"saved", true}}));
+        QVERIFY2(workspace, qPrintable(component.errorString()));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && workspace->property("current").toBool(), 30000);
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "setAdding", Q_ARG(QVariant, true)));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && workspace->property("current").toBool(), 30000);
+        auto *search = workspace->findChild<QObject *>("roleMemberSearch"); QVERIFY(search);
+        search->setProperty("text", ready["member_account"].toString());
+        auto *list = workspace->findChild<QObject *>("roleMemberList"); QVERIFY(list);
+        QTRY_COMPARE(list->property("count").toInt(), 1);
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "selectAccount", Q_ARG(QVariant, ready["member_account"].toString()), Q_ARG(QVariant, true)));
+        search->setProperty("text", ready["other_account"].toString());
+        QTRY_COMPARE(list->property("count").toInt(), 1);
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "selectAccount", Q_ARG(QVariant, ready["other_account"].toString()), Q_ARG(QVariant, true)));
+        auto *add = workspace->findChild<QObject *>("assignSelectedRoleMembers"); QVERIFY(add);
+        QVERIFY(add->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(add, "clicked"));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && workspace->property("confirmed").toInt() == 2 && workspace->property("current").toBool(), 30000);
+        QVERIFY2(owner.state().value("error").toString().isEmpty(), qPrintable(owner.state().value("error").toString()));
+        QCOMPARE(owner.state().value("roleMembers").toMap().value("memberCount").toInt(), 2);
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "setAdding", Q_ARG(QVariant, false)));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && workspace->property("current").toBool(), 30000);
+        QTest::qWait(150);
+        QVERIFY(ownerWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/role-members-live-assigned.png"));
+        QQmlComponent cardComponent(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/AccountCard.qml"));
+        QScopedPointer<QObject> readOnly(cardComponent.createWithInitialProperties({{"desktop", QVariant::fromValue(&member)},
+            {"parent", QVariant::fromValue(memberWindow.contentItem())}, {"account", ready["other_account"].toString()}}));
+        QVERIFY2(readOnly, qPrintable(cardComponent.errorString()));
+        QVERIFY(QMetaObject::invokeMethod(readOnly.data(), "open"));
+        QTRY_VERIFY_WITH_TIMEOUT(!member.busy() && readOnly->property("roleActionsLoaded").toBool(), 30000);
+        QVERIFY(member.state().value("roleTarget").toMap().value("assignable").toStringList().isEmpty());
+        QVERIFY(member.state().value("roleTarget").toMap().value("removable").toStringList().isEmpty());
+        QCOMPARE(readOnly->property("visibleRoles").value<QJSValue>().toVariant().toList().size(), 1);
+        auto *readOnlyAdd = readOnly->findChild<QObject *>("profileAddRole"); QVERIFY(readOnlyAdd);
+        QVERIFY(!readOnlyAdd->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(readOnly.data(), "close"));
+        // Exercise the same removal handler used by Manage Members confirmation.
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "start", Q_ARG(QVariant, QStringList{ready["other_account"].toString()}), Q_ARG(QVariant, true)));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && workspace->property("confirmed").toInt() == 1 && workspace->property("current").toBool(), 30000);
+        QCOMPARE(owner.state().value("roleMembers").toMap().value("memberCount").toInt(), 1);
+        QScopedPointer<QObject> card(cardComponent.createWithInitialProperties({{"desktop", QVariant::fromValue(&owner)},
+            {"parent", QVariant::fromValue(ownerWindow.contentItem())}, {"account", ready["member_account"].toString()}}));
+        QVERIFY2(card, qPrintable(cardComponent.errorString()));
+        QVERIFY(QMetaObject::invokeMethod(card.data(), "open"));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && card->property("roleActionsLoaded").toBool(), 30000);
+        QVERIFY(owner.state().value("roleTarget").toMap().value("removable").toStringList().contains(ready["role"].toString()));
+        QVERIFY(QMetaObject::invokeMethod(card.data(), "changeRole", Q_ARG(QVariant, ready["role"].toString()), Q_ARG(QVariant, true)));
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && card->property("roleActionsLoaded").toBool() && card->property("visibleRoles").value<QJSValue>().toVariant().toList().isEmpty(), 30000);
+        QVERIFY2(owner.state().value("error").toString().isEmpty(), qPrintable(owner.state().value("error").toString()));
+        QVERIFY(card->property("opened").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(workspace->property("current").toBool(), 30000);
+        QCOMPARE(owner.state().value("roleMembers").toMap().value("memberCount").toInt(), 0);
+        owner.lockAccount(); member.lockAccount();
+        QTRY_VERIFY_WITH_TIMEOUT(!owner.busy() && !member.busy(), 30000);
+        QVERIFY(!owner.state().value("unlocked").toBool() && !member.state().value("unlocked").toBool());
+    }
     void liveAdmissionWorkflow() {
         const auto fixturePath = qEnvironmentVariable("CORDS_QT_ADMISSION_FIXTURE");
         if (fixturePath.isEmpty()) QSKIP("Explicit disposable native admission fixture not selected");
@@ -399,6 +479,17 @@ private slots:
         };
         QQuickItem *reject = nullptr;
         QTRY_VERIFY((reject = findVisible(ownerItem, "rejectMembershipRequestAction")) != nullptr);
+        QQuickItem *requestAvatar = nullptr;
+        QTRY_VERIFY((requestAvatar = findVisible(ownerItem, "membershipRequestAvatar")) != nullptr);
+        QFile avatarFile(fixturePath + "/applicant-avatar.jxl");
+        QVERIFY(avatarFile.open(QIODevice::ReadOnly));
+        const auto expectedAvatar = "data:image/jxl;base64," + avatarFile.readAll().toBase64();
+        QTRY_COMPARE_WITH_TIMEOUT(requestAvatar->property("source").toUrl().toString(), QString::fromLatin1(expectedAvatar), 30000);
+        QTRY_VERIFY_WITH_TIMEOUT(requestAvatar->property("ready").toBool(), 30000);
+        QCOMPARE(requestAvatar->property("shape").toString(), QString("square"));
+        ownerWindow.raise(); ownerWindow.requestActivate();
+        QTest::mouseMove(&ownerWindow, requestAvatar->mapToScene(QPointF(50, 10)).toPoint());
+        QTRY_VERIFY(requestAvatar->property("playing").toBool());
         QVERIFY(ownerWindow.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/admission-native-review.png"));
         click(ownerWindow, reject);
         auto *confirmation = ownerShell->findChild<QObject *>("rejectMembershipRequest");
@@ -499,13 +590,14 @@ private slots:
         Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
         QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
         controller.m_poll.stop();
-        controller.m_state = {{"canRoles", true}, {"revision", 7}, {"server", "test-server"}, {"directoryLoaded", true}};
+        controller.m_state = {{"canCreateRoles", true}, {"canRoles", true}, {"revision", 7}, {"server", "test-server"}, {"directoryLoaded", true}};
         QQmlEngine engine;
         const auto path = QStringLiteral(CORDS_QML_DIR);
         QQuickWindow editorWindow; editorWindow.resize(800, 780); editorWindow.show();
         QQmlComponent roleComponent(&engine, QUrl::fromLocalFile(path + "/RoleEditor.qml"));
         QScopedPointer<QObject> editor(roleComponent.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}, {"parent", QVariant::fromValue(editorWindow.contentItem())}}));
         QVERIFY2(editor, qPrintable(roleComponent.errorString()));
+        controller.roles()->replace({{{"id", "custom-role"}, {"editable", true}, {"deletable", true}}});
         const QVariantMap role{{"id", "custom-role"}, {"name", "Guides"}, {"color", "#80b5db"}, {"priority", 1}, {"permissions", QStringList{"server.read"}}, {"mentionable", false}, {"description", ""}};
         QVERIFY(QMetaObject::invokeMethod(editor.data(), "edit", Q_ARG(QVariant, role), Q_ARG(QVariant, true)));
         QTest::qWait(100);
@@ -577,17 +669,393 @@ private slots:
         QTRY_VERIFY(!requests->property("modalOpen").toBool());
         requestsItem->setParentItem(nullptr);
     }
-    void roleEditorFollowsReviewedAccountAndServer() {
+    void inlineRoleEditorPreservesDraftAndSearches() {
         QTemporaryDir state;
         Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
         QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
         controller.m_poll.stop();
-        controller.m_state = {{"canRoles", true}, {"revision", 7}, {"account", "first-account"}, {"server", "first-server"}};
+        controller.m_state = {{"canCreateRoles", true}, {"canRoles", true}, {"revision", 7}, {"account", "account"}, {"server", "server"}};
+        controller.roles()->replace({{{"editable", true}, {"deletable", true}, {"memberCount", 12}, {"id", "first"}, {"name", "Guides"}, {"color", "#80b5db"}, {"priority", 2}}, {{"editable", true}, {"deletable", true}, {"id", "second"}, {"name", "Helpers"}, {"color", "#78c99a"}, {"priority", 1}}});
+        QQmlEngine engine;
+        QQuickWindow window; window.setColor(QColor("#32343b")); window.resize(1180, 760); window.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/AdminPane.qml"));
+        QScopedPointer<QObject> admin(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(admin, qPrintable(component.errorString()));
+        auto *item = qobject_cast<QQuickItem *>(admin.data());
+        item->setParentItem(window.contentItem()); item->setSize(window.size());
+        admin->setProperty("page", 3);
+        auto *editor = admin->findChild<QObject *>("roleEditor");
+        QVERIFY(editor);
+        const QVariantMap first{{"editable", true}, {"deletable", true}, {"memberCount", 12}, {"id", "first"}, {"name", "Guides"}, {"color", "#80b5db"}, {"permissions", QStringList{}}};
+        const QVariantMap second{{"editable", true}, {"deletable", true}, {"id", "second"}, {"name", "Helpers"}, {"color", "#78c99a"}, {"permissions", QStringList{}}};
+        QVERIFY(QMetaObject::invokeMethod(editor, "edit", Q_ARG(QVariant, first), Q_ARG(QVariant, true)));
+        QVERIFY(QMetaObject::invokeMethod(editor, "change", Q_ARG(QVariant, "name"), Q_ARG(QVariant, "Unsaved guides")));
+        QVERIFY(QMetaObject::invokeMethod(editor, "edit", Q_ARG(QVariant, second), Q_ARG(QVariant, true)));
+        auto draft = [editor] { return editor->property("draft").value<QJSValue>().toVariant().toMap(); };
+        QCOMPARE(draft().value("id").toString(), "first");
+        auto *discard = editor->findChild<QObject *>("discardRoleConfirmation");
+        QTRY_VERIFY(discard->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(discard, "close"));
+        QCOMPARE(draft().value("name").toString(), "Unsaved guides");
+        QVERIFY(QMetaObject::invokeMethod(editor, "edit", Q_ARG(QVariant, second), Q_ARG(QVariant, true)));
+        QVERIFY(QMetaObject::invokeMethod(discard->findChild<QObject *>("confirmOperation"), "clicked"));
+        QCOMPARE(draft().value("id").toString(), "second");
+        QVERIFY(!editor->property("dirty").toBool());
+        editor->setProperty("tab", 1);
+        auto *search = editor->findChild<QObject *>("permissionSearch");
+        auto *permissions = editor->findChild<QObject *>("rolePermissions");
+        QVERIFY(search); QVERIFY(permissions);
+        search->setProperty("text", "MLS");
+        QTRY_COMPARE(permissions->property("matching").value<QJSValue>().toVariant().toList().size(), 3);
+        search->setProperty("text", "no-such-capability");
+        QTRY_VERIFY(permissions->property("matching").value<QJSValue>().toVariant().toList().isEmpty());
+        search->setProperty("text", "");
+        editor->setProperty("tab", 0);
+        QTest::qWait(100);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/roles-inline-wide.png"));
+        window.resize(760, 620); item->setSize(window.size());
+        QTest::qWait(100);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/roles-inline-narrow.png"));
+        auto *editorItem = qobject_cast<QQuickItem *>(editor);
+        QVERIFY(editorItem->x() + editorItem->width() <= item->width());
+        QVERIFY(editorItem->width() >= 180);
+        QVERIFY(QMetaObject::invokeMethod(editor, "change", Q_ARG(QVariant, "name"), Q_ARG(QVariant, "Keep this draft")));
+        QVERIFY(QMetaObject::invokeMethod(admin.data(), "selectPage", Q_ARG(QVariant, 1)));
+        QCOMPARE(admin->property("page").toInt(), 3);
+        auto *leave = admin->findChild<QObject *>("leaveRolesConfirmation");
+        QTRY_VERIFY(leave->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(leave, "close"));
+        QCOMPARE(draft().value("name").toString(), "Keep this draft");
+        QVERIFY(QMetaObject::invokeMethod(editor, "close"));
+        QVERIFY(QMetaObject::invokeMethod(editor, "edit", Q_ARG(QVariant, second), Q_ARG(QVariant, true)));
+        QTest::keyClick(&window, Qt::Key_Escape);
+        QTRY_VERIFY(!editor->property("visible").toBool());
+        QCOMPARE(admin->property("page").toInt(), 3);
+    }
+    void roleMemberPagesRequireFreshHintsAndPreserveFailedReceipts() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_busy = true;
+        controller.m_state = {{"account", "actor"}, {"server", "server"}, {"revision", 7}, {"rolesActive", true}};
+        QQmlEngine engine;
+        QQuickWindow window; window.setColor(QColor("#25262b")); window.resize(480, 680); window.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/RoleMembersWorkspace.qml"));
+        QScopedPointer<QObject> workspace(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)},
+            {"parent", QVariant::fromValue(window.contentItem())}, {"width", 460}, {"roleId", "role"}, {"saved", true}}));
+        QVERIFY2(workspace, qPrintable(component.errorString()));
+        workspace->setProperty("adding", true);
+        workspace->setProperty("pendingRead", false);
+        const auto page = [](int revision) -> QVariantMap {
+            return {{"role", "role"}, {"assigned", false}, {"revision", revision}, {"loaded", true}, {"nextAfter", "cursor"}, {"memberCount", 21},
+                {"rows", QVariantList{QVariantMap{{"account", "eligible"}, {"canAssign", true}, {"canRemove", false}},
+                    QVariantMap{{"account", "protected"}, {"canAssign", false}, {"canRemove", false}}}}};
+        };
+        controller.m_state["roleMembers"] = page(7);
+        controller.m_state["people"] = QVariantMap{{"eligible", QVariantMap{{"name", "An exceptionally long signed profile name for a narrow member list"}}}};
+        emit controller.stateChanged();
+        controller.m_busy = false;
+        emit controller.busyChanged();
+        QVERIFY(workspace->property("current").toBool());
+        QVERIFY(workspace->property("actionable").toBool());
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "selectAccount", Q_ARG(QVariant, "protected"), Q_ARG(QVariant, true)));
+        QCOMPARE(workspace->property("selected").value<QJSValue>().toVariant().toList().size(), 0);
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "selectAccount", Q_ARG(QVariant, "eligible"), Q_ARG(QVariant, true)));
+        QCOMPARE(workspace->property("selected").value<QJSValue>().toVariant().toList().size(), 1);
+        auto *search = workspace->findChild<QObject *>("roleMemberSearch"); QVERIFY(search);
+        search->setProperty("text", "signed profile");
+        auto *list = workspace->findChild<QObject *>("roleMemberList"); QVERIFY(list);
+        QTRY_COMPARE(list->property("count").toInt(), 1);
+        QTest::qWait(120);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/role-members-narrow.png"));
+        search->setProperty("text", "unknown");
+        QTRY_COMPARE(list->property("count").toInt(), 0);
+        search->setProperty("text", "");
+        controller.m_state["revision"] = 8; emit controller.stateChanged();
+        QVERIFY(!workspace->property("current").toBool());
+        QVERIFY(!workspace->property("actionable").toBool());
+        controller.m_state["revision"] = 7; emit controller.stateChanged();
+        workspace->setProperty("blocked", true);
+        QVERIFY(!workspace->property("actionable").toBool());
+        workspace->setProperty("blocked", false);
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "start", Q_ARG(QVariant, QStringList{"eligible"}), Q_ARG(QVariant, false)));
+        QVERIFY(controller.busy());
+        const auto batch = workspace->property("batch").value<QJSValue>().toVariant().toList();
+        QCOMPARE(batch.size(), 1);
+        const auto receipt = batch.first().toMap().value("requestId").toString();
+        QVERIFY(!receipt.isEmpty());
+        // Completion injection tests QML failure/retry state only. The real TLS
+        // worker acceptance independently exercises server mutation receipts.
+        controller.m_state["error"] = "Connection interrupted";
+        controller.m_busy = false; emit controller.stateChanged();
+        QVERIFY(workspace->property("failed").toBool());
+        QCOMPARE(workspace->property("confirmed").toInt(), 0);
+        QVERIFY(workspace->property("message").toString().contains("Confirmed 0 of 1"));
+        workspace->setProperty("stage", "");
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "writeNext"));
+        QCOMPARE(workspace->property("batch").value<QJSValue>().toVariant().toList().first().toMap().value("requestId").toString(), receipt);
+        controller.m_state["server"] = "other"; emit controller.stateChanged();
+        QVERIFY(!workspace->property("current").toBool());
+        QVERIFY(!workspace->property("failed").toBool());
+        QCOMPARE(workspace->property("selected").value<QJSValue>().toVariant().toList().size(), 0);
+    }
+    void roleEditorRequiresCurrentTargetMetadata() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_state = {{"canRoles", true}, {"account", "actor"}, {"server", "server"}, {"revision", 1}};
         QQmlEngine engine;
         QQuickWindow window; window.resize(800, 780); window.show();
         QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/RoleEditor.qml"));
         QScopedPointer<QObject> editor(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}, {"parent", QVariant::fromValue(window.contentItem())}}));
         QVERIFY2(editor, qPrintable(component.errorString()));
+        const QVariantMap draft{{"id", "protected"}, {"name", "Role"}, {"color", "#123456"}, {"editable", true}, {"deletable", true}, {"permissions", QStringList{"server.invite.create"}}, {"mentionable", true}};
+        QVERIFY(QMetaObject::invokeMethod(editor.data(), "edit", Q_ARG(QVariant, draft), Q_ARG(QVariant, true)));
+        QVERIFY(!editor->property("canEdit").toBool());
+        controller.roles()->replace({{{"id", "protected"}, {"editable", true}, {"deletable", true}}});
+        QTRY_VERIFY(editor->property("canEdit").toBool());
+        QVERIFY(editor->property("canDelete").toBool());
+        auto *mentionable = editor->findChild<QObject *>("roleMentionable"); QVERIFY(mentionable);
+        QVERIFY(!mentionable->property("enabled").toBool());
+        QVERIFY(mentionable->property("checked").toBool());
+        editor->setProperty("tab", 1);
+        const std::function<QQuickItem *(QQuickItem *)> findInvite = [&findInvite](QQuickItem *root) -> QQuickItem * {
+            if (root->objectName() == "rolePermission-server.invite.create") return root;
+            for (auto *child : root->childItems()) if (auto *found = findInvite(child)) return found;
+            return nullptr;
+        };
+        auto *invites = findInvite(qobject_cast<QQuickItem *>(editor.data()));
+        QVERIFY(invites);
+        QVERIFY(!invites->property("enabled").toBool());
+        QVERIFY(invites->property("checked").toBool());
+        controller.roles()->replace({{{"id", "protected"}, {"editable", false}, {"deletable", false}}});
+        QTRY_VERIFY(!editor->property("canEdit").toBool());
+        QVERIFY(!editor->property("canDelete").toBool());
+    }
+    void roleReorderKeepsProtectedAnchorsAndSupportsKeyboardAndDrag() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_state = {{"account", "actor"}, {"server", "server"}, {"revision", 3}};
+        controller.roles()->replace({
+            {{"id", "builtin:admin"}, {"name", "admin"}, {"priority", 200}, {"editable", false}},
+            {{"id", "builtin:moderator"}, {"name", "moderator"}, {"priority", 100}, {"editable", false}},
+            {{"id", "a"}, {"name", "Alpha"}, {"priority", 10}, {"editable", true}},
+            {{"id", "b"}, {"name", "Beta"}, {"priority", 10}, {"editable", true}},
+            {{"id", "builtin:default"}, {"name", "default"}, {"priority", 0}, {"editable", true}}});
+        QQmlEngine engine;
+        QQuickWindow window; window.resize(900, 700); window.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/RolesWorkspace.qml"));
+        QScopedPointer<QObject> workspace(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(workspace, qPrintable(component.errorString()));
+        auto *item = qobject_cast<QQuickItem *>(workspace.data());
+        item->setParentItem(window.contentItem()); item->setSize(window.size());
+        QVariant result;
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "reorderProposal", Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, "b"), Q_ARG(QVariant, "a"), Q_ARG(QVariant, true)));
+        const auto proposal = result.value<QJSValue>().toVariant().toList();
+        QCOMPARE(proposal.size(), 5);
+        QCOMPARE(proposal[0].toMap().value("priority").toInt(), 200);
+        QCOMPARE(proposal[1].toMap().value("priority").toInt(), 100);
+        QCOMPARE(proposal[2].toMap().value("id").toString(), "b");
+        QVERIFY(proposal[2].toMap().value("priority").toInt() > proposal[3].toMap().value("priority").toInt());
+        QCOMPARE(proposal[4].toMap().value("priority").toInt(), 0);
+        const std::function<QQuickItem *(QQuickItem *, const QString &)> findItem = [&findItem](QQuickItem *root, const QString &name) -> QQuickItem * {
+            if (root->objectName() == name) return root;
+            for (auto *child : root->childItems()) if (auto *found = findItem(child, name)) return found;
+            return nullptr;
+        };
+        QQuickItem *alpha = nullptr, *beta = nullptr;
+        QTRY_VERIFY((alpha = findItem(item, "roleRow-a")));
+        QTRY_VERIFY((beta = findItem(item, "roleRow-b")));
+        auto *confirm = workspace->findChild<QObject *>("reorderRolesConfirmation");
+        QVERIFY(confirm);
+        alpha->forceActiveFocus();
+        QTest::keyClick(&window, Qt::Key_Down, Qt::AltModifier);
+        QTRY_VERIFY(confirm->property("visible").toBool());
+        const auto requestId = workspace->property("reorderRequestId").toString();
+        QVERIFY(!requestId.isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "moveAdjacent", Q_ARG(QVariant, "a"), Q_ARG(QVariant, 1)));
+        QCOMPARE(workspace->property("reorderRequestId").toString(), requestId);
+        QVERIFY(QMetaObject::invokeMethod(confirm, "close"));
+        auto *handle = findItem(alpha, "roleDragHandle");
+        QVERIFY(handle);
+        const QPoint start = handle->mapToScene(QPointF(handle->width()/2, handle->height()/2)).toPoint();
+        const QPoint finish = beta->mapToScene(QPointF(beta->width()/2, beta->height()-5)).toPoint();
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+        QTest::mouseMove(&window, start + QPoint(0, 15), 30);
+        QTest::mouseMove(&window, finish, 30);
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, finish, 30);
+        QTRY_VERIFY(confirm->property("visible").toBool());
+        controller.m_state["server"] = "other"; emit controller.stateChanged();
+        QTRY_VERIFY(!confirm->property("visible").toBool());
+        QVERIFY(workspace->property("reorderPayload").toString().isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(workspace.data(), "moveRole", Q_ARG(QVariant, "a"), Q_ARG(QVariant, "builtin:admin"), Q_ARG(QVariant, true)));
+        QVERIFY(!workspace->property("reorderError").toString().isEmpty());
+        QVERIFY(!confirm->property("visible").toBool());
+    }
+    void recoveryPresentationUsesScopedCandidatesAndExplicitConfirmation() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_busy = true; // Presentation fixture only; no service authority claim.
+        controller.m_state = {{"account", "owner"}, {"server", "server"}, {"canRecover", true}, {"recoveriesLoaded", true}};
+        controller.recoveries()->replace({{{"id", "blocked-route"}, {"epoch", 8}, {"revision", 4}, {"committerAvailable", false}}});
+        QQmlEngine engine;
+        QQuickWindow window; window.resize(1000, 800); window.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/AdminPane.qml"));
+        QScopedPointer<QObject> admin(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}}));
+        QVERIFY2(admin, qPrintable(component.errorString()));
+        auto *item = qobject_cast<QQuickItem *>(admin.data());
+        item->setParentItem(window.contentItem()); item->setSize(window.size());
+        admin->setProperty("page", 4);
+        const std::function<QQuickItem *(QQuickItem *, const QString &)> findItem = [&findItem](QQuickItem *root, const QString &name) -> QQuickItem * {
+            if (root->objectName() == name) return root;
+            for (auto *child : root->childItems()) if (auto *found = findItem(child, name)) return found;
+            return nullptr;
+        };
+        QQuickItem *name = nullptr, *recover = nullptr;
+        QTRY_VERIFY((name = findItem(item, "channelRecoveryName")));
+        QTRY_VERIFY((recover = findItem(item, "recoverEncryptedChannel")));
+        QVERIFY(!recover->property("enabled").toBool());
+        controller.m_busy = false; emit controller.busyChanged();
+        QVERIFY(!recover->property("enabled").toBool());
+        name->setProperty("text", "Fresh encrypted group");
+        QTRY_VERIFY(recover->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(recover, "clicked"));
+        auto *confirm = admin->findChild<QObject *>("serverAdministrationConfirmation");
+        QVERIFY(confirm);
+        QTRY_VERIFY(confirm->property("visible").toBool());
+        QVERIFY(confirm->property("explanation").toString().contains("No old keys or history transfer"));
+        controller.m_state.insert("server", "another-server"); emit controller.stateChanged();
+        QTRY_VERIFY(!confirm->property("visible").toBool());
+        controller.recoveries()->replace({{{"id", "committer-route"}, {"epoch", 9}, {"committerAvailable", true}}});
+        QTest::qWait(50);
+        auto *unavailable = findItem(item, "recoverEncryptedChannel");
+        QVERIFY(unavailable);
+        QVERIFY(!unavailable->property("visible").toBool());
+        controller.m_state.insert("canRecover", false); emit controller.stateChanged();
+        QTest::qWait(50);
+        QVERIFY(!findItem(item, "recoverEncryptedChannel"));
+        controller.m_recoveries.replace({{{"id", "private"}}});
+        controller.hideWhileLocking();
+        QCOMPARE(controller.recoveries()->rowCount(), 0);
+    }
+    void profileRolePresentationTracksModelChanges() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/AccountCard.qml"));
+        QScopedPointer<QObject> card(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}, {"account", "person"}}));
+        QVERIFY2(card, qPrintable(component.errorString()));
+        controller.members()->replace({{{"id", "person"}, {"roles", QStringList{"low", "high"}}}});
+        controller.roles()->replace({{{"id", "low"}, {"name", "Low"}, {"priority", 1}}, {{"id", "high"}, {"name", "High"}, {"priority", 9}}});
+        auto roles = [&card] { return card->property("visibleRoles").value<QJSValue>().toVariant().toList(); };
+        QTRY_COMPARE(roles().size(), 2);
+        QCOMPARE(roles().first().toMap().value("id").toString(), "high");
+        controller.roles()->replace({{{"id", "low"}, {"name", "Renamed"}, {"color", "#ffffff"}, {"priority", 12}}, {{"id", "high"}, {"name", "High"}, {"priority", 9}}});
+        QTRY_COMPARE(roles().first().toMap().value("name").toString(), "Renamed");
+        QCOMPARE(roles().first().toMap().value("color").toString(), "#ffffff");
+        controller.members()->replace({{{"id", "person"}, {"roles", QStringList{"high"}}}});
+        QTRY_COMPARE(roles().size(), 1);
+        QCOMPARE(roles().first().toMap().value("id").toString(), "high");
+        controller.roles()->replace({});
+        QTRY_VERIFY(roles().isEmpty());
+    }
+    void profileRoleControlsRequireFreshExactTargetActions() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_busy = true;
+        controller.m_state = {{"account", "actor"}, {"server", "server"}, {"revision", 9}, {"rolesActive", true},
+            {"profile", QVariantMap{{"account", "person"}, {"name", "Profile preview"}}},
+            {"roleTarget", QVariantMap{{"account", "person"}, {"revision", 9}, {"loaded", true}, {"assigned", QStringList{"low"}}, {"assignable", QStringList{"high"}}, {"removable", QStringList{"low"}}}}};
+        controller.roles()->replace({{{"id", "high"}, {"name", "Helpers"}, {"priority", 20}, {"color", "#88ccaa"}},
+            {{"id", "low"}, {"name", "An exceptionally long role name that should wrap safely in a narrow profile"}, {"priority", 10}, {"color", "#88aacc"}}});
+        QQmlEngine engine;
+        QQuickWindow window; window.resize(760, 720); window.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/AccountCard.qml"));
+        QScopedPointer<QObject> card(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}, {"account", "person"}, {"parent", QVariant::fromValue(window.contentItem())}}));
+        QVERIFY2(card, qPrintable(component.errorString()));
+        QVERIFY(QMetaObject::invokeMethod(card.data(), "open"));
+        auto *add = card->findChild<QQuickItem *>("profileAddRole");
+        QVERIFY(add);
+        QTRY_VERIFY(add->isVisible());
+        QVERIFY(!add->isEnabled());
+        auto *selector = card->findChild<QObject *>("profileRoleSelector");
+        QVERIFY(selector);
+        controller.m_busy = false; emit controller.busyChanged();
+        QTRY_VERIFY(add->isEnabled());
+        QVERIFY(QMetaObject::invokeMethod(add, "clicked"));
+        QTRY_VERIFY(selector->property("visible").toBool());
+        auto *search = card->findChild<QObject *>("profileRoleSearch");
+        QVERIFY(search);
+        search->setProperty("text", "Helpers");
+        QCOMPARE(card->property("availableRoles").value<QJSValue>().toVariant().toList().size(), 1);
+        QVERIFY(QMetaObject::invokeMethod(selector, "close"));
+        QTRY_VERIFY(card->property("opened").toBool());
+        QTest::qWait(150);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/profile-inline-roles.png"));
+        auto target = controller.m_state.value("roleTarget").toMap();
+        target["assignable"] = QStringList{}; target["removable"] = QStringList{};
+        controller.m_state["roleTarget"] = target; emit controller.stateChanged();
+        QTRY_VERIFY(!add->isVisible());
+        QVERIFY(card->property("roleActionsLoaded").toBool());
+        QCOMPARE(card->property("visibleRoles").value<QJSValue>().toVariant().toList().size(), 1);
+        target["assignable"] = QStringList{"high"}; target["removable"] = QStringList{"low"};
+        controller.m_state["roleTarget"] = target; controller.m_state["revision"] = 10; emit controller.stateChanged();
+        QTRY_VERIFY(!card->property("roleActionsLoaded").toBool());
+        QVERIFY(!add->isVisible());
+        controller.m_state["revision"] = 9; target["account"] = "different-person";
+        controller.m_state["roleTarget"] = target; emit controller.stateChanged();
+        QVERIFY(!card->property("roleActionsLoaded").toBool());
+        QVERIFY(!add->isVisible());
+        controller.m_state["server"] = "other"; emit controller.stateChanged();
+        QTRY_VERIFY(!card->property("visible").toBool());
+        QVERIFY(!selector->property("visible").toBool());
+        // A full many-role card must remain bounded and scroll on a small window.
+        QList<QVariantMap> many;
+        QStringList assigned;
+        for (int i = 0; i < 32; ++i) {
+            const auto id = QString("role-%1").arg(i);
+            assigned.push_back(id);
+            many.push_back({{"id", id}, {"name", i % 3 ? QString("Team %1").arg(i) : QString("An exceptionally long community role label %1").arg(i)},
+                {"priority", i}, {"color", i % 2 ? "#88bbcc" : "#bb88cc"}});
+        }
+        controller.m_busy = true; emit controller.busyChanged();
+        controller.roles()->replace(many);
+        controller.m_state["roleTarget"] = QVariantMap{{"loaded", true}, {"account", "person"}, {"revision", 9}, {"assigned", assigned}, {"assignable", QStringList{}}, {"removable", QStringList{}}};
+        emit controller.stateChanged();
+        window.resize(380, 520);
+        QVERIFY(QMetaObject::invokeMethod(card.data(), "open"));
+        QTRY_VERIFY(card->property("opened").toBool());
+        QTRY_COMPARE(card->property("visibleRoles").value<QJSValue>().toVariant().toList().size(), 32);
+        QCOMPARE(card->property("visibleRoles").value<QJSValue>().toVariant().toList().first().toMap().value("id").toString(), "role-31");
+        QTRY_VERIFY(card->property("contentHeight").toReal() > card->property("height").toReal());
+        QVERIFY(card->property("height").toReal() <= window.height() - 24);
+        QVERIFY(card->property("width").toReal() <= window.width() - 24);
+        QTest::qWait(150);
+        QVERIFY(window.grabWindow().save(QStringLiteral(CORDS_TEST_OUTPUT) + "/profile-many-roles-narrow.png"));
+    }
+    void roleEditorFollowsReviewedAccountAndServer() {
+        QTemporaryDir state;
+        Controller controller(state.path(), QStringLiteral(CORDS_TEST_MIGRATIONS), {});
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.state().isEmpty(), 5000);
+        controller.m_poll.stop();
+        controller.m_state = {{"canCreateRoles", true}, {"canRoles", true}, {"revision", 7}, {"account", "first-account"}, {"server", "first-server"}};
+        QQmlEngine engine;
+        QQuickWindow window; window.resize(800, 780); window.show();
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(CORDS_QML_DIR) + "/RoleEditor.qml"));
+        QScopedPointer<QObject> editor(component.createWithInitialProperties({{"desktop", QVariant::fromValue(&controller)}, {"parent", QVariant::fromValue(window.contentItem())}}));
+        QVERIFY2(editor, qPrintable(component.errorString()));
+        controller.roles()->replace({{{"id", "custom-role"}, {"editable", true}, {"deletable", true}}});
         const QVariantMap role{{"id", "custom-role"}, {"name", "Guides"}, {"color", "#80b5db"}, {"permissions", QStringList{}}};
         for (const auto &scopeKey : {QString("account"), QString("server")}) {
             for (const auto &confirmationName : {QString("deleteRoleConfirmation"), QString("discardRoleConfirmation")}) {

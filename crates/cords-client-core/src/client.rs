@@ -46,6 +46,12 @@ struct Durable {
     server_names: BTreeMap<String, String>,
     #[serde(default)]
     server_features: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    role_revisions: BTreeMap<String, u64>,
+    #[serde(default)]
+    role_enforced: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    role_actions: BTreeMap<String, cords_protocol::roles::EffectiveActions>,
 
     #[serde(default)]
     account_profiles: BTreeMap<String, cords_protocol::profiles::ProfileGraph>,
@@ -91,10 +97,10 @@ struct Durable {
     #[serde(default)]
     channel_identities: BTreeMap<String, LocalChannel>,
 }
-#[path = "client_server_profile.rs"]
-mod server_profile;
 #[path = "client_profiles.rs"]
 mod profiles;
+#[path = "client_server_profile.rs"]
+mod server_profile;
 #[derive(Clone, Serialize, Deserialize)]
 struct LocalChannel {
     channel: Channel,
@@ -1006,6 +1012,15 @@ impl Client {
                     "CORDS_IDENTITY_NOT_YET_VALID (check client and server clocks)"
                 }
                 Some("CORDS_PERMISSION_DENIED") => "CORDS_PERMISSION_DENIED",
+                Some("CORDS_CLIENT_UPGRADE_REQUIRED") => "CORDS_CLIENT_UPGRADE_REQUIRED",
+                Some("CORDS_CHANNEL_REMOVAL_PENDING") => "CORDS_CHANNEL_REMOVAL_PENDING",
+                Some("CORDS_MLS_EPOCH_CONFLICT") => "CORDS_MLS_EPOCH_CONFLICT",
+                Some("CORDS_RECOVERY_STATE_CHANGED") => "CORDS_RECOVERY_STATE_CHANGED",
+                Some("CORDS_RECOVERY_QUEUE_LIMIT") => "CORDS_RECOVERY_QUEUE_LIMIT",
+                Some("CORDS_POLICY_CONFLICT") => "CORDS_POLICY_CONFLICT",
+                Some("CORDS_IDEMPOTENCY_CONFLICT") => "CORDS_IDEMPOTENCY_CONFLICT",
+                Some("CORDS_POLICY_UNAVAILABLE") => "CORDS_POLICY_UNAVAILABLE",
+                Some("CORDS_INVALID_ROLE_POLICY") => "CORDS_INVALID_ROLE_POLICY",
                 Some("CORDS_STATE_CONFLICT") => "CORDS_STATE_CONFLICT",
                 Some("CORDS_SERVER_PROFILE_CONFLICT") => "CORDS_SERVER_PROFILE_CONFLICT",
                 Some("CHANNEL_RETIRED") => "CHANNEL_RETIRED",
@@ -1477,8 +1492,12 @@ impl Client {
             self.clear_active_server()?;
         }
         self.durable.origin = origin.to_string();
-        self.durable.server_names.insert(discovered.clone(), signed.metadata.server_name.clone());
-        self.durable.server_features.insert(discovered.clone(), signed.metadata.features.clone());
+        self.durable
+            .server_names
+            .insert(discovered.clone(), signed.metadata.server_name.clone());
+        self.durable
+            .server_features
+            .insert(discovered.clone(), signed.metadata.features.clone());
         self.durable.server_id = discovered;
         self.durable.server_key = signed.metadata.server_signing_key;
         self.durable.join_policy = signed.metadata.join_policy;
@@ -1590,8 +1609,14 @@ impl Client {
             "invalid authentication challenge context"
         );
         let request = SessionRequest {
+            role_policy_version: self.role_policy_version(),
             proof: self.identity.sign_device(challenge)?,
             idempotency_key: id(),
+            admission_profile: if purpose == "join" {
+                self.admission_profile_payload().await?
+            } else {
+                None
+            },
         };
         let session: Session = match self.post("/api/v1/auth/session", &request, false).await {
             Ok(session) => session,
@@ -1664,6 +1689,7 @@ impl Client {
             challenge_hash: hash(canonical(&challenge)?),
         })?;
         let request = OwnershipClaim {
+            role_policy_version: self.role_policy_version(),
             claim_code: claim_code.into(),
             contact,
             device_proof: self.identity.sign_device(challenge)?,
@@ -1786,6 +1812,7 @@ impl Client {
             challenge_hash: hash(canonical(&challenge)?),
         })?;
         let claim = OwnershipRecoveryClaim {
+            role_policy_version: self.role_policy_version(),
             recovery_code: code.into(),
             contact,
             device_proof: self.identity.sign_device(challenge)?,
@@ -1883,10 +1910,17 @@ impl Client {
                 Err(error) => {
                     if error.downcast_ref::<ApiFailure>().is_some_and(|failure| {
                         matches!(failure.code, "CORDS_PERMISSION_DENIED" | "CHANNEL_RETIRED")
+                            || (pending.kind == "application"
+                                && matches!(
+                                    failure.code,
+                                    "CORDS_CHANNEL_REMOVAL_PENDING" | "CORDS_MLS_EPOCH_CONFLICT"
+                                ))
                             || (matches!(pending.kind.as_str(), "replace" | "retire")
                                 && matches!(
                                     failure.code,
-                                    "CORDS_INVALID_OBJECT" | "CORDS_STATE_CONFLICT"
+                                    "CORDS_INVALID_OBJECT"
+                                        | "CORDS_STATE_CONFLICT"
+                                        | "CORDS_RECOVERY_STATE_CHANGED"
                                 ))
                     }) {
                         // A verified refusal is terminal for this request, not an unknown delivery outcome.
@@ -2113,9 +2147,12 @@ impl Client {
         self.ensure_session().await?;
         let channels: Vec<Channel> = self.get("/api/v1/channels").await?;
         for local in self.durable.channel_identities.values_mut() {
-            if local.channel.identity.as_ref().is_some_and(|identity| {
-                identity.value.server_id == self.durable.server_id
-            }) {
+            if local
+                .channel
+                .identity
+                .as_ref()
+                .is_some_and(|identity| identity.value.server_id == self.durable.server_id)
+            {
                 local.listed = false;
             }
         }
@@ -2125,7 +2162,8 @@ impl Client {
             // A listed channel cannot establish device/MLS authorization.
             if channel.confidentiality_mode == ConfidentialityMode::Encrypted
                 && !channel.members.iter().any(|contact| {
-                    contact.authorization.value.device_id == self.identity.authorization.value.device_id
+                    contact.authorization.value.device_id
+                        == self.identity.authorization.value.device_id
                 })
             {
                 continue;
@@ -2239,6 +2277,7 @@ impl Client {
             }
         }
         let mut downgrade = false;
+        let mut predecessor_archived = false;
         for (record, incoming) in state
             .succession
             .as_ref()
@@ -2295,6 +2334,13 @@ impl Client {
                 );
                 downgrade = original.confidentiality_mode == ConfidentialityMode::Encrypted
                     && identity_record.confidentiality_mode == ConfidentialityMode::Public;
+                if let Some(known) = self.durable.channel_identities.get_mut(&original_key)
+                    && !known.archived
+                {
+                    known.archived = true;
+                    known.channel.locally_archived = true;
+                    predecessor_archived = true;
+                }
             } else {
                 ensure!(
                     state.retired
@@ -2309,7 +2355,9 @@ impl Client {
         channel.requires_public_acknowledgement = downgrade && !acknowledged;
         channel.locally_archived = archived;
         let unchanged = if let Some(old) = &previous {
-            old.listed && old.archived == archived && canonical(&old.channel)? == canonical(&channel)?
+            old.listed
+                && old.archived == archived
+                && canonical(&old.channel)? == canonical(&channel)?
         } else {
             false
         };
@@ -2322,7 +2370,7 @@ impl Client {
                 listed: true,
             },
         );
-        if !unchanged {
+        if !unchanged || predecessor_archived {
             self.persist(&[], &[]).await?;
         }
         Ok(channel)
@@ -2361,6 +2409,7 @@ impl Client {
         let channel = self.fetch_channel(route).await?;
         ensure!(!channel.locally_archived, "CHANNEL_RETIRED");
         let request = ChannelReplace {
+            recovery: None,
             record: self.identity.sign_device(ChannelSuccession {
                 version: 1,
                 server_id: self.durable.server_id.clone(),
@@ -2394,6 +2443,146 @@ impl Client {
             .as_str()
             .context("invalid replacement response")?
             .into())
+    }
+
+    fn validate_recovery_candidate(
+        &self,
+        value: &cords_protocol::roles::ChannelRecoveryCandidate,
+    ) -> Result<()> {
+        ensure!(
+            self.role_policy_version() == Some(1),
+            "CORDS_SERVER_UPGRADE_REQUIRED"
+        );
+        value.predecessor.verify(&self.durable.server_key)?;
+        let original = &value.predecessor.value;
+        ensure!(
+            value.version == 1
+                && value.server_id == self.durable.server_id
+                && value.account_id == self.identity.authorization.value.account_id
+                && value.device_id == self.identity.authorization.value.device_id
+                && original.version == 1
+                && original.server_id == value.server_id
+                && original.confidentiality_mode == ConfidentialityMode::Encrypted
+                && uuid::Uuid::parse_str(&original.channel_id).is_ok()
+                && decode(&value.pending_digest)?.len() == 32,
+            "invalid recovery metadata scope"
+        );
+        Ok(())
+    }
+
+    /// Owner-only bounded metadata, including channels whose history is inaccessible.
+    /// # Errors
+    /// Rejects substituted scopes/signatures, ordering, downgrade and known rollback.
+    pub async fn recovery_candidates(
+        &mut self,
+        after: &str,
+    ) -> Result<Vec<cords_protocol::roles::ChannelRecoveryCandidate>> {
+        ensure!(
+            after.is_empty() || uuid::Uuid::parse_str(after).is_ok(),
+            "invalid recovery cursor"
+        );
+        ensure!(
+            self.role_policy_version() == Some(1),
+            "CORDS_SERVER_UPGRADE_REQUIRED"
+        );
+        self.ensure_session().await?;
+        let page: Vec<Signed<cords_protocol::roles::ChannelRecoveryCandidate>> = self
+            .get(&format!("/api/v1/channels/recovery?after={after}"))
+            .await?;
+        ensure!(page.len() <= 16, "recovery page exceeds limit");
+        let mut previous = after.to_owned();
+        let mut result = Vec::new();
+        for signed in page {
+            signed.verify(&self.durable.server_key)?;
+            self.validate_recovery_candidate(&signed.value)?;
+            ensure!(
+                signed.value.predecessor.value.channel_id > previous,
+                "invalid recovery ordering"
+            );
+            previous.clone_from(&signed.value.predecessor.value.channel_id);
+            self.observe_role_revision(signed.value.policy_revision, true)
+                .await?;
+            result.push(signed.value);
+        }
+        Ok(result)
+    }
+
+    /// Explicitly abandon a fenced predecessor for a distinct encrypted group.
+    /// The native UI confirms that old keys/history are not transferred.
+    /// # Errors
+    /// Rejects stale evidence, available committers, unauthorized replacement or storage failure.
+    pub async fn recover_channel(
+        &mut self,
+        candidate: &cords_protocol::roles::ChannelRecoveryCandidate,
+        name: &str,
+    ) -> Result<String> {
+        self.ensure_session().await?;
+        self.flush().await?;
+        self.validate_recovery_candidate(candidate)?;
+        ensure!(
+            !candidate.committer_available,
+            "An eligible committer can finish the original group removal"
+        );
+        let route = &candidate.predecessor.value.channel_id;
+        let record = self.identity.sign_device(ChannelSuccession {
+            version: 1,
+            server_id: self.durable.server_id.clone(),
+            predecessor: candidate.predecessor.clone(),
+            successor_channel_id: id(),
+            name: name.into(),
+            confidentiality_mode: ConfidentialityMode::Encrypted,
+            initiator: self.identity.contact(&self.crypto.public_key())?,
+            membership: self
+                .durable
+                .session
+                .as_ref()
+                .context("missing session")?
+                .membership
+                .clone(),
+            issued_at: now()?,
+            nonce: id(),
+        })?;
+        let proof = self
+            .identity
+            .sign_device(cords_protocol::roles::ChannelRemovalRecovery {
+                version: 1,
+                server_id: self.durable.server_id.clone(),
+                account_id: candidate.account_id.clone(),
+                device_id: candidate.device_id.clone(),
+                channel_id: route.clone(),
+                policy_revision: candidate.policy_revision,
+                channel_epoch: candidate.channel_epoch,
+                pending_digest: candidate.pending_digest.clone(),
+                succession_digest: hash(canonical(&record)?),
+            })?;
+        let value = self
+            .queue(
+                format!("/api/v1/channels/{route}/replace"),
+                ChannelReplace {
+                    record,
+                    recovery: Some(proof),
+                    idempotency_key: id(),
+                },
+                "replace",
+                route,
+            )
+            .await?;
+        let successor = value
+            .as_str()
+            .context("invalid recovery response")?
+            .to_owned();
+        // The adopted successor's authenticated transition was checked by flush.
+        // Preserve this device's partial archive without claiming missing history.
+        if let Some(original) = self
+            .durable
+            .channel_identities
+            .get_mut(&format!("{}/{route}", self.durable.server_id))
+        {
+            original.archived = true;
+            original.channel.locally_archived = true;
+        }
+        self.persist(&[], &[]).await?;
+        Ok(successor)
     }
 
     /// # Errors
@@ -2446,11 +2635,12 @@ impl Client {
             .channel_identities
             .values()
             .filter(|local| {
-                local.listed && local
-                    .channel
-                    .identity
-                    .as_ref()
-                    .is_some_and(|identity| identity.value.server_id == self.durable.server_id)
+                local.listed
+                    && local
+                        .channel
+                        .identity
+                        .as_ref()
+                        .is_some_and(|identity| identity.value.server_id == self.durable.server_id)
             })
             .map(|local| local.channel.clone())
             .collect()
@@ -2470,7 +2660,9 @@ impl Client {
         let mut after = String::new();
         loop {
             let page: Vec<MembershipRequest> = self
-                .get(&format!("/api/v1/membership-requests?after={after}"))
+                .get(&format!(
+                    "/api/v1/membership-requests?after={after}&profiles=true"
+                ))
                 .await?;
             ensure!(page.len() <= 16, "oversized membership request page");
             for request in &page {
@@ -2511,6 +2703,116 @@ impl Client {
         }
         Ok(requests)
     }
+    fn role_policy_version(&self) -> Option<u16> {
+        self.durable
+            .server_features
+            .get(&self.durable.server_id)
+            .is_some_and(|features| {
+                features
+                    .iter()
+                    .any(|feature| feature == cords_protocol::roles::ENFORCEMENT_FEATURE)
+            })
+            .then_some(1)
+    }
+
+    async fn observe_role_revision(&mut self, revision: u64, active: bool) -> Result<()> {
+        let known = self
+            .durable
+            .role_revisions
+            .get(&self.durable.server_id)
+            .copied()
+            .unwrap_or(0);
+        ensure!(revision >= known, "CORDS_ROLE_POLICY_ROLLBACK");
+        ensure!(
+            active || !self.durable.role_enforced.contains(&self.durable.server_id),
+            "CORDS_ROLE_POLICY_DOWNGRADE"
+        );
+        let newly_active = active
+            && self
+                .durable
+                .role_enforced
+                .insert(self.durable.server_id.clone());
+        if revision > known || newly_active {
+            self.durable
+                .role_revisions
+                .insert(self.durable.server_id.clone(), revision);
+            self.persist(&[], &[]).await?;
+        }
+        Ok(())
+    }
+
+    /// Last verified presentation hint. Mutations always authorize again at the server.
+    #[must_use]
+    pub fn role_policy_enforced(&self) -> bool {
+        self.durable.role_enforced.contains(&self.durable.server_id)
+    }
+
+    #[must_use]
+    pub fn supports_role_policy(&self) -> bool {
+        self.role_policy_version() == Some(1)
+    }
+
+    /// Last verified presentation hint. Mutations always authorize again at the server.
+    #[must_use]
+    pub fn cached_effective_actions(
+        &self,
+        channel: Option<&str>,
+    ) -> Option<&cords_protocol::roles::EffectiveActions> {
+        self.durable.role_actions.get(&format!(
+            "{}/{}",
+            self.durable.server_id,
+            channel.unwrap_or("")
+        ))
+    }
+
+    /// Fetch current server or channel actions, bound to the selected account and device.
+    /// # Errors
+    /// Rejects unnegotiated support, wrong scopes/signatures and known policy rollback.
+    pub async fn effective_actions(
+        &mut self,
+        channel: Option<&str>,
+    ) -> Result<cords_protocol::roles::EffectiveActions> {
+        ensure!(
+            self.role_policy_version() == Some(1),
+            "CORDS_SERVER_UPGRADE_REQUIRED"
+        );
+        if let Some(route) = channel {
+            ensure!(
+                uuid::Uuid::parse_str(route).is_ok(),
+                "invalid channel identifier"
+            );
+        }
+        self.ensure_session().await?;
+        let path = channel.map_or_else(
+            || "/api/v1/role-policy/actions".into(),
+            |route| format!("/api/v1/role-policy/actions?channel={route}"),
+        );
+        let signed: Signed<cords_protocol::roles::EffectiveActions> = self.get(&path).await?;
+        signed.verify(&self.durable.server_key)?;
+        let value = signed.value;
+        ensure!(
+            value.version == 1
+                && value.server_id == self.durable.server_id
+                && value.account_id == self.identity.authorization.value.account_id
+                && value.device_id == self.identity.authorization.value.device_id
+                && value.channel_id.as_deref() == channel
+                && (channel.is_some()
+                    || value
+                        .permissions
+                        .iter()
+                        .all(|permission| !permission.channel_scoped())),
+            "invalid effective action scope"
+        );
+        self.observe_role_revision(value.policy_revision, value.active)
+            .await?;
+        self.durable.role_actions.insert(
+            format!("{}/{}", self.durable.server_id, channel.unwrap_or("")),
+            value.clone(),
+        );
+        self.persist(&[], &[]).await?;
+        Ok(value)
+    }
+
     /// Read the owner-only preparatory catalog using the pinned server identity.
     /// # Errors
     /// Rejects unsupported/active policy versions, invalid signatures and transport failures.
@@ -2526,10 +2828,222 @@ impl Client {
             "invalid role catalog"
         );
         ensure!(
-            !catalog.value.active,
+            !catalog.value.active || self.role_policy_version() == Some(1),
             "active role policy requires the upgraded enforcement client"
         );
+        self.observe_role_revision(catalog.value.revision, catalog.value.active)
+            .await?;
         Ok(catalog.value)
+    }
+
+    /// Load current definition controls and account counts for this actor.
+    /// # Errors
+    /// Rejects substituted scope, malformed sets, rollback and transport failures.
+    pub async fn role_workspace(&mut self) -> Result<cords_protocol::roles::RoleWorkspace> {
+        self.ensure_session().await?;
+        let signed: Signed<cords_protocol::roles::RoleWorkspace> =
+            self.get("/api/v1/role-policy/workspace").await?;
+        signed.verify(&self.durable.server_key)?;
+        let value = signed.value;
+        self.validate_role_presentation(
+            value.version,
+            &value.server_id,
+            &value.account_id,
+            &value.device_id,
+            &value.catalog,
+        )?;
+        let ids: std::collections::BTreeSet<_> = value
+            .catalog
+            .roles
+            .iter()
+            .map(|role| role.id.clone())
+            .collect();
+        ensure!(
+            value
+                .counts
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+                == ids
+                && value.editable.is_subset(&ids)
+                && value.deletable.is_subset(&ids)
+                && !value.deletable.iter().any(|id| matches!(
+                    id.as_str(),
+                    "builtin:default" | "builtin:admin" | "builtin:moderator"
+                )),
+            "invalid role workspace actions"
+        );
+        self.observe_role_revision(value.catalog.revision, value.catalog.active)
+            .await?;
+        Ok(value)
+    }
+
+    /// Load assign/remove hints bound to the current actor and exact target.
+    /// # Errors
+    /// Rejects substituted targets, malformed action sets, rollback and transport failures.
+    pub async fn role_target_actions(
+        &mut self,
+        account: &str,
+    ) -> Result<cords_protocol::roles::RoleTargetActions> {
+        ensure!(
+            !account.is_empty()
+                && account.len() <= 128
+                && account
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+            "invalid account identifier"
+        );
+        self.ensure_session().await?;
+        let signed: Signed<cords_protocol::roles::RoleTargetActions> = self
+            .get(&format!("/api/v1/role-policy/targets/{account}"))
+            .await?;
+        signed.verify(&self.durable.server_key)?;
+        let value = signed.value;
+        self.validate_role_presentation(
+            value.version,
+            &value.server_id,
+            &value.account_id,
+            &value.device_id,
+            &value.catalog,
+        )?;
+        let ids: std::collections::BTreeSet<_> = value
+            .catalog
+            .roles
+            .iter()
+            .map(|role| role.id.clone())
+            .filter(|id| id != cords_protocol::roles::DEFAULT_ROLE)
+            .collect();
+        ensure!(
+            value.target_account_id == account
+                && value.role_ids.is_subset(&ids)
+                && value.assignable.is_subset(&ids)
+                && value.removable.is_subset(&value.role_ids)
+                && value.assignable.is_disjoint(&value.role_ids)
+                && (value.eligible || value.assignable.is_empty())
+                && (value.catalog.active
+                    || (value.assignable.is_empty() && value.removable.is_empty()))
+                && (account != self.identity.authorization.value.account_id
+                    || (value.assignable.is_empty() && value.removable.is_empty())),
+            "invalid role target actions"
+        );
+        self.observe_role_revision(value.catalog.revision, value.catalog.active)
+            .await?;
+        Ok(value)
+    }
+
+    /// Read an assigned or unassigned page for a role, with target action hints.
+    /// # Errors
+    /// Rejects substituted scope, invalid pagination, inconsistent actions and rollback.
+    pub async fn role_members(
+        &mut self,
+        role: &str,
+        assigned: bool,
+        after: &str,
+    ) -> Result<cords_protocol::roles::RoleMembersPage> {
+        use cords_protocol::roles::{
+            ADMIN_ROLE, DEFAULT_ROLE, MODERATOR_ROLE, ROLE_MEMBERS_PAGE_SIZE, RoleMembersPage,
+        };
+        ensure!(
+            matches!(role, DEFAULT_ROLE | ADMIN_ROLE | MODERATOR_ROLE)
+                || uuid::Uuid::parse_str(role).is_ok_and(|id| id.to_string() == role),
+            "invalid role identifier"
+        );
+        ensure!(
+            after.len() <= 128
+                && after
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+            "invalid role member cursor"
+        );
+        self.ensure_session().await?;
+        let signed: Signed<RoleMembersPage> = self
+            .get(&format!(
+                "/api/v1/role-policy/roles/{role}/members?assigned={assigned}&after={after}"
+            ))
+            .await?;
+        signed.verify(&self.durable.server_key)?;
+        let value = signed.value;
+        self.validate_role_presentation(
+            value.version,
+            &value.server_id,
+            &value.account_id,
+            &value.device_id,
+            &value.catalog,
+        )?;
+        ensure!(
+            value.role_id == role
+                && value.assigned == assigned
+                && value.after == after
+                && value.catalog.roles.iter().any(|entry| entry.id == role)
+                && value.members.len() <= ROLE_MEMBERS_PAGE_SIZE
+                && value
+                    .next_after
+                    .as_ref()
+                    .is_none_or(|next| next.len() <= 128
+                        && next.as_str() > after
+                        && next.bytes().all(
+                            |byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+                        )),
+            "invalid role member page scope or cursor"
+        );
+        let mut previous = after;
+        for member in &value.members {
+            ensure!(
+                member.account_id.len() <= 128
+                    && member.account_id.as_str() > previous
+                    && member
+                        .account_id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+                    && member.assigned == assigned
+                    && !(member.can_assign && member.can_remove)
+                    && (!member.can_assign || !assigned)
+                    && (!member.can_remove || assigned)
+                    && (value.catalog.active || (!member.can_assign && !member.can_remove))
+                    && (role != DEFAULT_ROLE
+                        || (assigned && !member.can_assign && !member.can_remove))
+                    && (member.account_id != self.identity.authorization.value.account_id
+                        || (!member.can_assign && !member.can_remove))
+                    && value
+                        .next_after
+                        .as_ref()
+                        .is_none_or(|next| member.account_id <= *next),
+                "invalid role member identity, ordering or actions"
+            );
+            previous = &member.account_id;
+        }
+        self.observe_role_revision(value.catalog.revision, value.catalog.active)
+            .await?;
+        Ok(value)
+    }
+
+    fn validate_role_presentation(
+        &self,
+        version: u16,
+        server: &str,
+        account: &str,
+        device: &str,
+        catalog: &cords_protocol::roles::RoleCatalog,
+    ) -> Result<()> {
+        ensure!(
+            version == 1
+                && server == self.durable.server_id
+                && account == self.identity.authorization.value.account_id
+                && device == self.identity.authorization.value.device_id
+                && catalog.version == 1
+                && catalog.server_id == server
+                && (!catalog.active || self.role_policy_version() == Some(1))
+                && catalog.roles.len() <= cords_protocol::roles::MAX_ROLES
+                && catalog
+                    .roles
+                    .iter()
+                    .map(|role| &role.id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    == catalog.roles.len(),
+            "invalid role presentation scope or catalog"
+        );
+        Ok(())
     }
 
     /// Load a signed account assignment snapshot without combining different revisions.
@@ -2557,7 +3071,7 @@ impl Client {
             value.account_id == account
                 && value.catalog.version == 1
                 && value.catalog.server_id == self.durable.server_id
-                && !value.catalog.active
+                && (!value.catalog.active || self.role_policy_version() == Some(1))
                 && value.catalog.roles.len() <= cords_protocol::roles::MAX_ROLES
                 && value.role_ids.len() <= cords_protocol::roles::MAX_ROLES
                 && value
@@ -2567,6 +3081,8 @@ impl Client {
                         && value.catalog.roles.iter().any(|role| &role.id == id)),
             "invalid or unsupported account role snapshot"
         );
+        self.observe_role_revision(state.value.catalog.revision, state.value.catalog.active)
+            .await?;
         Ok(state.value)
     }
 
@@ -2597,7 +3113,12 @@ impl Client {
                 entry.revision == after + u64::try_from(index)? + 1
                     && matches!(
                         entry.operation.as_str(),
-                        "initialize" | "put_role" | "delete_role" | "assign_role" | "revoke_role"
+                        "initialize"
+                            | "put_role"
+                            | "delete_role"
+                            | "assign_role"
+                            | "revoke_role"
+                            | "reorder_roles"
                     ),
                 "invalid role audit ordering or operation"
             );
@@ -2630,6 +3151,20 @@ impl Client {
                         .context("policy revision overflow")?,
             "invalid role change receipt"
         );
+        // An idempotent retry can legitimately return an older committed receipt.
+        // Retain the newest observed revision without treating that receipt as state.
+        let known = self
+            .durable
+            .role_revisions
+            .get(&self.durable.server_id)
+            .copied()
+            .unwrap_or(0);
+        if receipt.value.revision > known {
+            self.durable
+                .role_revisions
+                .insert(self.durable.server_id.clone(), receipt.value.revision);
+            self.persist(&[], &[]).await?;
+        }
         Ok(receipt.value)
     }
     /// Approve a verified pending device request.
@@ -2705,17 +3240,20 @@ impl Client {
             .binding
             .as_ref()
             .context("channel has no signed group binding")?;
-        let creator = channel
+        // The immutable channel creator may have left. Each commit publishes a
+        // binding signed by its current committer; that signer must still be an
+        // actual, independently verified MLS participant in this epoch.
+        let signer = channel
             .members
             .iter()
-            .find(|c| c.authorization.value.device_id == channel.creator_device_id)
-            .context("missing creator identity")?;
-        binding.verify(&creator.authorization.value.device_public_key)?;
+            .find(|c| c.authorization.value.device_id == binding.value.creator_device_id)
+            .context("missing group binding signer identity")?;
+        binding.verify(&signer.authorization.value.device_public_key)?;
         ensure!(
             binding.value.server_id == self.durable.server_id
                 && binding.value.channel_id == route
                 && binding.value.group_id == route
-                && binding.value.creator_device_id == channel.creator_device_id,
+                && binding.value.creator_device_id == signer.authorization.value.device_id,
             "invalid group binding"
         );
         let actual = self.crypto.roster(route)?;
@@ -2758,7 +3296,8 @@ impl Client {
         for record in &records {
             let device = match record {
                 PolicyRemoval::Revocation(record) => &record.value.revoked_device_id,
-                PolicyRemoval::Account { device_id, .. } => device_id,
+                PolicyRemoval::Account { device_id, .. }
+                | PolicyRemoval::ServerPolicy { device_id, .. } => device_id,
             };
             let contact = channel
                 .members
@@ -2766,6 +3305,31 @@ impl Client {
                 .find(|c| &c.authorization.value.device_id == device)
                 .context("revoked device is absent from the MLS roster")?;
             self.observe_contact(contact)?;
+            if let PolicyRemoval::ServerPolicy { device_id, policy } = record {
+                ensure!(
+                    self.durable
+                        .server_features
+                        .get(&self.durable.server_id)
+                        .is_some_and(|features| features
+                            .iter()
+                            .any(|feature| feature == cords_protocol::roles::ENFORCEMENT_FEATURE)),
+                    "CORDS_SERVER_UPGRADE_REQUIRED: unnegotiated policy removal"
+                );
+                policy.verify(&self.durable.server_key)?;
+                let evidence = &policy.value;
+                ensure!(
+                    evidence.version == 1
+                        && evidence.server_id == self.durable.server_id
+                        && evidence.channel_id == route
+                        && &evidence.device_id == device_id
+                        && evidence.account_id == contact.authorization.value.account_id
+                        && evidence.channel_epoch <= channel.epoch
+                        && evidence.issued_at
+                            <= now()?.saturating_add(cords_identity::STATEMENT_CLOCK_SKEW_SECONDS),
+                    "invalid server channel-access removal evidence"
+                );
+                continue;
+            }
             if let PolicyRemoval::Account { proof, .. } = record {
                 let root = &contact.authorization.value.root_public_key;
                 let (version, server, account, issued_at) = match proof {
@@ -2905,7 +3469,8 @@ impl Client {
         self.ensure_session().await?;
         let channel = self.fetch_channel(route).await?;
         self.initialize_channel(&channel).await?;
-        if channel.confidentiality_mode == ConfidentialityMode::Public && !channel.locally_archived {
+        if channel.confidentiality_mode == ConfidentialityMode::Public && !channel.locally_archived
+        {
             self.sync_route(route).await?;
         }
         Ok(())
@@ -2917,7 +3482,13 @@ impl Client {
         if channel.locally_archived {
             return Ok(());
         }
-        if self.durable.cursors.contains_key(route) {
+        let rejoining = self
+            .durable
+            .cursors
+            .get(route)
+            .zip(channel.joined_sequence)
+            .is_some_and(|(cursor, joined)| joined > *cursor);
+        if self.durable.cursors.contains_key(route) && !rejoining {
             return Ok(());
         }
         if channel.confidentiality_mode == ConfidentialityMode::Public {
@@ -2928,7 +3499,21 @@ impl Client {
         let welcome: Welcome = self
             .get(&format!("/api/v1/channels/{route}/welcome"))
             .await?;
-        self.crypto.join(route, &decode(&welcome.welcome)?)?;
+        if rejoining {
+            ensure!(
+                self.role_policy_version() == Some(1)
+                    && channel.joined_sequence == Some(welcome.sequence),
+                "invalid fresh enrollment boundary"
+            );
+            let replacement = self.crypto.rejoin(route, &decode(&welcome.welcome)?)?;
+            let previous = std::mem::replace(&mut self.crypto, replacement);
+            if let Err(error) = self.validate_roster(route).await {
+                self.crypto = previous;
+                return Err(error);
+            }
+        } else {
+            self.crypto.join(route, &decode(&welcome.welcome)?)?;
+        }
         self.validate_roster(route).await?;
         self.durable.cursors.insert(route.into(), welcome.sequence);
         self.persist(&[], &[]).await?;
@@ -3223,6 +3808,11 @@ impl Client {
         self.ensure_session().await?;
         self.flush().await?;
         // Discover retirement and successors even when this device was offline for the notice.
+        let current_actions = if self.role_policy_version() == Some(1) {
+            Some(self.effective_actions(None).await?)
+        } else {
+            None
+        };
         let channels = self.channels().await?;
         let current = now()?;
         if self
@@ -3236,7 +3826,10 @@ impl Client {
         // Synchronize readable channels automatically, including newly visible
         // public channels and MLS welcomes granted by an authorized committer.
         // Keep inaccessible cursors/keys sealed for archives, never poll them.
-        let routes: Vec<_> = channels.into_iter().map(|channel| channel.channel_id).collect();
+        let routes: Vec<_> = channels
+            .into_iter()
+            .map(|channel| channel.channel_id)
+            .collect();
         let mut result = SyncResult {
             fetched: 0,
             loaded_routes: Vec::new(),
@@ -3250,9 +3843,18 @@ impl Client {
             result.messages.extend(next.messages);
             result.message_routes.extend(next.message_routes);
             let channel = self.fetch_channel(&route).await?;
-            if channel.locally_archived
-                || channel.confidentiality_mode == ConfidentialityMode::Public
+            if channel.locally_archived {
+                continue;
+            }
+            let scoped_actions = if current_actions
+                .as_ref()
+                .is_some_and(|actions| actions.active)
             {
+                Some(self.effective_actions(Some(&route)).await?)
+            } else {
+                None
+            };
+            if channel.confidentiality_mode == ConfidentialityMode::Public {
                 continue;
             }
             let manage = self.durable.session.as_ref().is_some_and(|session| {
@@ -3263,13 +3865,21 @@ impl Client {
                     .iter()
                     .any(|cap| cap == "channel.manage")
             });
-            if channel.creator_device_id == self.identity.authorization.value.device_id || manage {
+            let can_commit = if let Some(actions) = scoped_actions {
+                actions
+                    .permissions
+                    .contains(&cords_protocol::roles::Permission::CommitMls)
+            } else {
+                channel.creator_device_id == self.identity.authorization.value.device_id || manage
+            };
+            if can_commit {
                 let removals = self.pending_removals(&route).await?;
                 let mut targets = std::collections::BTreeSet::new();
                 for removal in removals {
                     let device = match removal {
                         PolicyRemoval::Revocation(record) => record.value.revoked_device_id,
-                        PolicyRemoval::Account { device_id, .. } => device_id,
+                        PolicyRemoval::Account { device_id, .. }
+                        | PolicyRemoval::ServerPolicy { device_id, .. } => device_id,
                     };
                     targets.insert(device);
                 }
@@ -4082,6 +4692,7 @@ mod tests {
         client.durable.origin = "https://example.com".into();
         let route = id();
         let mut channel = Channel {
+            joined_sequence: None,
             channel_id: route.clone(),
             name: "same display name".into(),
             creator_device_id: client.status().device_id,

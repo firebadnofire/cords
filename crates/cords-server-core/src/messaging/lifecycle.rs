@@ -18,8 +18,14 @@ pub(super) async fn bind(
 ) -> Result<Json<bool>> {
     let member = s.authenticate(&headers, "channel.mls.commit").await?;
     let mut tx = s.0.store.pool().begin().await?;
-    s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
-        .await?;
+    s.authorize_channel_mutation(
+        &mut tx,
+        &headers,
+        &member,
+        &route,
+        cords_protocol::roles::Permission::CommitMls,
+    )
+    .await?;
     let scope = format!("binding:{route}:{}", member.value.device_id);
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
         return Ok(Json(result));
@@ -60,6 +66,13 @@ pub(super) async fn bind(
 }
 
 pub(super) async fn apply_remove(tx: &mut Tx<'_>, route: &str, target: &str) -> Result<()> {
+    let enforced: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(&mut **tx)
+        .await?;
+    if enforced {
+        sqlx::query("INSERT INTO channel_device_exclusions(channel_id,device_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
+            .bind(route).bind(target).execute(&mut **tx).await?;
+    }
     sqlx::query("UPDATE channel_members SET active=FALSE,delivery_active=FALSE WHERE channel_id=$1 AND device_id=$2")
         .bind(route).bind(target).execute(&mut **tx).await?;
     sqlx::query("DELETE FROM pending_policy_removals WHERE channel_id=$1 AND device_id=$2")
@@ -78,6 +91,20 @@ pub(super) async fn apply_add(
     welcome: &str,
     package: &str,
 ) -> Result<()> {
+    let enforced: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(&mut **tx)
+        .await?;
+    if enforced {
+        // Only a freshly authorized MLS add reaches here. Role grants alone never
+        // restore a removed leaf, and these writes cannot clear identity revocation.
+        sqlx::query("INSERT INTO channel_account_access(channel_id,account_id) SELECT $1,account_id FROM device_contacts WHERE device_id=$2 ON CONFLICT DO NOTHING")
+            .bind(route).bind(target).execute(&mut **tx).await?;
+        sqlx::query("DELETE FROM channel_device_exclusions WHERE channel_id=$1 AND device_id=$2")
+            .bind(route)
+            .bind(target)
+            .execute(&mut **tx)
+            .await?;
+    }
     sqlx::query("INSERT INTO channel_members(channel_id,device_id,joined_sequence) VALUES($1,$2,$3) ON CONFLICT(channel_id,device_id) DO UPDATE SET active=TRUE,delivery_active=TRUE,joined_sequence=EXCLUDED.joined_sequence")
         .bind(route).bind(target).bind(int(sequence)?).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO welcomes(channel_id,device_id,sequence,welcome) VALUES($1,$2,$3,$4) ON CONFLICT(channel_id,device_id) DO UPDATE SET sequence=EXCLUDED.sequence,welcome=EXCLUDED.welcome")
@@ -96,14 +123,23 @@ pub(super) async fn pending_removals(
 ) -> Result<Json<Vec<PolicyRemoval>>> {
     let member = s.authenticate(&headers, "channel.mls.commit").await?;
     s.route_access(&route, &member.value, true).await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_current_policy(
+        &mut tx,
+        &member.value,
+        cords_protocol::roles::Permission::CommitMls,
+        Some(&route),
+    )
+    .await?;
     let records: Vec<String> = sqlx::query_scalar("SELECT r.record FROM pending_policy_removals p JOIN device_revocations r ON r.device_id=p.device_id WHERE p.channel_id=$1 ORDER BY p.device_id LIMIT 1000")
-        .bind(&route).fetch_all(s.0.store.pool()).await?;
+        .bind(&route).fetch_all(&mut *tx).await?;
     let mut result: Vec<PolicyRemoval> = records
         .iter()
         .map(|record| parse(record).map(PolicyRemoval::Revocation))
         .collect::<Result<_>>()?;
     let departures = sqlx::query("SELECT p.device_id,n.kind,n.record FROM pending_policy_removals p JOIN device_contacts d ON d.device_id=p.device_id JOIN account_departure_notices n ON n.account_id=d.account_id WHERE p.channel_id=$1 AND NOT EXISTS(SELECT 1 FROM device_revocations r WHERE r.device_id=p.device_id) ORDER BY p.device_id,n.kind LIMIT 1000")
-        .bind(route).fetch_all(s.0.store.pool()).await?;
+        .bind(&route).fetch_all(&mut *tx).await?;
     for row in departures {
         use sqlx::Row as _;
         let proof = match row.try_get::<String, _>("kind")?.as_str() {
@@ -116,6 +152,21 @@ pub(super) async fn pending_removals(
             proof,
         });
     }
+    let active: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(&mut *tx)
+        .await?;
+    if active {
+        let rows = sqlx::query("SELECT p.device_id,p.proof FROM channel_policy_removal_proofs p JOIN device_contacts d ON d.device_id=p.device_id WHERE p.channel_id=$1 AND NOT EXISTS(SELECT 1 FROM device_revocations r WHERE r.device_id=p.device_id) AND NOT EXISTS(SELECT 1 FROM account_departure_notices n WHERE n.account_id=d.account_id) ORDER BY p.device_id LIMIT 1000")
+            .bind(&route).fetch_all(&mut *tx).await?;
+        for row in rows {
+            use sqlx::Row as _;
+            result.push(PolicyRemoval::ServerPolicy {
+                device_id: row.try_get("device_id")?,
+                policy: parse(row.try_get("proof")?)?,
+            });
+        }
+    }
+    tx.commit().await?;
     Ok(Json(result))
 }
 
@@ -133,6 +184,22 @@ pub(super) async fn reserve_removal(
     target: &str,
     epoch: i64,
 ) -> Result<RosterOperation> {
+    // The caller serializes on the channel and has authorized either roster
+    // management or durable pending-removal evidence. Only an identical removal
+    // can supersede a disconnected requester's reservation. Never cancel an add
+    // or a different target, nor report the abandoned operation as completed.
+    let previous: Option<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT id,target,action,base_epoch FROM roster_operations WHERE channel_id=$1 AND NOT complete AND NOT cancelled FOR UPDATE",
+    ).bind(route).fetch_optional(&mut **tx).await?;
+    if let Some((operation, old_target, action, old_epoch)) = previous {
+        if old_target != target || action != "remove" || old_epoch != epoch {
+            return Err(conflict());
+        }
+        sqlx::query("UPDATE roster_operations SET cancelled=TRUE WHERE id=$1")
+            .bind(operation)
+            .execute(&mut **tx)
+            .await?;
+    }
     let contact: String =
         sqlx::query_scalar("SELECT contact FROM device_contacts WHERE device_id=$1")
             .bind(target)

@@ -9,6 +9,60 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const FEATURE: &str = "account-profile-history-v1";
 pub const MAX_IMAGE: u32 = 5_000_000;
 pub const MAX_HEADS: usize = 64;
+pub const ADMISSION_FEATURE: &str = "admission-profile-v1";
+pub const MAX_ADMISSION_HISTORY: usize = 1024 * 1024;
+
+/// A request-scoped copy of the account's signed presentation, never membership.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionProfile {
+    pub records: Vec<ProfileRecord>,
+    pub image: Option<String>,
+}
+
+impl AdmissionProfile {
+    /// Verify complete account-bound history and the exact agreed image bytes.
+    /// # Errors
+    /// Rejects substitution, incomplete ancestry, conflicts and oversized payloads.
+    pub fn verified(&self, account: &str) -> Result<ProfileGraph, InvalidObject> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        if self.records.is_empty()
+            || self.records.len() > 256
+            || serde_json::to_vec(&self.records)
+                .map_err(|_| InvalidObject)?
+                .len()
+                > MAX_ADMISSION_HISTORY
+        {
+            return Err(InvalidObject);
+        }
+        let mut graph = ProfileGraph::default();
+        for record in &self.records {
+            if record.revision.value.account_id != account {
+                return Err(InvalidObject);
+            }
+            graph.insert(record.clone())?;
+        }
+        let state = graph.state()?;
+        if !state.pending.is_empty() || !state.conflicts.is_empty() {
+            return Err(InvalidObject);
+        }
+        let profile = state.agreed.ok_or(InvalidObject)?;
+        match (&profile.avatar, &self.image) {
+            (Some(avatar), Some(encoded)) if encoded.len() <= 6_666_668 => {
+                let bytes = STANDARD.decode(encoded).map_err(|_| InvalidObject)?;
+                if bytes.len() != avatar.bytes as usize
+                    || hash(&bytes) != avatar.sha256
+                    || STANDARD.encode(&bytes) != *encoded
+                {
+                    return Err(InvalidObject);
+                }
+            }
+            (None, None) => {}
+            _ => return Err(InvalidObject),
+        }
+        Ok(graph)
+    }
+}
 type FieldWrites = BTreeMap<String, [BTreeSet<String>; 2]>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

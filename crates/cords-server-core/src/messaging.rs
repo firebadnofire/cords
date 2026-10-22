@@ -230,7 +230,7 @@ impl Service {
         if token.len() > 128 {
             return Err(denied());
         }
-        let row = sqlx::query("SELECT m.credential,d.contact,c.challenge FROM sessions s JOIN memberships m ON m.device_id=s.device_id JOIN device_contacts d ON d.device_id=m.device_id JOIN auth_challenges c ON c.id=s.challenge_id WHERE s.token_hash=$1 AND s.active AND m.active AND s.expires_at>$2")
+        let row = sqlx::query("SELECT m.credential,d.contact,c.challenge,s.role_policy_version FROM sessions s JOIN memberships m ON m.device_id=s.device_id JOIN device_contacts d ON d.device_id=m.device_id JOIN auth_challenges c ON c.id=s.challenge_id WHERE s.token_hash=$1 AND s.active AND m.active AND s.expires_at>$2")
             .bind(hash(token)).bind(int(now()?)?).fetch_optional(self.0.store.pool()).await?.ok_or_else(denied)?;
         let contact: Contact = parse(row.try_get("contact")?)?;
         validate_contact(&contact, now()?)?;
@@ -239,14 +239,71 @@ impl Service {
             return Err(denied());
         }
         let member: Signed<Membership> = parse(row.try_get("credential")?)?;
-        if member.value.status != "active"
-            || !member.value.capabilities.iter().any(|v| v == capability)
-        {
+        if member.value.status != "active" {
+            return Err(denied());
+        }
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(self.0.store.pool())
+                .await?;
+        if active {
+            if row.try_get::<Option<i16>, _>("role_policy_version")? != Some(1) {
+                return Err(ApiError(
+                    StatusCode::UPGRADE_REQUIRED,
+                    "CORDS_CLIENT_UPGRADE_REQUIRED",
+                ));
+            }
+            // Legacy membership capabilities are not current role grants. Recheck
+            // the signed durable identity and server-level permission here; route
+            // handlers additionally retain a current decision through their work.
+            let mut tx = self.0.store.pool().begin().await?;
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "authorization",
+                format!("Bearer {token}").parse().map_err(|_| denied())?,
+            );
+            self.authorize_session(&mut tx, &headers, &member).await?;
+            let permission: cords_protocol::roles::Permission =
+                serde_json::from_value(serde_json::Value::String(capability.to_owned()))
+                    .map_err(|_| denied())?;
+            self.require_current_policy(
+                &mut tx,
+                &member.value,
+                if permission.channel_scoped() {
+                    cords_protocol::roles::Permission::ViewServer
+                } else {
+                    permission
+                },
+                None,
+            )
+            .await?;
+            tx.commit().await?;
+        } else if !member.value.capabilities.iter().any(|v| v == capability) {
             return Err(denied());
         }
         Ok(member)
     }
     async fn route_access(&self, route: &str, member: &Membership, manage: bool) -> Result<()> {
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(self.0.store.pool())
+                .await?;
+        if active {
+            let mut tx = self.0.store.pool().begin().await?;
+            self.require_current_policy(
+                &mut tx,
+                member,
+                if manage {
+                    cords_protocol::roles::Permission::CommitMls
+                } else {
+                    cords_protocol::roles::Permission::ReadMessages
+                },
+                Some(route),
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(());
+        }
         let row = sqlx::query("SELECT c.creator FROM channels c WHERE c.id=$1 AND (c.confidentiality_mode='public' OR EXISTS(SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.device_id=$2 AND m.active AND m.delivery_active))")
             .bind(route).bind(&member.device_id).fetch_optional(self.0.store.pool()).await?.ok_or_else(denied)?;
         if manage
@@ -324,19 +381,165 @@ impl Service {
             if row.try_get::<bool, _>("retired")? {
                 return Err(ApiError(StatusCode::CONFLICT, "CHANNEL_RETIRED"));
             }
-            if (!permitted && row.try_get::<String, _>("confidentiality_mode")? != "public")
-                || (manage
-                    && creator != member.value.device_id
-                    && !member
-                        .value
-                        .capabilities
-                        .iter()
-                        .any(|capability| capability == "channel.manage"))
+            let active: bool =
+                sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                    .fetch_one(&mut **tx)
+                    .await?;
+            if !active
+                && ((!permitted && row.try_get::<String, _>("confidentiality_mode")? != "public")
+                    || (manage
+                        && creator != member.value.device_id
+                        && !member
+                            .value
+                            .capabilities
+                            .iter()
+                            .any(|capability| capability == "channel.manage")))
             {
                 return Err(denied());
             }
         }
         Ok(())
+    }
+    async fn require_policy_client(&self, version: Option<u16>) -> Result<()> {
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(self.0.store.pool())
+                .await?;
+        if version.is_some_and(|version| version != 1) || (active && version != Some(1)) {
+            return Err(ApiError(
+                StatusCode::UPGRADE_REQUIRED,
+                "CORDS_CLIENT_UPGRADE_REQUIRED",
+            ));
+        }
+        Ok(())
+    }
+    // Take target identity locks before policy/channel locks, matching revocation.
+    async fn lock_roster_target(&self, tx: &mut Tx<'_>, device: &str) -> Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended('server-ownership',0))")
+            .execute(&mut **tx)
+            .await?;
+        let account: String =
+            sqlx::query_scalar("SELECT account_id FROM device_contacts WHERE device_id=$1")
+                .bind(device)
+                .fetch_optional(&mut **tx)
+                .await?
+                .ok_or_else(denied)?;
+        sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))")
+            .bind(account)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+    async fn require_enrollment(&self, tx: &mut Tx<'_>, device: &str, route: &str) -> Result<()> {
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(&mut **tx)
+                .await?;
+        if active {
+            let decision = crate::authorization::runtime::load(
+                tx,
+                device,
+                &self.0.identity.server_id(),
+                &encode(self.0.identity.signing_key.verifying_key().to_bytes()),
+                now()?,
+                Some(route),
+            )
+            .await?;
+            // An authorized explicit add may establish account inclusion and clear
+            // a local exclusion. It cannot bypass admission, root revocation or a
+            // pending removal, or replace a role/category/channel deny.
+            let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pending_policy_removals WHERE channel_id=$1 AND device_id=$2)")
+                .bind(route).bind(device).fetch_one(&mut **tx).await?;
+            if !decision.policy_eligible || pending {
+                return Err(denied());
+            }
+        }
+        Ok(())
+    }
+    async fn initialize_channel_access(
+        &self,
+        tx: &mut Tx<'_>,
+        member: &Membership,
+        route: &str,
+        mode: ConfidentialityMode,
+    ) -> Result<()> {
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(&mut **tx)
+                .await?;
+        if active {
+            let decision = crate::authorization::runtime::load(
+                tx,
+                &member.device_id,
+                &self.0.identity.server_id(),
+                &encode(self.0.identity.signing_key.verifying_key().to_bytes()),
+                now()?,
+                None,
+            )
+            .await?;
+            decision.require(cords_protocol::roles::Permission::CreateChannels)?;
+            let policy = crate::authorization::persistence::load(tx)
+                .await?
+                .policy
+                .ok_or_else(denied)?;
+            let access = policy
+                .access(&decision.subject, &Default::default(), &Default::default())
+                .map_err(crate::authorization::persistence::Error::from)?;
+            if !access.eligible
+                || (mode == ConfidentialityMode::Encrypted
+                    && !access
+                        .permissions
+                        .contains(&cords_protocol::roles::Permission::CommitMls))
+            {
+                return Err(denied());
+            }
+            sqlx::query(
+                "INSERT INTO channel_access_policy(channel_id,account_restricted) VALUES($1,$2)",
+            )
+            .bind(route)
+            .bind(mode == ConfidentialityMode::Encrypted)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query("INSERT INTO channel_account_access(channel_id,account_id) VALUES($1,$2)")
+                .bind(route)
+                .bind(&member.account_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        Ok(())
+    }
+    async fn record_admission(
+        &self,
+        tx: &mut Tx<'_>,
+        account: &str,
+        device: &str,
+        approve_device: bool,
+    ) -> Result<()> {
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(&mut **tx)
+                .await?;
+        if active {
+            sqlx::query("INSERT INTO server_account_admission(account_id,accepted) VALUES($1,TRUE) ON CONFLICT(account_id) DO UPDATE SET accepted=TRUE")
+                .bind(account).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO server_device_admission(device_id,approved) VALUES($1,$2) ON CONFLICT(device_id) DO UPDATE SET approved=server_device_admission.approved OR EXCLUDED.approved")
+                .bind(device).bind(approve_device).execute(&mut **tx).await?;
+        }
+        Ok(())
+    }
+    async fn authorize_channel_mutation(
+        &self,
+        tx: &mut Tx<'_>,
+        headers: &HeaderMap,
+        member: &Signed<Membership>,
+        route: &str,
+        permission: cords_protocol::roles::Permission,
+    ) -> Result<()> {
+        self.authorize_session(tx, headers, member).await?;
+        self.require_current_policy(tx, &member.value, permission, Some(route))
+            .await?;
+        self.authorize_mutation(tx, headers, member, Some((route, true)))
+            .await
     }
     async fn require_current_policy(
         &self,
@@ -367,6 +570,40 @@ impl Service {
             return Err(denied());
         }
         decision.require(permission)?;
+        Ok(())
+    }
+    async fn require_admission_reviewer(
+        &self,
+        tx: &mut Tx<'_>,
+        member: &Membership,
+        account: Option<&str>,
+    ) -> Result<()> {
+        use cords_protocol::roles::{DeviceAdmission, Permission};
+        let subject = roles::administrative_subject(
+            self,
+            tx,
+            member,
+            &[Permission::ApproveAccounts, Permission::ApproveDevices],
+        )
+        .await?;
+        let snapshot = crate::authorization::persistence::load(tx).await?;
+        if snapshot.active
+            && let Some(account) = account
+        {
+            let policy = snapshot.policy.ok_or_else(denied)?;
+            let accepted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_account_admission WHERE account_id=$1 AND accepted)")
+                .bind(account).fetch_one(&mut **tx).await?;
+            let permissions = policy
+                .access(&subject, &Default::default(), &Default::default())
+                .map_err(crate::authorization::persistence::Error::from)?
+                .permissions;
+            if (!accepted && !permissions.contains(&Permission::ApproveAccounts))
+                || ((accepted || policy.device_admission == DeviceAdmission::AdministratorApproval)
+                    && !permissions.contains(&Permission::ApproveDevices))
+            {
+                return Err(denied());
+            }
+        }
         Ok(())
     }
     fn sign<T: Statement>(&self, value: T) -> Result<Signed<T>> {
@@ -427,7 +664,6 @@ pub fn router(service: Service) -> Router {
     Router::new()
         .route("/api/v1/join/request", post(join_challenge))
         .route("/api/v1/auth/challenge", post(auth_challenge))
-        .route("/api/v1/auth/session", post(session))
         .route("/api/v1/ownership", get(ownership_state))
         .route("/api/v1/ownership/challenge", post(ownership_challenge))
         .route("/api/v1/ownership/claim", post(claim_ownership))
@@ -467,6 +703,10 @@ pub fn router(service: Service) -> Router {
         )
         .route("/api/v1/membership-requests", get(membership_requests))
         .route(
+            "/api/v1/membership-requests/{device}/profile",
+            get(profiles::admission_read),
+        )
+        .route(
             "/api/v1/membership-requests/{device}/approve",
             post(approve_membership),
         )
@@ -501,10 +741,25 @@ pub fn router(service: Service) -> Router {
             get(roles::account_roles),
         )
         .route("/api/v1/role-policy/audit", get(roles::audit))
+        .route("/api/v1/role-policy/actions", get(roles::actions))
+        .route(
+            "/api/v1/role-policy/workspace",
+            get(role_workspace::workspace),
+        )
+        .route(
+            "/api/v1/role-policy/targets/{account}",
+            get(role_workspace::target),
+        )
+        .route(
+            "/api/v1/role-policy/roles/{role}/members",
+            get(role_workspace::members),
+        )
+        .route("/api/v1/channels/recovery", get(recovery::list))
         .route("/api/v1/events", get(websocket))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(MAX_ENVELOPE))
         .merge(
             Router::new()
+                .route("/api/v1/auth/session", post(session_upload))
                 .route("/api/v1/account-profiles", post(profiles::publish))
                 .route(
                     "/api/v1/server-profile/icon",
@@ -689,12 +944,49 @@ fn session_token(s: &Service, challenge_id: &str, expires_at: u64) -> Result<Str
     ))
 }
 
-#[allow(clippy::too_many_lines)] // Keep proof, admission, and token issuance in one auditable transaction.
+async fn session_upload(
+    State(s): State<Service>,
+    request: axum::extract::Request,
+) -> Result<Json<Session>> {
+    s.limit_authentication()?;
+    let permit =
+        s.0.profile_validation
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError(StatusCode::TOO_MANY_REQUESTS, "CORDS_PROFILE_BUSY"))?;
+    let bytes = tokio::time::timeout(
+        Duration::from_secs(15),
+        axum::body::to_bytes(request.into_body(), 8 * 1024 * 1024),
+    )
+    .await
+    .map_err(|_| bad())?
+    .map_err(|_| bad())?;
+    let request = serde_json::from_slice(&bytes)?;
+    drop(bytes);
+    session_with_permit(State(s), Json(request), permit).await
+}
+
+#[cfg(test)]
 async fn session(
     State(s): State<Service>,
     Json(request): Json<SessionRequest>,
 ) -> Result<Json<Session>> {
     s.limit_authentication()?;
+    let permit =
+        s.0.profile_validation
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError(StatusCode::TOO_MANY_REQUESTS, "CORDS_PROFILE_BUSY"))?;
+    session_with_permit(State(s), Json(request), permit).await
+}
+
+#[allow(clippy::too_many_lines)] // Keep proof, admission, and token issuance in one auditable transaction.
+async fn session_with_permit(
+    State(s): State<Service>,
+    Json(request): Json<SessionRequest>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Result<Json<Session>> {
+    s.require_policy_client(request.role_policy_version).await?;
     let time = now()?;
     let mut tx = s.0.store.pool().begin().await?;
     let row = sqlx::query(
@@ -725,6 +1017,14 @@ async fn session(
             "CORDS_AUTH_CHALLENGE_EXPIRED",
         ));
     }
+    // Decode media before taking account/ownership locks. Possession is already
+    // verified, but the payload grants no membership or profile-publication right.
+    if let Some(profile) = &request.admission_profile {
+        if expected.purpose != "join" {
+            return Err(bad());
+        }
+        profiles::admission_validate(&s, profile, &expected.account_id, permit).await?;
+    }
     sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended('server-ownership',0))")
         .execute(&mut *tx)
         .await?;
@@ -737,15 +1037,46 @@ async fn session(
         return Err(ApiError(StatusCode::CONFLICT, "OWNER_RECOVERY_REQUIRED"));
     }
     persist_contact(&mut tx, &contact).await?;
+    if let Some(profile) = &request.admission_profile {
+        for record in &profile.records {
+            profiles::authorize_author(&mut tx, record).await?;
+        }
+    }
     let old = sqlx::query("SELECT credential,active FROM memberships WHERE device_id=$1")
         .bind(device)
         .fetch_optional(&mut *tx)
         .await?;
-    let active_old = old
+    let mut active_old = old
         .as_ref()
         .map(|row| row.try_get::<bool, _>("active"))
         .transpose()?
         .unwrap_or(false);
+    let (enforced, device_mode): (bool, String) = sqlx::query_as(
+        "SELECT active,device_admission FROM role_policy WHERE singleton=TRUE FOR UPDATE",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let (accepted, approved): (Option<bool>, bool) = if enforced {
+        let accepted =
+            sqlx::query_scalar("SELECT accepted FROM server_account_admission WHERE account_id=$1")
+                .bind(&expected.account_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let approved: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM server_device_admission WHERE device_id=$1 AND approved)",
+        )
+        .bind(device)
+        .fetch_one(&mut *tx)
+        .await?;
+        (accepted, approved)
+    } else {
+        (None, false)
+    };
+    if enforced
+        && (accepted != Some(true) || (device_mode == "administrator_approval" && !approved))
+    {
+        active_old = false;
+    }
     let membership = if active_old {
         let mut current: Signed<Membership> =
             parse(old.as_ref().ok_or_else(denied)?.try_get("credential")?)?;
@@ -800,20 +1131,36 @@ async fn session(
                 .bind(&expected.account_id)
                 .fetch_one(&mut *tx)
                 .await?;
-        if burned || (!owner && s.0.join_policy == JoinPolicy::ModeratorApproval) {
+        let needs_review = burned
+            || if enforced {
+                accepted == Some(false)
+                    || (accepted != Some(true)
+                        && !owner
+                        && s.0.join_policy == JoinPolicy::ModeratorApproval)
+                    || (device_mode == "administrator_approval" && !approved)
+            } else {
+                !owner && s.0.join_policy == JoinPolicy::ModeratorApproval
+            };
+        if needs_review {
             let prior: Option<String> = sqlx::query_scalar(
                 "SELECT status FROM membership_requests WHERE device_id=$1 FOR UPDATE",
             )
             .bind(device)
             .fetch_optional(&mut *tx)
             .await?;
-            if prior.as_deref() != Some("approved") {
+            if prior.as_deref() != Some("approved") || burned {
                 let result_code = if prior.as_deref() == Some("rejected") {
                     "CORDS_JOIN_REJECTED"
                 } else {
                     "CORDS_APPROVAL_PENDING"
                 };
-                if prior.is_none() {
+                if burned {
+                    // Preserve staff visibility of a proven burned identity,
+                    // without publishing its picture or permitting admission.
+                    sqlx::query("INSERT INTO membership_requests(device_id,account_id,contact,requested_at,status) VALUES($1,$2,$3,$4,'pending') ON CONFLICT(device_id) DO UPDATE SET contact=EXCLUDED.contact,status='pending',admission_profile=NULL")
+                        .bind(device).bind(&expected.account_id).bind(json(&contact)?).bind(int(time)?)
+                        .execute(&mut *tx).await?;
+                } else if prior.is_none() {
                     sqlx::query("INSERT INTO membership_requests(device_id,account_id,contact,requested_at,status) VALUES($1,$2,$3,$4,'pending')")
                         .bind(device).bind(&expected.account_id).bind(json(&contact)?).bind(int(time)?)
                         .execute(&mut *tx).await?;
@@ -828,6 +1175,12 @@ async fn session(
                         .bind(device)
                         .execute(&mut *tx)
                         .await?;
+                }
+                if prior.as_deref() != Some("rejected")
+                    && !burned
+                    && let Some(profile) = &request.admission_profile
+                {
+                    profiles::admission_store(&mut tx, device, profile).await?;
                 }
                 sqlx::query("UPDATE auth_challenges SET consumed=TRUE,pending_request_hash=$2,pending_idempotency_key=$3,pending_result_code=$4 WHERE id=$1")
                     .bind(&expected.challenge_id)
@@ -869,11 +1222,13 @@ async fn session(
             .bind(device)
             .execute(&mut *tx)
             .await?;
+        s.record_admission(&mut tx, &expected.account_id, device, false)
+            .await?;
         credential
     };
     let expires_at = time + s.0.session_seconds;
     let token = session_token(&s, &expected.challenge_id, expires_at)?;
-    sqlx::query("INSERT INTO sessions(token_hash,device_id,expires_at,challenge_id,request_hash,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)").bind(hash(&token)).bind(device).bind(int(expires_at)?).bind(&expected.challenge_id).bind(hash(canonical(&request)?)).bind(&request.idempotency_key).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO sessions(token_hash,device_id,expires_at,challenge_id,request_hash,idempotency_key,role_policy_version) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(hash(&token)).bind(device).bind(int(expires_at)?).bind(&expected.challenge_id).bind(hash(canonical(&request)?)).bind(&request.idempotency_key).bind(request.role_policy_version.map(|_| 1_i16)).execute(&mut *tx).await?;
     sqlx::query("UPDATE auth_challenges SET consumed=TRUE WHERE id=$1")
         .bind(&expected.challenge_id)
         .execute(&mut *tx)
@@ -891,6 +1246,7 @@ async fn claim_ownership(
     State(s): State<Service>,
     Json(request): Json<OwnershipClaim>,
 ) -> Result<Json<Session>> {
+    s.require_policy_client(request.role_policy_version).await?;
     s.limit_ownership()?;
     if request.claim_code.len() != 43
         || request.claim_code.chars().any(char::is_whitespace)
@@ -983,12 +1339,19 @@ async fn claim_ownership(
         .bind(int(time)?)
         .execute(&mut *tx)
         .await?;
+    s.record_admission(
+        &mut tx,
+        &authorization.account_id,
+        &authorization.device_id,
+        true,
+    )
+    .await?;
     sqlx::query("UPDATE server_ownership_bootstrap SET state='CLAIMED',claim_code_hash=NULL,claimed_at=$1,generation=generation+1 WHERE singleton=TRUE AND state='UNCLAIMED'")
         .bind(int(time)?).execute(&mut *tx).await?;
     let expires_at = time + s.0.session_seconds;
     let token = session_token(&s, &expected.challenge_id, expires_at)?;
-    sqlx::query("INSERT INTO sessions(token_hash,device_id,expires_at,challenge_id,request_hash,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)")
-        .bind(hash(&token)).bind(&authorization.device_id).bind(int(expires_at)?).bind(&expected.challenge_id).bind(hash(canonical(&request.root_proof)?)).bind(&request.idempotency_key).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO sessions(token_hash,device_id,expires_at,challenge_id,request_hash,idempotency_key,role_policy_version) VALUES($1,$2,$3,$4,$5,$6,$7)")
+        .bind(hash(&token)).bind(&authorization.device_id).bind(int(expires_at)?).bind(&expected.challenge_id).bind(hash(canonical(&request.root_proof)?)).bind(&request.idempotency_key).bind(request.role_policy_version.map(|_| 1_i16)).execute(&mut *tx).await?;
     sqlx::query("UPDATE auth_challenges SET consumed=TRUE WHERE id=$1")
         .bind(&expected.challenge_id)
         .execute(&mut *tx)
@@ -1105,44 +1468,53 @@ async fn members(
 struct MembershipPage {
     #[serde(default)]
     after: String,
+    #[serde(default)]
+    profiles: bool,
 }
 async fn membership_requests(
     State(s): State<Service>,
     headers: HeaderMap,
     Query(page): Query<MembershipPage>,
 ) -> Result<Json<Vec<MembershipRequest>>> {
-    s.authenticate(&headers, "server.manage").await?;
+    let member = s.authenticate(&headers, "channel.read").await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &member).await?;
+    s.require_admission_reviewer(&mut tx, &member.value, None)
+        .await?;
     if page.after.len() > 128 {
         return Err(bad());
     }
-    let rows = sqlx::query("SELECT r.account_id,r.device_id,r.requested_at,r.status,r.contact,(b.account_id IS NOT NULL) AS identity_burned FROM membership_requests r LEFT JOIN identity_burns b ON b.account_id=r.account_id WHERE r.status IN ('pending','rejected') AND r.device_id>$1 ORDER BY r.device_id LIMIT 16")
-        .bind(page.after).fetch_all(s.0.store.pool()).await?;
-    Ok(Json(
-        rows.into_iter()
-            .map(|row| {
-                let contact: Contact = parse(row.try_get("contact")?)?;
-                Ok(MembershipRequest {
-                    account_id: row.try_get("account_id")?,
-                    device_id: row.try_get("device_id")?,
-                    requested_at: uint(row.try_get("requested_at")?)?,
-                    status: row.try_get("status")?,
-                    identity_burned: row.try_get("identity_burned")?,
-                    user_card: contact.user_card,
-                    authorization: Some(contact.authorization),
-                })
+    let rows = sqlx::query("SELECT r.account_id,r.device_id,r.requested_at,r.status,r.contact,(b.account_id IS NOT NULL) AS identity_burned,(r.admission_profile IS NOT NULL AND b.account_id IS NULL) AS has_profile FROM membership_requests r LEFT JOIN identity_burns b ON b.account_id=r.account_id WHERE r.status IN ('pending','rejected') AND r.device_id>$1 ORDER BY r.device_id LIMIT 16")
+        .bind(page.after).fetch_all(&mut *tx).await?;
+    let result = rows
+        .into_iter()
+        .map(|row| {
+            let contact: Contact = parse(row.try_get("contact")?)?;
+            Ok(MembershipRequest {
+                account_id: row.try_get("account_id")?,
+                device_id: row.try_get("device_id")?,
+                requested_at: uint(row.try_get("requested_at")?)?,
+                status: row.try_get("status")?,
+                identity_burned: row.try_get("identity_burned")?,
+                has_profile: page.profiles && row.try_get("has_profile")?,
+                user_card: contact.user_card,
+                authorization: Some(contact.authorization),
             })
-            .collect::<Result<Vec<_>>>()?,
-    ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    tx.commit().await?;
+    Ok(Json(result))
 }
 async fn approve_membership(
     State(s): State<Service>,
     headers: HeaderMap,
     Path(device): Path<String>,
 ) -> Result<Json<Signed<Membership>>> {
-    let actor = s.authenticate(&headers, "server.manage").await?;
+    let actor = s.authenticate(&headers, "channel.read").await?;
     let mut tx = s.0.store.pool().begin().await?;
     s.authorize_mutation(&mut tx, &headers, &actor, None)
         .await?;
+
     let row =
         sqlx::query("SELECT account_id,contact,status FROM membership_requests WHERE device_id=$1")
             .bind(&device)
@@ -1167,6 +1539,8 @@ async fn approve_membership(
     // Session/status refresh takes the identity lock before the request row. Keep
     // that order here, then recheck the unlocked request read before accepting it.
     persist_contact(&mut tx, &contact).await?;
+    s.require_admission_reviewer(&mut tx, &actor.value, Some(&account))
+        .await?;
     let reviewed = sqlx::query(
         "SELECT account_id,contact,status FROM membership_requests WHERE device_id=$1 FOR UPDATE",
     )
@@ -1225,8 +1599,10 @@ async fn approve_membership(
         .bind(json(&credential)?)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE membership_requests SET status='approved',decided_by=$2,decided_at=$3 WHERE device_id=$1")
+    sqlx::query("UPDATE membership_requests SET status='approved',admission_profile=NULL,decided_by=$2,decided_at=$3 WHERE device_id=$1")
         .bind(&device).bind(&actor.value.device_id).bind(int(time)?).execute(&mut *tx).await?;
+    s.record_admission(&mut tx, &credential.value.account_id, &device, true)
+        .await?;
     tx.commit().await?;
     Ok(Json(credential))
 }
@@ -1235,9 +1611,18 @@ async fn reject_membership(
     headers: HeaderMap,
     Path(device): Path<String>,
 ) -> Result<StatusCode> {
-    let actor = s.authenticate(&headers, "server.manage").await?;
+    let actor = s.authenticate(&headers, "channel.read").await?;
     let mut tx = s.0.store.pool().begin().await?;
     s.authorize_mutation(&mut tx, &headers, &actor, None)
+        .await?;
+
+    let account: String =
+        sqlx::query_scalar("SELECT account_id FROM membership_requests WHERE device_id=$1")
+            .bind(&device)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(denied)?;
+    s.require_admission_reviewer(&mut tx, &actor.value, Some(&account))
         .await?;
     let changed = sqlx::query("UPDATE membership_requests SET status='rejected',decided_by=$2,decided_at=$3 WHERE device_id=$1 AND status='pending'")
         .bind(&device).bind(&actor.value.device_id).bind(int(now()?)?).execute(&mut *tx).await?.rows_affected();
@@ -1336,16 +1721,6 @@ async fn create_channel(
     Json(request): Json<ChannelCreate>,
 ) -> Result<Json<String>> {
     let member = s.authenticate(&headers, "channel.create").await?;
-    // Older signed credentials could contain channel.create from the former
-    // public-member default. The owner record is the authoritative gate.
-    let owner: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE account_id=$1)")
-            .bind(&member.value.account_id)
-            .fetch_one(s.0.store.pool())
-            .await?;
-    if !owner {
-        return Err(denied());
-    }
     if request.name.is_empty() || request.name.chars().count() > 100 {
         return Err(bad());
     }
@@ -1353,6 +1728,28 @@ async fn create_channel(
     let scope = format!("channel:{}", member.value.device_id);
     s.authorize_mutation(&mut tx, &headers, &member, None)
         .await?;
+    let active: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(&mut *tx)
+        .await?;
+    if active {
+        s.require_current_policy(
+            &mut tx,
+            &member.value,
+            cords_protocol::roles::Permission::CreateChannels,
+            None,
+        )
+        .await?;
+    } else {
+        // Older credentials cannot retain the former public channel.create grant.
+        let owner: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE account_id=$1)")
+                .bind(&member.value.account_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if !owner {
+            return Err(denied());
+        }
+    }
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
         return Ok(Json(result));
     }
@@ -1369,6 +1766,8 @@ async fn create_channel(
         .bind(&route)
         .bind(&member.value.device_id)
         .execute(&mut *tx)
+        .await?;
+    s.initialize_channel_access(&mut tx, &member.value, &route, request.confidentiality_mode)
         .await?;
     remember(&mut tx, &scope, &request.idempotency_key, &request, &route).await?;
     tx.commit().await?;
@@ -1438,8 +1837,14 @@ async fn replace_channel(
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
         return Ok(Json(result));
     }
-    s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
-        .await?;
+    s.authorize_channel_mutation(
+        &mut tx,
+        &headers,
+        &member,
+        &route,
+        cords_protocol::roles::Permission::ManageChannel,
+    )
+    .await?;
     let owner: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_ownership WHERE account_id=$1)")
             .bind(&member.value.account_id)
@@ -1482,12 +1887,20 @@ async fn replace_channel(
         return Err(bad());
     }
     let pending: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM roster_operations WHERE channel_id=$1 AND NOT complete)",
+        "SELECT EXISTS(SELECT 1 FROM roster_operations WHERE channel_id=$1 AND NOT complete AND NOT cancelled)",
     )
     .bind(&route)
     .fetch_one(&mut *tx)
     .await?;
-    if pending {
+    let removing: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pending_policy_removals WHERE channel_id=$1)",
+    )
+    .bind(&route)
+    .fetch_one(&mut *tx)
+    .await?;
+    if request.recovery.is_some() {
+        recovery::validate(&s, &mut tx, &member.value, &route, &request).await?;
+    } else if pending || removing {
         return Err(conflict());
     }
     let evidence = json(&request.record)?;
@@ -1505,6 +1918,16 @@ async fn replace_channel(
         .bind(&route)
         .execute(&mut *tx)
         .await?;
+    s.initialize_channel_access(
+        &mut tx,
+        &member.value,
+        &v.successor_channel_id,
+        v.confidentiality_mode,
+    )
+    .await?;
+    if request.recovery.is_some() {
+        recovery::record(&mut tx, &route, &request).await?;
+    }
     remember(
         &mut tx,
         &scope,
@@ -1532,10 +1955,16 @@ async fn retire_channel(
     if let Some(result) = previous(&mut tx, &scope, &key, &key).await? {
         return Ok(Json(result));
     }
-    s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
-        .await?;
+    s.authorize_channel_mutation(
+        &mut tx,
+        &headers,
+        &member,
+        &route,
+        cords_protocol::roles::Permission::RetireChannel,
+    )
+    .await?;
     let pending: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM roster_operations WHERE channel_id=$1 AND NOT complete)",
+        "SELECT EXISTS(SELECT 1 FROM roster_operations WHERE channel_id=$1 AND NOT complete AND NOT cancelled)",
     )
     .bind(&route)
     .fetch_one(&mut *tx)
@@ -1566,6 +1995,7 @@ async fn channel_view_in(tx: &mut Tx<'_>, route: &str) -> Result<Channel> {
         .ok_or_else(denied)?;
     let contacts:Vec<String>=sqlx::query_scalar("SELECT d.contact FROM channel_members m JOIN device_contacts d ON d.device_id=m.device_id WHERE m.channel_id=$1 AND m.active ORDER BY d.device_id").bind(route).fetch_all(&mut **tx).await?;
     Ok(Channel {
+        joined_sequence: None,
         confidentiality_mode: if row.try_get::<String, _>("confidentiality_mode")? == "public" {
             ConfidentialityMode::Public
         } else {
@@ -1669,7 +2099,7 @@ async fn channel(
     )
     .await?;
     let current = signed_channel_view(&s, &mut tx, &route).await?;
-    let result = if let Some(epoch) = query.epoch {
+    let mut result = if let Some(epoch) = query.epoch {
         let view: Option<String> =
             sqlx::query_scalar("SELECT view FROM channel_epochs WHERE channel_id=$1 AND epoch=$2")
                 .bind(&route)
@@ -1691,6 +2121,17 @@ async fn channel(
     } else {
         current
     };
+    let enforced: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(&mut *tx)
+        .await?;
+    if enforced
+        && query.epoch.is_none()
+        && result.confidentiality_mode == ConfidentialityMode::Encrypted
+    {
+        let sequence: i64 = sqlx::query_scalar("SELECT joined_sequence FROM channel_members WHERE channel_id=$1 AND device_id=$2 AND active AND delivery_active")
+            .bind(&route).bind(&member.value.device_id).fetch_one(&mut *tx).await?;
+        result.joined_sequence = Some(uint(sequence)?);
+    }
     tx.commit().await?;
     Ok(Json(result))
 }
@@ -1708,10 +2149,34 @@ async fn roster(
     }
     let mut tx = s.0.store.pool().begin().await?;
     let scope = format!("roster:{route}:{}", member.value.device_id);
-    s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
+    s.lock_roster_target(&mut tx, &request.target_device_id)
         .await?;
+    s.authorize_channel_mutation(
+        &mut tx,
+        &headers,
+        &member,
+        &route,
+        cords_protocol::roles::Permission::CommitMls,
+    )
+    .await?;
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
         return Ok(Json(result));
+    }
+    let pending_removal: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pending_policy_removals WHERE channel_id=$1 AND device_id=$2)",
+    )
+    .bind(&route)
+    .bind(&request.target_device_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if request.action != RosterAction::Remove || !pending_removal {
+        s.require_current_policy(
+            &mut tx,
+            &member.value,
+            cords_protocol::roles::Permission::ManageChannelMembers,
+            Some(&route),
+        )
+        .await?;
     }
     let epoch: i64 = sqlx::query_scalar("SELECT epoch FROM channels WHERE id=$1 FOR UPDATE")
         .bind(&route)
@@ -1730,6 +2195,28 @@ async fn roster(
             epoch,
         )
         .await?;
+        let policy = crate::authorization::persistence::load(&mut tx).await?;
+        if policy.active {
+            let account: String =
+                sqlx::query_scalar("SELECT account_id FROM device_contacts WHERE device_id=$1")
+                    .bind(&request.target_device_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            let proof = s.sign(cords_protocol::roles::ChannelAccessRemoval {
+                version: 1,
+                server_id: s.0.identity.server_id(),
+                channel_id: route.clone(),
+                account_id: account,
+                device_id: request.target_device_id.clone(),
+                policy_revision: uint(policy.revision)?,
+                channel_epoch: uint(epoch)?,
+                issued_at: now()?,
+            })?;
+            sqlx::query("INSERT INTO pending_policy_removals(channel_id,device_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
+                .bind(&route).bind(&request.target_device_id).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO channel_policy_removal_proofs(channel_id,device_id,proof) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
+                .bind(&route).bind(&request.target_device_id).bind(json(&proof)?).execute(&mut *tx).await?;
+        }
         remember(&mut tx, &scope, &request.idempotency_key, &request, &result).await?;
         tx.commit().await?;
         return Ok(Json(result));
@@ -1737,6 +2224,8 @@ async fn roster(
     if exists {
         return Err(conflict());
     }
+    s.require_enrollment(&mut tx, &request.target_device_id, &route)
+        .await?;
     let contact:String=sqlx::query_scalar("SELECT d.contact FROM device_contacts d JOIN memberships m ON m.device_id=d.device_id WHERE d.device_id=$1 AND m.active").bind(&request.target_device_id).fetch_optional(&mut *tx).await?.ok_or_else(denied)?;
     let target: Contact = roster_contact(&contact)?;
     validate_contact(&target, now()?)?;
@@ -1807,8 +2296,24 @@ async fn commit(
     }
     let mut tx = s.0.store.pool().begin().await?;
     let scope = format!("commit:{route}:{}", member.value.device_id);
-    s.authorize_mutation(&mut tx, &headers, &member, Some((&route, true)))
-        .await?;
+    let operation_target: String = sqlx::query_scalar(
+        "SELECT target FROM roster_operations WHERE id=$1 AND channel_id=$2 AND requester=$3",
+    )
+    .bind(&request.operation_id)
+    .bind(&route)
+    .bind(&member.value.device_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(conflict)?;
+    s.lock_roster_target(&mut tx, &operation_target).await?;
+    s.authorize_channel_mutation(
+        &mut tx,
+        &headers,
+        &member,
+        &route,
+        cords_protocol::roles::Permission::CommitMls,
+    )
+    .await?;
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
         return Ok(Json(result));
     }
@@ -1820,7 +2325,7 @@ async fn commit(
         return Err(conflict());
     }
     lifecycle::snapshot_epoch(&mut tx, &route).await?;
-    let operation=sqlx::query("SELECT target,package_id,action FROM roster_operations WHERE id=$1 AND channel_id=$2 AND requester=$3 AND base_epoch=$4 AND NOT complete FOR UPDATE").bind(&request.operation_id).bind(&route).bind(&member.value.device_id).bind(epoch).fetch_optional(&mut *tx).await?.ok_or_else(conflict)?;
+    let operation=sqlx::query("SELECT target,package_id,action FROM roster_operations WHERE id=$1 AND channel_id=$2 AND requester=$3 AND base_epoch=$4 AND NOT complete AND NOT cancelled FOR UPDATE").bind(&request.operation_id).bind(&route).bind(&member.value.device_id).bind(epoch).fetch_optional(&mut *tx).await?.ok_or_else(conflict)?;
     let target: String = operation.try_get("target")?;
     let active: bool =
         sqlx::query_scalar("SELECT active FROM memberships WHERE device_id=$1 FOR SHARE")
@@ -1828,8 +2333,27 @@ async fn commit(
             .fetch_one(&mut *tx)
             .await?;
     let removing = operation.try_get::<String, _>("action")? == "remove";
+    let pending_removal: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pending_policy_removals WHERE channel_id=$1 AND device_id=$2)",
+    )
+    .bind(&route)
+    .bind(&target)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !removing || !pending_removal {
+        s.require_current_policy(
+            &mut tx,
+            &member.value,
+            cords_protocol::roles::Permission::ManageChannelMembers,
+            Some(&route),
+        )
+        .await?;
+    }
     if !removing && (!active || decode(&request.welcome)?.is_empty()) {
         return Err(denied());
+    }
+    if !removing {
+        s.require_enrollment(&mut tx, &target, &route).await?;
     }
     if removing && !request.welcome.is_empty() {
         return Err(bad());
@@ -1873,6 +2397,13 @@ async fn commit(
         .bind(&request.operation_id)
         .execute(&mut *tx)
         .await?;
+    if removing {
+        // Another current committer may finish a durable removal after the
+        // original requester disconnects. Its obsolete reservation must not
+        // keep application delivery fenced after the leaf has been removed.
+        sqlx::query("UPDATE roster_operations SET cancelled=TRUE WHERE channel_id=$1 AND target=$2 AND action='remove' AND NOT complete AND NOT cancelled")
+            .bind(&route).bind(&target).execute(&mut *tx).await?;
+    }
     lifecycle::snapshot_epoch(&mut tx, &route).await?;
     remember(&mut tx, &scope, &request.idempotency_key, &request, &event).await?;
     tx.commit().await?;
@@ -1983,6 +2514,34 @@ async fn upload_event(
         .await?;
     if let Some(result) = previous(&mut tx, &scope, &request.idempotency_key, &request).await? {
         return Ok(Json(result));
+    }
+    if current.confidentiality_mode == ConfidentialityMode::Encrypted {
+        let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pending_policy_removals WHERE channel_id=$1) OR EXISTS(SELECT 1 FROM roster_operations WHERE channel_id=$1 AND action='remove' AND NOT complete AND NOT cancelled)")
+            .bind(&route).fetch_one(&mut *tx).await?;
+        if pending {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "CORDS_CHANNEL_REMOVAL_PENDING",
+            ));
+        }
+        let enforced: bool =
+            sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+                .fetch_one(&mut *tx)
+                .await?;
+        if enforced {
+            let epoch: i64 = sqlx::query_scalar("SELECT epoch FROM channels WHERE id=$1")
+                .bind(&route)
+                .fetch_one(&mut *tx)
+                .await?;
+            let message_epoch = cords_crypto::conversation::ConversationCrypto::application_epoch(
+                &route,
+                &decode(&request.ciphertext)?,
+            )
+            .map_err(|_| bad())?;
+            if message_epoch != uint(epoch)? {
+                return Err(ApiError(StatusCode::CONFLICT, "CORDS_MLS_EPOCH_CONFLICT"));
+            }
+        }
     }
     let event = append(&mut tx, request.clone()).await?;
     remember(&mut tx, &scope, &request.idempotency_key, &request, &event).await?;
@@ -2128,6 +2687,8 @@ mod departure;
 mod directory;
 mod lifecycle;
 mod profiles;
+mod recovery;
+mod role_workspace;
 mod roles;
 mod server_profile;
 #[cfg(test)]

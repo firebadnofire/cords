@@ -29,6 +29,87 @@ fn transport_unavailable(error: &anyhow::Error) -> bool {
 }
 
 impl Client {
+    pub(super) async fn admission_profile_payload(
+        &self,
+    ) -> Result<Option<cords_protocol::profiles::AdmissionProfile>> {
+        if !self
+            .durable
+            .server_features
+            .get(&self.durable.server_id)
+            .is_some_and(|features| {
+                features
+                    .iter()
+                    .any(|feature| feature == cords_protocol::profiles::ADMISSION_FEATURE)
+            })
+        {
+            return Ok(None);
+        }
+        let account = &self.identity.authorization.value.account_id;
+        let Some(graph) = self.durable.account_profiles.get(account) else {
+            return Ok(None);
+        };
+        if graph.records.is_empty() {
+            return Ok(None);
+        }
+        let view = self.local_profile_view(account, None).await?;
+        let payload = cords_protocol::profiles::AdmissionProfile {
+            records: graph.records.values().cloned().collect(),
+            image: view.image,
+        };
+        payload.verified(account).context("Cannot share admission profile: check for conflicting or missing profile data. Admission supports at most 256 signed revisions / 1 MiB of history and a 5 MB picture; existing history was preserved")?;
+        Ok(Some(payload))
+    }
+
+    /// Retrieve request-scoped presentation as authorized server staff. This
+    /// merges verified history so an older request cannot roll back a known PFP.
+    /// # Errors
+    /// Rejects unauthorized access, substituted history/media and stale queue rows.
+    pub async fn membership_request_profile(
+        &mut self,
+        device: &str,
+        account: &str,
+    ) -> Result<ProfileView> {
+        ensure!(
+            device.len() <= 128
+                && !device.is_empty()
+                && device
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+            "Invalid requesting device"
+        );
+        self.ensure_session().await?;
+        let profile: cords_protocol::profiles::AdmissionProfile = self
+            .get(&format!("/api/v1/membership-requests/{device}/profile"))
+            .await?;
+        let incoming = profile.verified(account)?;
+        let state = incoming.state()?;
+        let mut graph = self
+            .durable
+            .account_profiles
+            .get(account)
+            .cloned()
+            .unwrap_or_default();
+        for record in incoming.records.into_values() {
+            graph.insert(record)?;
+        }
+        ensure!(
+            graph.records.len() <= 16384 && serde_json::to_vec(&graph)?.len() <= 16 * 1024 * 1024,
+            "Admission profile exceeds local history limit"
+        );
+        graph.state()?;
+        if let Some(avatar) = state
+            .agreed
+            .as_ref()
+            .and_then(|profile| profile.avatar.as_ref())
+        {
+            let bytes = STANDARD.decode(profile.image.context("Missing admission picture")?)?;
+            self.cache_profile_image(avatar, &bytes).await?;
+        }
+        self.durable.account_profiles.insert(account.into(), graph);
+        self.persist(&[], &[]).await?;
+        self.local_profile_view(account, None).await
+    }
+
     /// Exercise the server's account/session binding using an already verified
     /// public revision. Available only in explicit integration-test builds.
     /// # Errors

@@ -213,11 +213,28 @@ async fn apply_change(
                 .bind(role_id)
                 .execute(&mut **tx)
                 .await?;
+            if snapshot.active {
+                for table in ["channel_access_policy", "channel_categories"] {
+                    // Table names are fixed program constants, never request input.
+                    sqlx::query(&format!("UPDATE {table} SET overrides=(overrides::jsonb - $1)::text WHERE overrides::jsonb ? $1"))
+                        .bind(role_id).execute(&mut **tx).await?;
+                }
+            }
             sqlx::query("DELETE FROM server_roles WHERE id=$1")
                 .bind(role_id)
                 .execute(&mut **tx)
                 .await?;
             ("delete_role", role_id.clone())
+        }
+        Change::ReorderRoles { positions } => {
+            let policy = snapshot.policy.as_ref().ok_or(Error::Uninitialized)?;
+            let roles = policy.reorder(actor, positions)?;
+            for role in roles {
+                if policy.roles().get(&role.id) != Some(&role) {
+                    write_role(tx, &role).await?;
+                }
+            }
+            ("reorder_roles", "server".to_owned())
         }
         Change::AssignRole {
             account_id,

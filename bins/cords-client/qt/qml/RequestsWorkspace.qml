@@ -7,6 +7,7 @@ import QtQuick.Layouts
 ColumnLayout {
     id: workspace
     required property Controller desktop
+    property int profileRefresh: 0
     readonly property bool modalOpen: rejection.visible
     readonly property string scope: JSON.stringify([desktop.state.account || "", desktop.state.server || ""])
     onScopeChanged: {
@@ -42,7 +43,10 @@ ColumnLayout {
             iconName: "refresh"
             text: "Refresh membership requests"
             enabled: !workspace.desktop.busy && !!workspace.desktop.state.canApprove
-            onClicked: workspace.desktop.loadRequests()
+            onClicked: {
+                workspace.desktop.loadRequests();
+                workspace.profileRefresh++;
+            }
         }
     }
     CordsLabel {
@@ -75,8 +79,34 @@ ColumnLayout {
         delegate: Rectangle {
             id: request
             required property var row
-            onRowChanged: identityDetails.checked = false
-            ListView.onReused: identityDetails.checked = false
+            readonly property var person: workspace.desktop.state.people ? workspace.desktop.state.people[row.account] || ({}) : ({})
+            readonly property bool inViewport: visible && y + height >= list.contentY && y <= list.contentY + list.height
+            property string requestedProfile: ""
+            function loadProfile() {
+                if (!row || !row.hasProfile || !inViewport || !workspace.desktop.state.canApprove)
+                    return;
+                const key = JSON.stringify([workspace.scope, row.id, workspace.profileRefresh]);
+                if (requestedProfile === key)
+                    return;
+                requestedProfile = key;
+                workspace.desktop.loadRequestProfile(row.id);
+            }
+            onRowChanged: {
+                identityDetails.checked = false;
+                loadProfile();
+            }
+            onInViewportChanged: loadProfile()
+            Component.onCompleted: loadProfile()
+            ListView.onReused: {
+                identityDetails.checked = false;
+                requestedProfile = "";
+                loadProfile();
+            }
+            Connections {
+                target: workspace
+                function onProfileRefreshChanged() { request.loadProfile(); }
+            }
+            HoverHandler { id: requestHover }
             width: list.width
             height: content.implicitHeight + 24
             color: Theme.input
@@ -88,8 +118,12 @@ ColumnLayout {
                 width: parent.width - 24
                 RowLayout {
                     CordsAvatar {
+                        objectName: "membershipRequestAvatar"
                         name: request.row.name || "Applicant"
                         account: request.row.account
+                        source: request.person.image || ""
+                        shape: request.person.shape || "circle"
+                        playing: requestHover.hovered && request.inViewport
                         Layout.preferredWidth: 36
                         Layout.preferredHeight: 36
                     }
@@ -164,7 +198,7 @@ ColumnLayout {
         }
     }
     CordsLabel {
-        text: "Admission requests include a verified device identity and optional name. Profile pictures and application messages are not supplied by this server API."
+        text: "Requests show verified identity and a signed profile picture when shared by a compatible client. Names and pictures do not establish trust."
         Layout.fillWidth: true
         color: Theme.muted
         font.pixelSize: Theme.captionSize

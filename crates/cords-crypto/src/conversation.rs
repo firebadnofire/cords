@@ -51,6 +51,21 @@ pub enum Processed {
 }
 
 impl ConversationCrypto {
+    /// Inspect public MLS framing without decrypting or claiming authenticity.
+    /// Recipients still authenticate the sender and ciphertext through MLS.
+    /// # Errors
+    /// Rejects malformed frames, wrong groups and non-private application messages.
+    pub fn application_epoch(route: &str, bytes: &[u8]) -> Result<u64, CryptoError> {
+        let message = checked(MlsMessageIn::tls_deserialize_exact(bytes))?;
+        let protocol = checked(message.try_into_protocol_message())?;
+        if protocol.wire_format() != WireFormat::PrivateMessage
+            || protocol.content_type() != ContentType::Application
+            || protocol.group_id().as_slice() != route.as_bytes()
+        {
+            return Err(CryptoError);
+        }
+        Ok(protocol.epoch().as_u64())
+    }
     /// # Errors
     /// Returns an error if MLS rejects the operation or the stored group state is invalid.
     pub fn new(device_id: String) -> Result<Self, CryptoError> {
@@ -236,6 +251,24 @@ impl ConversationCrypto {
         }
         Ok(())
     }
+    /// Build replacement state in isolation after a fresh server-authorized add.
+    /// The caller must verify the new roster before persisting this snapshot.
+    /// # Errors
+    /// Rejects invalid Welcome material or an epoch that does not advance.
+    pub fn rejoin(&self, route: &str, welcome: &[u8]) -> Result<Self, CryptoError> {
+        let previous_epoch = self.epoch(route)?;
+        let replacement = Self::restore(&self.snapshot()?)?;
+        checked(
+            replacement
+                .group(route)?
+                .delete(replacement.provider.storage()),
+        )?;
+        replacement.join(route, welcome)?;
+        if replacement.epoch(route)? <= previous_epoch {
+            return Err(CryptoError);
+        }
+        Ok(replacement)
+    }
     /// # Errors
     /// Returns an error if MLS rejects the operation or the stored group state is invalid.
     pub fn encrypt(&self, route: &str, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -301,6 +334,12 @@ mod tests {
         a.merge_pending("channel")?;
         b.join("channel", &commit.welcome)?;
         let bytes = a.encrypt("channel", b"hello")?;
+        assert_eq!(ConversationCrypto::application_epoch("channel", &bytes)?, 1);
+        assert!(ConversationCrypto::application_epoch("other", &bytes).is_err());
+        assert!(ConversationCrypto::application_epoch("channel", &commit.welcome).is_err());
+        assert!(
+            ConversationCrypto::application_epoch("channel", &bytes[..bytes.len() - 1]).is_err()
+        );
         let Processed::Application {
             device_id,
             plaintext,
@@ -320,12 +359,23 @@ mod tests {
         ));
         assert_eq!(a.epoch("channel")?, 1);
         let removal = a.remove("channel", "b")?;
+        assert!(ConversationCrypto::application_epoch("channel", &removal).is_err());
         a.merge_pending("channel")?;
         assert!(matches!(b.process("channel", &removal)?, Processed::Commit));
         assert!(
             b.process("channel", &a.encrypt("channel", b"excluded")?)
                 .is_err()
         );
+        assert!(b.rejoin("channel", &commit.welcome).is_err());
+        assert!(b.rejoin("channel", b"invalid welcome").is_err());
+        let added = a.add("channel", &b.key_package()?)?;
+        a.merge_pending("channel")?;
+        let fresh = b.rejoin("channel", &added.welcome)?;
+        assert_eq!(fresh.epoch("channel")?, a.epoch("channel")?);
+        assert!(matches!(
+            fresh.process("channel", &a.encrypt("channel", b"fresh enrollment")?)?,
+            Processed::Application { .. }
+        ));
         Ok(())
     }
 }

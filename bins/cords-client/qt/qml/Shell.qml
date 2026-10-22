@@ -942,7 +942,7 @@ Item {
             width: parent.width
             spacing: 12
             CordsLabel {
-                text: "Cords validates HTTPS and pins the server signing identity, then requests admission. If approval is required, an administrator must accept your request before you can access the server. Verify the origin before continuing."
+                text: "Cords validates HTTPS and pins the server signing identity, then requests admission. Your public name and signed profile picture are shared with server staff for review when supported. If approval is required, an administrator must accept your request before you can access the server. Verify the origin before continuing."
                 Layout.fillWidth: true
             }
             CordsField {

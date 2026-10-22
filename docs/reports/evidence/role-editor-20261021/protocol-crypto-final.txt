@@ -1,0 +1,57 @@
+   Compiling cords-protocol v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-protocol)
+   Compiling cords-crypto v0.1.0 (C:\Users\william\Desktop\git\cords\crates\cords-crypto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.30s
+     Running unittests src\lib.rs (E:/CordsBuild/cargo\debug\deps\cords_crypto-a0ae5a7626413065.exe)
+
+running 2 tests
+test protection::tests::independent_cache_context_and_tamper ... ok
+test conversation::tests::independent_persistent_members_exchange ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running unittests src\lib.rs (E:/CordsBuild/cargo\debug\deps\cords_protocol-6addb6bfc5d32445.exe)
+
+running 21 tests
+test messaging::tests::canonical_vector_and_float_rejection ... ok
+test messaging::tests::departure_and_burn_have_distinct_signing_domains ... ok
+test server_profile::tests::background_is_an_opaque_rgb_color ... ok
+test tests::negotiation_selects_highest_overlap ... ok
+test messaging::tests::ownership_claim_debug_redacts_the_secret ... ok
+test tests::deterministic_encoding_is_stable ... ok
+test tests::origins_are_strict_and_normalized ... ok
+test tests::metadata_signature_and_fingerprint_are_bound ... ok
+test profiles::tests::revision_domain_vector ... ok
+test roles::tests::catalog_cbor_vector_and_signature_binding ... ok
+test roles::tests::account_roles_bind_account_catalog_and_assignments ... ok
+test roles::tests::audit_page_binds_cursor_head_and_entries ... ok
+test roles::tests::receipt_binds_request_actor_and_commit ... ok
+test profiles::tests::unsigned_tampering_wrong_generations_and_unlisted_field_changes_fail ... ok
+test profiles::tests::identical_concurrent_values_agree_and_missing_ancestry_stays_pending ... ok
+test profiles::tests::independent_fields_require_a_signed_merge_and_never_choose_a_branch ... ok
+test profiles::tests::admission_picture_is_bound_to_complete_signed_account_history ... ok
+test profiles::tests::conflicting_names_preserve_last_agreement_until_explicit_resolution ... ok
+test roles::tests::enforced_actions_and_removal_have_separate_fixed_signing_contracts ... ok
+test roles::tests::recovery_domains_fixed_cbor_digests_and_all_field_binding ... ok
+test roles::tests::role_presentation_signatures_bind_every_scope_and_action_field ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests\identity_vectors.rs (E:/CordsBuild/cargo\debug\deps\identity_vectors-2419a438e1d470ef.exe)
+
+running 1 test
+test signed_identity_protocol_vectors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+   Doc-tests cords_crypto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cords_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -244,6 +244,7 @@ async fn capabilities() -> Json<CapabilitiesV1> {
 fn server_features() -> Vec<String> {
     [
         "mls-v1",
+        cords_protocol::roles::ENFORCEMENT_FEATURE,
         "public-channels-v1",
         "channel-succession-v1",
         "channel-sync-v1",
@@ -254,6 +255,7 @@ fn server_features() -> Vec<String> {
         "member-pages-v1",
         "account-directory-v1",
         cords_protocol::profiles::FEATURE,
+        cords_protocol::profiles::ADMISSION_FEATURE,
         cords_protocol::server_profile::FEATURE,
     ]
     .into_iter()

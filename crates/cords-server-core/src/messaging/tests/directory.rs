@@ -43,6 +43,7 @@ async fn directory_accounts_paginate_group_devices_and_recheck_sessions() -> Res
         headers(&session)?,
         Query(MembershipPage {
             after: page.next_after.clone().context("missing continuation")?,
+            ..MembershipPage::default()
         }),
     )
     .await?

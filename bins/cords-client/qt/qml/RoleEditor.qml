@@ -4,44 +4,72 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 
-CordsDialog {
+Item {
     id: editor
     objectName: "roleEditor"
     required property Controller desktop
     property var draft: ({})
     property var reviewedRevision: 0
-    property string baseline: ""
+    property string draftBaseline: ""
     property string lastPayload: ""
     property string requestId: ""
     property bool submitting: false
     property bool existing: false
     property string serverId: ""
     property string localAccount: ""
-    readonly property bool dirty: JSON.stringify(draft) !== baseline
-    readonly property bool canEdit: visible && localAccount === (desktop.state.account || "") && serverId === (desktop.state.server || "") && !!desktop.state.canRoles && !desktop.busy
+    readonly property bool dirty: JSON.stringify(draft) !== draftBaseline
+    property int rolePresentationRevision: 0
+    Connections {
+        target: editor.desktop.roles
+        function onChanged() { ++editor.rolePresentationRevision; }
+    }
+    readonly property var currentRole: {
+        const changed = rolePresentationRevision;
+        const revision = desktop.state.revision;
+        const count = desktop.roles.count;
+        const index = desktop.roles.indexOf(draft.id || "");
+        return index >= 0 ? desktop.roles.get(index) : ({});
+    }
+    readonly property bool canDelete: existing && !!currentRole.deletable && canEdit
+    readonly property bool canEdit: visible && localAccount === (desktop.state.account || "") && serverId === (desktop.state.server || "") && (existing ? !!currentRole.editable : !!desktop.state.canCreateRoles) && !desktop.busy
     readonly property bool valid: !!draft.name && draft.name.trim().length > 0 && /^#[0-9a-fA-F]{6}$/.test(draft.color || "")
-    title: existing ? "Edit $" + (draft.name || "role") : "Create role"
+    readonly property string title: existing ? "Edit $" + (draft.name || "role") : "Create role"
     width: Math.min(680, parent ? parent.width - 32 : 680)
     height: Math.min(760, parent ? parent.height - 32 : 760)
-    closePolicy: Popup.NoAutoClose
-    onClosed: {
+    visible: false
+    property int tab: 0
+    readonly property bool modalOpen: discard.visible || deletion.visible || roleMembers.modalOpen
+    function close() { visible = false; }
+    function open() { visible = true; }
+    onVisibleChanged: if (!visible) {
         discard.close();
         deletion.close();
         discard.operation = null;
         deletion.operation = null;
         submitting = false;
         draft = ({});
-        baseline = JSON.stringify(draft);
+        draftBaseline = JSON.stringify(draft);
         lastPayload = "";
         requestId = "";
     }
     function edit(role, isExisting) {
+        if (visible && dirty) {
+            const next = Object.assign({}, role);
+            discard.operation = function () { editor.beginEdit(next, isExisting); };
+            discard.open();
+            return;
+        }
+        beginEdit(role, isExisting);
+    }
+    function beginEdit(role, isExisting) {
         serverId = desktop.state.server || "";
         localAccount = desktop.state.account || "";
+        tab = 0;
+        permissionSearch.clear();
         draft = Object.assign({}, role);
         existing = isExisting;
         reviewedRevision = desktop.state.revision;
-        baseline = JSON.stringify(draft);
+        draftBaseline = JSON.stringify(draft);
         lastPayload = "";
         submitting = false;
         discard.operation = function () { editor.close(); };
@@ -66,6 +94,7 @@ CordsDialog {
             close();
             return;
         }
+        discard.operation = function () { editor.close(); };
         discard.open();
     }
     function save() {
@@ -80,7 +109,7 @@ CordsDialog {
         desktop.putRole(draft, reviewedRevision, requestId);
     }
     function removeRole() {
-        if (!canEdit || !existing || (draft.id || "").startsWith("builtin:") || reviewedRevision !== desktop.state.revision)
+        if (!canDelete || !existing || (draft.id || "").startsWith("builtin:") || reviewedRevision !== desktop.state.revision)
             return;
         const payload = JSON.stringify(["delete", draft.id, reviewedRevision]);
         if (payload !== lastPayload) {
@@ -109,8 +138,37 @@ CordsDialog {
         enabled: editor.visible && !discard.visible && !deletion.visible
         onActivated: editor.requestClose()
     }
-    contentItem: ColumnLayout {
+    ColumnLayout {
+        anchors.fill: parent
         spacing: 12
+        CordsLabel {
+            text: editor.title
+            font.pixelSize: Theme.headingSize
+            Layout.fillWidth: true
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Repeater {
+                model: ["Display", "Permissions", "Manage Members"]
+                CordsButton {
+                    required property int index
+                    required property string modelData
+                    objectName: "roleTab-" + modelData
+                    text: modelData
+                    quiet: true
+                    selected: editor.tab === index
+                    onClicked: editor.tab = index
+                }
+            }
+        }
+        CordsField {
+            id: permissionSearch
+            objectName: "permissionSearch"
+            visible: editor.tab === 1
+            placeholderText: "Search permissions"
+            Accessible.name: placeholderText
+            Layout.fillWidth: true
+        }
         CordsLabel {
             text: editor.desktop.state.rolesActive ? "The server validates every grant and hierarchy change." : "Preparatory catalog: saving does not activate permission enforcement."
             color: Theme.warning
@@ -137,87 +195,160 @@ CordsDialog {
             ColumnLayout {
                 width: scroll.availableWidth
                 spacing: 12
-                enabled: editor.canEdit
-                CordsLabel {
-                    text: "Name"
-                    font.bold: true
-                }
-                CordsField {
-                    objectName: "roleName"
-                    text: editor.draft.name || ""
-                    maximumLength: 64
-                    readOnly: (editor.draft.id || "").startsWith("builtin:")
+                ColumnLayout {
                     Layout.fillWidth: true
-                    Accessible.name: "Role name"
-                    onTextEdited: editor.change("name", text)
-                }
-                CordsLabel {
-                    text: "Color · #RRGGBB"
-                    font.bold: true
-                }
-                RowLayout {
-                    Rectangle {
-                        implicitWidth: 24
-                        implicitHeight: 24
-                        radius: 12
-                        color: /^#[0-9a-fA-F]{6}$/.test(editor.draft.color || "") ? editor.draft.color : Theme.muted
+                    visible: editor.tab === 0
+                    enabled: editor.canEdit
+                    CordsLabel {
+                        text: "Name"
+                        font.bold: true
                     }
                     CordsField {
-                        objectName: "roleColor"
-                        text: editor.draft.color || ""
-                        maximumLength: 7
+                        objectName: "roleName"
+                        text: editor.draft.name || ""
+                        maximumLength: 64
+                        readOnly: (editor.draft.id || "").startsWith("builtin:")
                         Layout.fillWidth: true
-                        Accessible.name: "Role color"
-                        onTextEdited: editor.change("color", text)
+                        Accessible.name: "Role name"
+                        onTextEdited: editor.change("name", text)
                     }
-                }
-                CordsLabel {
-                    text: "Description"
-                    font.bold: true
-                }
-                CordsField {
-                    objectName: "roleDescription"
-                    text: editor.draft.description || ""
-                    maximumLength: 1000
-                    Layout.fillWidth: true
-                    Accessible.name: "Role description"
-                    onTextEdited: editor.change("description", text)
-                }
-                RowLayout {
                     CordsLabel {
-                        text: "Priority"
+                        text: "Color · #RRGGBB"
+                        font.bold: true
                     }
-                    SpinBox {
-                        objectName: "rolePriority"
-                        from: 0
-                        to: 2147483647
-                        value: editor.draft.priority || 0
-                        enabled: editor.draft.id !== "builtin:default"
-                        palette.text: Theme.text
-                        palette.base: Theme.rail
-                        palette.button: Theme.elevated
-                        palette.buttonText: Theme.text
-                        editable: true
-                        Accessible.name: "Role priority"
-                        onValueModified: editor.change("priority", value)
+                    RowLayout {
+                        Rectangle {
+                            implicitWidth: 24
+                            implicitHeight: 24
+                            radius: 12
+                            color: /^#[0-9a-fA-F]{6}$/.test(editor.draft.color || "") ? editor.draft.color : Theme.muted
+                        }
+                        CordsField {
+                            objectName: "roleColor"
+                            text: editor.draft.color || ""
+                            maximumLength: 7
+                            Layout.fillWidth: true
+                            Accessible.name: "Role color"
+                            onTextEdited: editor.change("color", text)
+                        }
                     }
-                }
-                CordsLabel {
-                    text: "Higher priority controls management hierarchy; it does not inherit lower roles. Admin explicitly inherits moderator. Owner authority is separate."
-                    color: Theme.secondary
-                    Layout.fillWidth: true
-                }
-                CordsCheck {
-                    objectName: "roleMentionable"
-                    text: "Allow this role to be mentioned"
-                    checked: !!editor.draft.mentionable
-                    onToggled: editor.change("mentionable", checked)
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Repeater {
+                            model: ["#83bdd9", "#78c99a", "#e8bc70", "#ee777d", "#ba9de8", "#c6c9d0"]
+                            CordsButton {
+                                id: swatch
+                                required property string modelData
+                                text: modelData
+                                Accessible.name: "Use role color " + modelData
+                                implicitWidth: 34
+                                implicitHeight: 30
+                                selected: editor.draft.color === modelData
+                                contentItem: Rectangle { color: swatch.modelData; radius: 4; implicitWidth: 18; implicitHeight: 18 }
+                                onClicked: editor.change("color", modelData)
+                            }
+                        }
+                    }
+                    CordsLabel {
+                        text: "Preview"
+                        font.bold: true
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: preview.implicitHeight + 24
+                        color: Theme.conversation
+                        radius: Theme.radius
+                        ColumnLayout {
+                            id: preview
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            CordsRoleChip { roleName: editor.draft.name || "New role"; roleColor: editor.draft.color || ""; Layout.maximumWidth: preview.width }
+                            CordsLabel { text: "Sample member"; font.bold: true; Layout.fillWidth: true }
+                            CordsLabel { text: "A message in the conversation."; Layout.fillWidth: true; color: Theme.secondary }
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: elevatedPreview.implicitHeight + 24
+                        color: Theme.elevated
+                        radius: Theme.radius
+                        ColumnLayout {
+                            id: elevatedPreview
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            CordsRoleChip { roleName: editor.draft.name || "New role"; roleColor: editor.draft.color || ""; Layout.maximumWidth: elevatedPreview.width }
+                            CordsLabel { text: "Sample member"; font.bold: true; Layout.fillWidth: true }
+                            CordsLabel { text: "A message on an elevated surface."; Layout.fillWidth: true; color: Theme.secondary }
+                        }
+                    }
+                    CordsLabel {
+                        text: "Description"
+                        font.bold: true
+                    }
+                    CordsField {
+                        objectName: "roleDescription"
+                        text: editor.draft.description || ""
+                        maximumLength: 1000
+                        Layout.fillWidth: true
+                        Accessible.name: "Role description"
+                        onTextEdited: editor.change("description", text)
+                    }
+                    RowLayout {
+                        CordsLabel {
+                            text: "Priority"
+                        }
+                        SpinBox {
+                            objectName: "rolePriority"
+                            from: 0
+                            to: 2147483647
+                            value: editor.draft.priority || 0
+                            enabled: editor.draft.id !== "builtin:default"
+                            palette.text: Theme.text
+                            palette.base: Theme.rail
+                            palette.button: Theme.elevated
+                            palette.buttonText: Theme.text
+                            editable: true
+                            Accessible.name: "Role priority"
+                            onValueModified: editor.change("priority", value)
+                        }
+                    }
+                    CordsLabel {
+                        text: "Higher priority controls management hierarchy; it does not inherit lower roles. Admin explicitly inherits moderator. Owner authority is separate."
+                        color: Theme.secondary
+                        Layout.fillWidth: true
+                    }
+                    CordsCheck {
+                        objectName: "roleMentionable"
+                        text: "Role mentions (unavailable)"
+                        enabled: false
+                        checked: !!editor.draft.mentionable
+                    }
+                    CordsLabel {
+                        text: "Structured role mentions are not implemented. The saved mentionability value is preserved."
+                        Layout.fillWidth: true
+                        color: Theme.secondary
+                    }
                 }
                 PermissionEditor {
+                    objectName: "rolePermissions"
+                    visible: editor.tab === 1
+                    enabled: editor.canEdit
+                    query: permissionSearch.text
                     Layout.fillWidth: true
                     permissions: editor.draft.permissions || []
                     defaultRole: editor.draft.id === "builtin:default"
                     onPermissionToggled: (id, checked) => editor.togglePermission(id, checked)
+                }
+                RoleMembersWorkspace {
+                    id: roleMembers
+                    desktop: editor.desktop
+                    roleId: editor.draft.id || ""
+                    saved: editor.existing
+                    blocked: editor.dirty
+                    visible: editor.tab === 2 && editor.visible
+                    Layout.fillWidth: true
+                    onMembershipChanged: revision => { if (!editor.dirty) editor.reviewedRevision = revision; }
                 }
             }
         }
@@ -233,7 +364,7 @@ CordsDialog {
             }
             CordsButton {
                 objectName: "cancelRoleEditor"
-                text: "Cancel"
+                text: "Back to roles"
                 enabled: !editor.desktop.busy
                 onClicked: editor.requestClose()
             }
@@ -242,7 +373,7 @@ CordsDialog {
                 text: "Delete role…"
                 destructive: true
                 visible: editor.existing && !(editor.draft.id || "").startsWith("builtin:")
-                enabled: editor.canEdit && editor.reviewedRevision === editor.desktop.state.revision
+                enabled: editor.canDelete && editor.reviewedRevision === editor.desktop.state.revision
                 onClicked: deletion.open()
             }
         }

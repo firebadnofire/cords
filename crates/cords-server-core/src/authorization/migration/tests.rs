@@ -8,7 +8,7 @@ use rand_core::OsRng;
 use std::{path::Path, str::FromStr as _};
 
 const NOW: u64 = 1_800_000_000;
-const NEXT: &str = "202610150001_enforced_rbac.sql";
+const NEXT: &str = "202610210005_enforced_rbac.sql";
 
 async fn fixture() -> Result<(PostgresStore, tempfile::TempDir, SigningKey, String)> {
     let url = std::env::var("CORDS_TEST_DATABASE_URL")
@@ -31,10 +31,12 @@ async fn fixture() -> Result<(PostgresStore, tempfile::TempDir, SigningKey, Stri
     let staged = tempfile::tempdir()?;
     for file in std::fs::read_dir(source)? {
         let file = file?;
-        std::fs::copy(file.path(), staged.path().join(file.file_name()))?;
+        if file.file_name() != NEXT {
+            std::fs::copy(file.path(), staged.path().join(file.file_name()))?;
+        }
     }
     store.migrate(staged.path()).await?;
-    store.require_current().await?;
+    assert!(store.require_current().await.is_err());
     let key = SigningKey::generate(&mut OsRng);
     let server = cords_protocol::server_id_from_public_key(&key.verifying_key().to_bytes());
     store.bind_server_identity(&server).await?;
@@ -113,7 +115,7 @@ async fn install(
 
 fn stage(staged: &Path) -> Result<()> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../migrations/rbac")
+        .join("../../migrations/postgres")
         .join(NEXT);
     std::fs::copy(source, staged.join(NEXT))?;
     Ok(())
@@ -161,8 +163,8 @@ async fn rbac_migration_preserves_device_exclusions_and_archives_authority() -> 
     ).fetch_all(store.pool()).await?;
     stage(staged.path())?;
     store.migrate(staged.path()).await?;
-    // The currently shipped legacy service cannot open the candidate schema.
-    assert!(store.require_current().await.is_err());
+    // The integrated binary understands SQL state, but native completion still gates traffic.
+    store.require_current().await?;
     let public = encode(key.verifying_key().to_bytes());
     prepare(&store, &server, &public, NOW).await?;
     prepare(&store, &server, &public, NOW + 1).await?;
@@ -591,7 +593,7 @@ async fn rbac_migration_failure_rolls_back_and_fresh_install_is_reentrant() -> R
         format!("{migration}\nSELECT * FROM missing_rbac_failure;"),
     )?;
     assert!(store.migrate(staged.path()).await.is_err());
-    store.require_current().await?;
+    assert!(store.require_current().await.is_err());
     let absent: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('archived_role_assignments')::text")
             .fetch_one(store.pool())
@@ -617,6 +619,47 @@ async fn rbac_migration_failure_rolls_back_and_fresh_install_is_reentrant() -> R
         .await?;
     assert_eq!(roles, 3);
     store.pool().close().await;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn startup_activation_is_native_verified_and_reentrant() -> Result<()> {
+    let (store, _legacy, key, server) = fixture().await?;
+    // Exercise the actual automatic migration directory, not a manually copied candidate.
+    let normal = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/postgres");
+    store.migrate(&normal).await?;
+    store.require_current().await?;
+    let public = encode(key.verifying_key().to_bytes());
+    for _ in 0..2 {
+        activate(&store, &server, &public, NOW).await?;
+    }
+    let flags: (bool, bool) = sqlx::query_as(
+        "SELECT p.active,m.completed FROM role_policy p CROSS JOIN rbac_migration m",
+    )
+    .fetch_one(store.pool())
+    .await?;
+    assert_eq!(flags, (true, true));
+    let audit: i64 = sqlx::query_scalar("SELECT count(*) FROM role_policy_changes")
+        .fetch_one(store.pool())
+        .await?;
+    assert_eq!(audit, 0, "startup cannot invent user policy edits");
+    assert!(
+        activate(&store, "wrong-server", &public, NOW)
+            .await
+            .is_err()
+    );
+    sqlx::query("UPDATE role_policy SET active=FALSE WHERE singleton=TRUE")
+        .execute(store.pool())
+        .await?;
+    sqlx::query("UPDATE server_roles SET definition='{}' WHERE id='builtin:default'")
+        .execute(store.pool())
+        .await?;
+    assert!(activate(&store, &server, &public, NOW).await.is_err());
+    let active: bool = sqlx::query_scalar("SELECT active FROM role_policy WHERE singleton=TRUE")
+        .fetch_one(store.pool())
+        .await?;
+    assert!(!active, "invalid stored policy must not open enforcement");
     Ok(())
 }
 

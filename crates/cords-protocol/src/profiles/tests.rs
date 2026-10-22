@@ -79,6 +79,44 @@ fn avatar() -> ProfileAvatar {
 }
 
 #[test]
+fn admission_picture_is_bound_to_complete_signed_account_history() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let mut image = avatar();
+    image.bytes = 5;
+    let revision = record(vec![], 0, "Applicant", Some(image), all(), 2);
+    let account = revision.revision.value.account_id.clone();
+    let mut payload = AdmissionProfile {
+        records: vec![revision],
+        image: Some(STANDARD.encode(b"image")),
+    };
+    assert!(payload.verified(&account).is_ok());
+    assert!(payload.verified(&account_id(&[3; 32])).is_err());
+    payload.image = Some(STANDARD.encode(b"wrong"));
+    assert!(payload.verified(&account).is_err());
+    payload.image = None;
+    assert!(payload.verified(&account).is_err());
+    payload.image = Some(STANDARD.encode(b"image"));
+    payload.records[0].revision.value.profile.display_name = "Forged".into();
+    assert!(payload.verified(&account).is_err());
+    let child = record(
+        vec![hash(b"missing parent")],
+        1,
+        "Applicant",
+        None,
+        vec![ProfileField::DisplayName],
+        2,
+    );
+    assert!(
+        AdmissionProfile {
+            records: vec![child],
+            image: None
+        }
+        .verified(&account)
+        .is_err()
+    );
+}
+
+#[test]
 fn independent_fields_require_a_signed_merge_and_never_choose_a_branch() -> Result<(), InvalidObject>
 {
     let mut graph = ProfileGraph::default();

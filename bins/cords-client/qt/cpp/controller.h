@@ -19,6 +19,7 @@ class Controller : public QObject {
     Q_PROPERTY(Rows *members READ members CONSTANT)
     Q_PROPERTY(Rows *devices READ devices CONSTANT)
     Q_PROPERTY(Rows *requests READ requests CONSTANT)
+    Q_PROPERTY(Rows *recoveries READ recoveries CONSTANT)
     Q_PROPERTY(Rows *roles READ roles CONSTANT)
     Q_PROPERTY(Rows *audit READ audit CONSTANT)
     Q_PROPERTY(Rows *notifications READ notifications CONSTANT)
@@ -30,6 +31,7 @@ public:
     Rows *channels() { return &m_channels; } Rows *messages() { return &m_messages; }
     Rows *members() { return &m_members; } Rows *devices() { return &m_devices; }
     Rows *requests() { return &m_requests; } Rows *roles() { return &m_roles; }
+    Rows *recoveries() { return &m_recoveries; }
     Rows *audit() { return &m_audit; }
     Rows *notifications() { return &m_notifications; }
     Q_INVOKABLE void refresh();
@@ -57,6 +59,8 @@ public:
     Q_INVOKABLE void createChannel(QString name, bool isPublic);
     Q_INVOKABLE void replaceChannel(QString channel, QString name, bool isPublic);
     Q_INVOKABLE void retireChannel(QString channel);
+    Q_INVOKABLE void loadRecoveries(QString after = {});
+    Q_INVOKABLE void recoverChannel(QString channel, QString name);
     Q_INVOKABLE void acknowledgePublic(QString channel);
     Q_INVOKABLE void joinChannel(QString channel);
     Q_INVOKABLE void publishKeys();
@@ -66,6 +70,7 @@ public:
     Q_INVOKABLE void loadServerProfile();
     Q_INVOKABLE void saveServerProfile(QString name, QString description, QString background, quint64 revision, QString requestId);
     Q_INVOKABLE void loadRequests();
+    Q_INVOKABLE void loadRequestProfile(QString device);
     Q_INVOKABLE void approveRequest(QString device);
     Q_INVOKABLE void rejectRequest(QString device);
     Q_INVOKABLE void addDevice(QString channel, QString device);
@@ -73,7 +78,9 @@ public:
     Q_INVOKABLE void revokeDevice();
     Q_INVOKABLE void loadRoles();
     Q_INVOKABLE void loadAccountRoles(QString account);
+    Q_INVOKABLE void loadRoleMembers(QString role, bool assigned, QString after = {});
     Q_INVOKABLE void putRole(QVariantMap role, quint64 revision, QString requestId);
+    Q_INVOKABLE void reorderRoles(QVariantList positions, quint64 revision, QString requestId);
     Q_INVOKABLE void deleteRole(QString role, quint64 revision, QString requestId);
     Q_INVOKABLE void assignRole(QString account, QString role, bool remove, quint64 revision, QString requestId);
     Q_INVOKABLE void loadAudit(quint64 after = 0);
@@ -115,7 +122,7 @@ private:
     QVariantMap m_state;
     QString m_platformWarning;
     QString m_notificationStatus;
-    Rows m_accounts, m_servers, m_channels, m_messages, m_members, m_devices, m_requests, m_roles, m_audit, m_notifications;
+    Rows m_accounts, m_servers, m_channels, m_messages, m_members, m_devices, m_requests, m_recoveries, m_roles, m_audit, m_notifications;
     bool m_busy = false;
     bool m_locking = false;
     quint64 m_completed = 0;

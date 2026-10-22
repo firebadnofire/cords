@@ -319,7 +319,7 @@ Separate **how an account joins** from **what it must acknowledge before partici
 
 **Pending admission:** never show `CORDS_APPROVAL_PENDING: HTTP 403 Forbidden` as the primary UI. Show **“Waiting for administrator approval”**, explain which server and what happens next, allow a real refresh/status check, and transition after approval or denial. Pending applicants are not public admitted members.
 
-**Administrator Requests:** display pending applications with verified requesting identity, submission time, meaningful details where supported, Approve/Reject, refresh, permissions, loading/empty/error states. An empty list cannot silently conceal a failed fetch.
+**Administrator Requests:** display pending applications with verified requesting identity, a signed account profile picture when supplied, submission time, meaningful details where supported, Approve/Reject, refresh, permissions, loading/empty/error states. Use initials when no picture is available and preserve the picture's shape and row-hover animation behavior. An empty list cannot silently conceal a failed fetch.
 
 ### 5.6 Moderation and advanced/operator tasks
 

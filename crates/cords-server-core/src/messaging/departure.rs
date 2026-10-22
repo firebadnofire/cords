@@ -434,6 +434,7 @@ pub(super) async fn recover_owner(
     {
         return Err(denied());
     }
+    s.require_policy_client(request.role_policy_version).await?;
     let time = now()?;
     cords_identity::validate_contact(&request.contact, time)?;
     let authorization = &request.contact.authorization.value;
@@ -552,6 +553,13 @@ pub(super) async fn recover_owner(
     })?;
     sqlx::query("INSERT INTO memberships(device_id,credential,active) VALUES($1,$2,TRUE) ON CONFLICT(device_id) DO UPDATE SET credential=EXCLUDED.credential,active=TRUE")
         .bind(&authorization.device_id).bind(json(&credential)?).execute(&mut *tx).await?;
+    s.record_admission(
+        &mut tx,
+        &authorization.account_id,
+        &authorization.device_id,
+        true,
+    )
+    .await?;
     sqlx::query("INSERT INTO server_ownership(singleton,account_id,claimed_by_device_id,claimed_at) VALUES(TRUE,$1,$2,$3) ON CONFLICT(singleton) DO UPDATE SET account_id=EXCLUDED.account_id,claimed_by_device_id=EXCLUDED.claimed_by_device_id,claimed_at=EXCLUDED.claimed_at")
         .bind(&authorization.account_id).bind(&authorization.device_id).bind(int(time)?).execute(&mut *tx).await?;
     sqlx::query("UPDATE server_owner_control SET locked_down=FALSE,recovery_code_hash=NULL,recovery_issued_at=NULL,recovery_generation=recovery_generation+1 WHERE singleton=TRUE")
@@ -566,10 +574,10 @@ pub(super) async fn recover_owner(
         .await?;
     let expires_at = time + s.0.session_seconds;
     let token = super::session_token(&s, &expected.challenge_id, expires_at)?;
-    sqlx::query("INSERT INTO sessions(token_hash,device_id,expires_at,challenge_id,request_hash,idempotency_key) VALUES($1,$2,$3,$4,$5,$6)")
+    sqlx::query("INSERT INTO sessions(token_hash,device_id,expires_at,challenge_id,request_hash,idempotency_key,role_policy_version) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(hash(&token)).bind(&authorization.device_id).bind(int(expires_at)?)
         .bind(&expected.challenge_id).bind(hash(canonical(&request.root_proof)?))
-        .bind(&request.idempotency_key).execute(&mut *tx).await?;
+        .bind(&request.idempotency_key).bind(request.role_policy_version.map(|_| 1_i16)).execute(&mut *tx).await?;
     sqlx::query("UPDATE auth_challenges SET consumed=TRUE WHERE id=$1")
         .bind(&expected.challenge_id)
         .execute(&mut *tx)

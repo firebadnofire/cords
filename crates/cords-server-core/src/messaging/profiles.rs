@@ -8,6 +8,88 @@ use cords_protocol::profiles::{
 
 const HISTORY_BYTES: i64 = 16 * 1024 * 1024;
 
+pub(super) async fn admission_validate(
+    s: &Service,
+    profile: &cords_protocol::profiles::AdmissionProfile,
+    account: &str,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Result<()> {
+    let graph = profile.verified(account)?;
+    let agreed = graph.state()?.agreed.ok_or_else(bad)?;
+    if let Some(avatar) = agreed.avatar {
+        let record = profile
+            .records
+            .iter()
+            .find(|record| record.revision.value.profile.avatar.as_ref() == Some(&avatar))
+            .ok_or_else(bad)?;
+        let (_image, _permit) = prepare_image(
+            s,
+            &ProfilePublish {
+                record: record.clone(),
+                image: profile.image.clone(),
+            },
+            permit,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn admission_store(
+    tx: &mut Tx<'_>,
+    device: &str,
+    profile: &cords_protocol::profiles::AdmissionProfile,
+) -> Result<()> {
+    let previous: Option<String> = sqlx::query_scalar(
+        "SELECT admission_profile FROM membership_requests WHERE device_id=$1 FOR UPDATE",
+    )
+    .bind(device)
+    .fetch_one(&mut **tx)
+    .await?;
+    if let Some(previous) = previous {
+        let previous: cords_protocol::profiles::AdmissionProfile = parse(&previous)?;
+        let supplied: std::collections::BTreeSet<_> = profile
+            .records
+            .iter()
+            .map(ProfileRecord::id)
+            .collect::<std::result::Result<_, _>>()?;
+        for record in &previous.records {
+            if !supplied.contains(&record.id()?) {
+                return Err(conflict());
+            }
+        }
+    }
+    sqlx::query("UPDATE membership_requests SET admission_profile=$2 WHERE device_id=$1 AND status='pending'")
+        .bind(device).bind(json(profile)?).execute(&mut **tx).await?;
+    Ok(())
+}
+
+pub(super) async fn admission_read(
+    State(s): State<Service>,
+    headers: HeaderMap,
+    Path(device): Path<String>,
+) -> Result<impl IntoResponse> {
+    let reviewer = s.authenticate(&headers, "channel.read").await?;
+    let mut tx = s.0.store.pool().begin().await?;
+    s.authorize_session(&mut tx, &headers, &reviewer).await?;
+    s.require_admission_reviewer(&mut tx, &reviewer.value, None)
+        .await?;
+    let payload: Option<String> = sqlx::query_scalar("SELECT r.admission_profile FROM membership_requests r WHERE r.device_id=$1 AND r.status IN ('pending','rejected') AND NOT EXISTS(SELECT 1 FROM identity_burns b WHERE b.account_id=r.account_id)")
+        .bind(device).fetch_optional(&mut *tx).await?.flatten();
+    let payload = payload.ok_or(ApiError(
+        StatusCode::NOT_FOUND,
+        "CORDS_ADMISSION_PROFILE_MISSING",
+    ))?;
+    tx.commit().await?;
+    Ok((
+        [
+            ("content-type", "application/json"),
+            ("cache-control", "no-store"),
+        ],
+        payload,
+    ))
+}
+
 async fn readable(
     s: &Service,
     tx: &mut Tx<'_>,
@@ -204,7 +286,7 @@ pub(super) async fn publish(
     Ok(Json(receipt))
 }
 
-async fn authorize_author(tx: &mut Tx<'_>, record: &ProfileRecord) -> Result<()> {
+pub(super) async fn authorize_author(tx: &mut Tx<'_>, record: &ProfileRecord) -> Result<()> {
     cords_identity::validate_authorization(&record.authorization, now()?)?;
     let a = &record.authorization.value;
     let revoked: bool =

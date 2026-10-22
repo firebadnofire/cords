@@ -10,4 +10,5 @@ ADRs record changes or selections that affect Cords trust boundaries, cryptograp
 - [0010: Canonical account profiles and shared presentation media](0010-canonical-account-profiles.md)
 - [0011: Native Qt desktop](0011-native-qt-desktop.md)
 - [0012: Server-owned presentation](0012-server-presentation.md)
+- [0013: Signed profile pictures in admission requests](0013-admission-profile-pictures.md)
 

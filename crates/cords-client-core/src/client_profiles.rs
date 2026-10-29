@@ -130,7 +130,10 @@ impl Client {
             .clone();
         self.post(
             "/api/v1/account-profiles",
-            &ProfilePublish { record, image: None },
+            &ProfilePublish {
+                record,
+                image: None,
+            },
             true,
         )
         .await
@@ -320,6 +323,16 @@ impl Client {
             .cloned()
             .unwrap_or_default()
             .state()?)
+    }
+
+    /// Read verified presentation and sealed picture bytes from this account's
+    /// vault without authenticating or contacting a server. Missing/evicted
+    /// pictures return `None`; corrupt cache entries remain explicit errors.
+    /// # Errors
+    /// Rejects invalid fingerprints, inconsistent history and corrupt sealed media.
+    pub async fn cached_account_profile(&self, account: &str) -> Result<ProfileView> {
+        ensure!(decode(account)?.len() == 32, "Invalid account fingerprint");
+        self.local_profile_view(account, None).await
     }
 
     async fn local_profile_view(
@@ -607,5 +620,75 @@ impl Client {
         }
         self.sign_profile(profile).await?;
         self.account_profile(&account).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cached_foreign_profile_survives_restart_and_is_vault_isolated() -> Result<()> {
+        let source_dir = tempfile::tempdir()?;
+        let viewer_dir = tempfile::tempdir()?;
+        let other_dir = tempfile::tempdir()?;
+        let migrations = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/sqlite");
+        let password = b"Independent cached profile test phrase 931";
+        let mut source = Client::create(source_dir.path(), &migrations, password, None).await?;
+        let account = source.status().account_id;
+        // Storage fixture only: codec validation is covered by the media tests.
+        let bytes = b"sealed remote picture fixture";
+        let avatar = ProfileAvatar {
+            sha256: hash(bytes),
+            bytes: u32::try_from(bytes.len())?,
+            width: 1,
+            height: 1,
+            shape: "square".into(),
+        };
+        source
+            .save_account_profile(
+                AccountProfile {
+                    display_name: "Remembered remote nickname".into(),
+                    avatar: Some(avatar.clone()),
+                },
+                Some(STANDARD.encode(bytes)),
+                Vec::new(),
+            )
+            .await?;
+        let mut viewer = Client::create(viewer_dir.path(), &migrations, password, None).await?;
+        viewer.durable.account_profiles.insert(
+            account.clone(),
+            source.durable.account_profiles[&account].clone(),
+        );
+        viewer.cache_profile_image(&avatar, bytes).await?;
+        viewer.persist(&[], &[]).await?;
+        viewer.shutdown().await;
+        let viewer = Client::open(viewer_dir.path(), &migrations, Some(password), None).await?;
+        let cached = viewer.cached_account_profile(&account).await?;
+        assert_eq!(
+            cached.state.agreed.context("cached profile")?.display_name,
+            "Remembered remote nickname"
+        );
+        assert_eq!(cached.image, Some(STANDARD.encode(bytes)));
+        assert!(viewer.cached_account_profile("invalid").await.is_err());
+        let other = Client::create(other_dir.path(), &migrations, password, None).await?;
+        let absent = other.cached_account_profile(&account).await?;
+        assert!(absent.state.agreed.is_none() && absent.image.is_none());
+        assert!(other.cached_profile_image(&avatar).await?.is_none());
+        sqlx::query("UPDATE profile_images SET sealed=X'00' WHERE hash=?1")
+            .bind(&avatar.sha256)
+            .execute(viewer.store.pool())
+            .await?;
+        assert!(viewer.cached_account_profile(&account).await.is_err());
+        sqlx::query("DELETE FROM profile_images WHERE hash=?1")
+            .bind(&avatar.sha256)
+            .execute(viewer.store.pool())
+            .await?;
+        let evicted = viewer.cached_account_profile(&account).await?;
+        assert!(evicted.state.agreed.is_some() && evicted.image.is_none());
+        source.shutdown().await;
+        viewer.shutdown().await;
+        other.shutdown().await;
+        Ok(())
     }
 }

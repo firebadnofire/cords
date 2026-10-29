@@ -2298,6 +2298,39 @@ impl Worker {
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| member.id.clone());
         }
+        // Restore visible presentation from the selected account's sealed vault
+        // before any network refresh. Server switches clear `people`, but must
+        // not discard the account-wide verified profile cache.
+        let mut accounts: Vec<_> = self
+            .view
+            .messages
+            .iter()
+            .rev()
+            .map(|message| message.account.clone())
+            .chain(std::iter::once(self.view.account.clone()))
+            .chain(self.view.members.iter().map(|member| member.id.clone()))
+            .chain(
+                self.view
+                    .role_members
+                    .rows
+                    .iter()
+                    .map(|row| row.account.clone()),
+            )
+            .collect();
+        let mut unique = std::collections::BTreeSet::new();
+        accounts.retain(|account| unique.insert(account.clone()));
+        accounts.truncate(128);
+        for account in accounts {
+            if !self.people.contains_key(&account) {
+                let profile = self
+                    .client
+                    .as_ref()
+                    .context("Account locked")?
+                    .cached_account_profile(&account)
+                    .await?;
+                self.cache_person(&account, &profile.state, profile.image.as_deref());
+            }
+        }
         self.view.people = self.people.values().cloned().collect();
         Ok(())
     }

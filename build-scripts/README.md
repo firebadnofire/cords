@@ -46,6 +46,25 @@ the noninteractive/redirected-input safeguards and original error reporting.
 
 ## Windows ZIP
 
+To clean Windows build and package output (the equivalent of `make clean`):
+
+```powershell
+& .\build-scripts\clean-windows.ps1 -WhatIf
+& .\build-scripts\clean-windows.ps1
+```
+
+The cleaner removes repository `target/` and `dist/`, including Qt/CMake and
+Cargo output. It also removes custom output folders selected by
+`CORDS_QT_BUILD_DIR`, `CARGO_TARGET_DIR` and `CORDS_DIST_DIR`, or the explicit
+`-BuildDirectory`, `-CargoTargetDirectory` and `-DistDirectory` parameters.
+Relative overrides resolve from the current directory, matching the Windows
+builder. Custom folders must be dedicated generated-output directories; their
+entire contents are removed. Source-tree paths outside `target/` and `dist/`,
+filesystem roots, repository ancestors and linked paths are rejected before
+any deletion. Stop running builds and clients first. Repeated runs are safe;
+missing directories are reported as already clean. Only PowerShell is required.
+Deleted output can be recreated by rebuilding.
+
 ```powershell
 $env:CORDS_QT_PREFIX = 'E:\Qt\6.10.3\msvc2022_64'
 & .\build-scripts\windows-client.ps1

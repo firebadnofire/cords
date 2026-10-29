@@ -209,3 +209,29 @@ play on hover and reset to the still frame on exit. Expanded profiles play while
 visible, subject to loops and motion preferences. See
 [the local implementation and validation report](../reports/qt-prototype-integration.md).
 Previous Linux results do not validate this new interaction policy.
+
+## 2026-10-21 account-vault presentation cache
+
+The native snapshot now hydrates visible message/member/directory avatars from
+the unlocked account's existing verified profile history and sealed image cache,
+without waiting for a network refresh. Signed display names already used that
+history. The cache is shared across servers within one vault; lock/account switch
+still clears presentation. Initials remain appropriate for unknown or evicted
+pictures. This adds no identity authority, membership, external image requests,
+database migration or dependency. Existing 128 MiB sealed image and 16 MiB native
+presentation limits remain in force, and network refresh errors remain visible.
+
+Windows validation: client-core and Qt bridge `cargo check --locked` passed;
+`cached_foreign_profile_survives_restart_and_is_vault_isolated` passed (foreign
+signed name/image, offline reopen, independent vault, invalid ID, corrupt media,
+image eviction); native bridge
+`native_avatar_edit_persists_signed_profile_and_removal` passed with an added
+assertion that the JXL image and shape are present immediately after unlock.
+Client-core strict Clippy passed. Strict bridge Clippy is blocked by existing
+avatar casts and runtime warnings, including oversized functions and a nested
+server-icon condition. These are core/bridge checks, not packaged GUI or live
+independent-client/network acceptance; those were not executed for this change.
+An additional Cargo test rebuild hit disk exhaustion (Windows error 112) while
+creating the bridge static library. Rebuilding stopped; the existing compiled
+test executable passed `existing_vault_restart_password_failure_and_lock_clear_plaintext`.
+No build-cache cleanup or packaged-client replacement was performed.

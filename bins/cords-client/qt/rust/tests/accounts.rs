@@ -341,7 +341,15 @@ fn native_avatar_edit_persists_signed_profile_and_removal() -> Result<()> {
     let desktop = open(state.path())?;
     wait(&desktop, |_| true)?;
     desktop.unlock_account(account.clone(), password.into())?;
-    wait(&desktop, |v| v.completed == 1)?;
+    let hydrated = wait(&desktop, |v| v.completed == 1)?;
+    assert!(hydrated.error.is_empty(), "{}", hydrated.error);
+    let person = hydrated
+        .people
+        .iter()
+        .find(|person| person.id == account)
+        .context("Cached avatar was not hydrated on unlock")?;
+    assert_eq!(person.image, saved.profile.image);
+    assert_eq!(person.shape, "square");
     desktop.load_profile(account.clone())?;
     let reopened = wait(&desktop, |v| v.completed == 2)?;
     assert_eq!(reopened.profile.image, saved.profile.image);

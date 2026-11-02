@@ -4,6 +4,11 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=build-scripts/lib/common.sh
 source "${script_dir}/lib/common.sh"
+if [[ "${CORDS_IN_CONTAINER:-}" != 1 ]]; then
+  source "${script_dir}/lib/container.sh"
+  container_run_script server "$@"
+  exit $?
+fi
 
 require_linux
 for command_name in cargo find tar install; do

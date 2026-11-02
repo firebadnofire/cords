@@ -2,6 +2,11 @@
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/lib/common.sh"
+if [[ "${CORDS_IN_CONTAINER:-}" != 1 ]]; then
+  source "${script_dir}/lib/container.sh"
+  container_run_script cross "$@"
+  exit $?
+fi
 require_linux
 for tool in cargo cargo-xwin python3 cmake ninja clang-cl lld-link llvm-lib llvm-rc llvm-mt; do
   require_command "${tool}"

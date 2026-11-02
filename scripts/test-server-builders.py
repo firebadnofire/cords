@@ -40,7 +40,7 @@ printf '#!/bin/sh\\nexit 0\\n' > "$5/release/cords-server"
                     path.write_text("#!/bin/sh\nset -eu\n" + body + "\n")
                     path.chmod(0o755)
                 env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
-                           CARGO_TARGET_DIR=str(root / "custom cargo"),
+                           CARGO_TARGET_DIR=str(root / "custom cargo"), CORDS_IN_CONTAINER="1",
                            CORDS_DIST_DIR=str(root / "dist"))
                 for _ in range(2):
                     subprocess.run(["bash", str(root / "build-scripts" / script)],

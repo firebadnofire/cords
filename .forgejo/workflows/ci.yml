@@ -105,29 +105,13 @@ jobs:
       image: ghcr.io/catthehacker/ubuntu:act-22.04
     steps:
       - uses: https://pubcode.archuser.org/actions/checkout@v4
-      - name: Install native Qt build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl file libegl1 libgl1-mesa-dev libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxkbcommon-x11-0 pkg-config python3-venv
-          if ! command -v rustup >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
-          fi
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-          rustup toolchain install 1.97.1 --profile minimal
-          echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
-          python3 -m venv .qt-tools
-          .qt-tools/bin/python -m pip install aqtinstall==3.3.0 cmake==3.31.6
-          .qt-tools/bin/python -m aqt install-qt linux desktop 6.10.3 linux_gcc_64 -O "$PWD/.qt-sdk" --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
       - name: Build, test and package Qt desktop
         shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="$PWD/.qt-tools/bin:${HOME}/.cargo/bin:${PATH}"
-          export CORDS_QT_PREFIX="$PWD/.qt-sdk/6.10.3/gcc_64"
-          export CARGO_BUILD_JOBS=4
-          bash build-scripts/linux-client-tar.sh
+        env:
+          CONTAINER_ENGINE: docker
+          CORDS_CONTAINER_TRANSFER: copy
+          CARGO_BUILD_JOBS: '4'
+        run: bash build-scripts/linux-client-tar.sh
 
   qt-windows:
     # Native host required; the former Linux cargo-xwin job cannot deploy Qt.

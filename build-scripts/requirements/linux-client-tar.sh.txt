@@ -1,21 +1,7 @@
-Host: Linux x64/ARM64; output: native Qt client tarball.
-Tools: Bash, Rust/Cargo 1.97.1 via rustup, Python 3, CMake >=3.24,
-a native C++17 compiler (GCC/Clang), make or Ninja, pkg-config, standard Unix
-utilities (including tar, install, find, mktemp), sha256sum or shasum.
-SDK: matching-architecture Qt 6.10.3 with Core, Gui, Network, Qml, Quick,
-QuickControls2, Widgets, Concurrent, Test and QuickTest; XCB, Wayland and
-offscreen platform plugins. Linux also needs OpenGL development libraries
-and Qt's X11/Wayland, font and graphics dependencies.
-
-Setup (run explicitly; this script does not install packages):
-  export PATH="$HOME/.cargo/bin:$PATH"
-  rustup toolchain install 1.97.1
-  python3 -m venv "$HOME/.local/share/cords-build-tools"
-  "$HOME/.local/share/cords-build-tools/bin/python" -m pip install cmake aqtinstall==3.3.0
-  export PATH="$HOME/.local/share/cords-build-tools/bin:$PATH"
-For x64, install the SDK with:
-  aqt install-qt linux desktop 6.10.3 linux_gcc_64 --outputdir "$HOME/Qt" --archives icu qtbase qtdeclarative qtsvg qttools qttranslations qtwayland
-  export CORDS_QT_PREFIX="$HOME/Qt/6.10.3/gcc_64"
-For ARM64, select the matching Qt SDK instead. QT_ROOT_DIR is also accepted.
-Install missing native compiler, OpenGL and display development dependencies
-with your distribution's package manager, or select existing tools in PATH.
+Host: Linux x86_64 with rootless Podman or Docker, Bash, tar, and standard Unix utilities.
+Run podman info or docker info as your normal user. CONTAINER_ENGINE selects an
+engine explicitly; Podman is preferred when both are installed. The container
+provides Rust 1.97.1, Qt 6.10.3, CMake 3.31.6, Python and native dependencies.
+Output: dist/cords-client-linux-x86_64-<version>.tar.gz and .sha256.
+Use CORDS_BUILD_CACHE_DIR, CARGO_TARGET_DIR, CORDS_QT_BUILD_DIR, CORDS_DIST_DIR
+for persistent cache and output overrides. See build-scripts/README.md.

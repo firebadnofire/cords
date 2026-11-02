@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipIf(os.name == "nt", "Requires Unix Bash")
 class BuildRequirements(unittest.TestCase):
-    def test_cross_builder_missing_cmake_reports_full_setup(self):
+    def test_cross_builder_missing_runtime_reports_full_setup(self):
         with tempfile.TemporaryDirectory() as temporary:
             tools = Path(temporary)
             (tools / "dirname").symlink_to(shutil.which("dirname"))
@@ -23,16 +23,17 @@ class BuildRequirements(unittest.TestCase):
                 path.chmod(0o755)
             script = ROOT / "build-scripts/linux-windows-client-crosscomp.sh"
             result = subprocess.run([shutil.which("bash"), str(script)],
-                                    env=dict(os.environ, PATH=str(tools)),
+                                    env=dict(os.environ, PATH=str(tools), CONTAINER_ENGINE="invalid"),
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 1)
-            self.assertIn("required command 'cmake' is unavailable", result.stderr)
+            self.assertIn("CONTAINER_ENGINE must be podman or docker", result.stderr)
             self.assertIn("Requirements for linux-windows-client-crosscomp.sh:", result.stderr)
-            self.assertIn("pip install cmake ninja cargo-xwin==0.23.1", result.stderr)
-            self.assertIn("CORDS_QT_WINDOWS_PREFIX", result.stderr)
+            self.assertIn("cargo-xwin 0.23.1", result.stderr)
+            self.assertIn("rootless Podman or Docker", result.stderr)
 
     def test_every_unix_entry_point_reports_its_requirements(self):
-        scripts = sorted((ROOT / "build-scripts").glob("*.sh"))
+        scripts = sorted(ROOT / "build-scripts" / path.name.removesuffix(".txt")
+                         for path in (ROOT / "build-scripts/requirements").glob("*.sh.txt"))
         self.assertEqual(len(scripts), 7)
         for script in scripts:
             with self.subTest(script=script.name), tempfile.TemporaryDirectory() as temporary:

@@ -18,31 +18,93 @@ not run npm or build Tauri. Workflow parity remains in progress; see
 File artifacts include SHA-256 sidecars. Nothing is published. Server builders
 do not require Qt. There is no Windows server builder.
 
-## Desktop prerequisites
+## Linux container builds
 
-- Rust 1.97.1 and Cargo, selected by `rust-toolchain.toml`.
-- Qt **6.10.3**, including Core, Gui, Network, Qml, Quick, QuickControls2,
-  Widgets, Concurrent, Test and QuickTest; SDK architecture must match the build.
-- CMake >=3.24, Python 3 and a native C++ compiler (MSVC 2022, GCC or Apple Clang).
-- Native platform dependencies required by Qt. Linux also needs `pkg-config`,
-  OpenGL development libraries and X11/Wayland platform plugin dependencies.
-- Unix packaging needs `tar` and `sha256sum` or `shasum`.
+On Fedora/Bazzite, install rootless Podman and verify `podman info` works as your
+normal user. No sudo, privileged container, host socket, or host compiler/SDK is
+needed. On Docker hosts, verify `docker info` works for the invoking user. The
+scripts prefer Podman if both engines are installed; set `CONTAINER_ENGINE=docker`
+(or `podman`) to choose explicitly. An unavailable selected engine fails without
+fallback. Containerfiles pin Rust 1.97.1, Qt 6.10.3, CMake 3.31.6, aqtinstall
+3.3.0, cargo-xwin 0.23.1, and LLVM 19 for the Windows cross build. Base OS packages use Debian Bookworm's package
+repository. Base image tags and apt package revisions should be refreshed as a
+reviewed release dependency update.
 
-Set `CORDS_QT_PREFIX` to the SDK folder containing `bin/qmake` or
-`bin/qmake.exe`. `QT_ROOT_DIR` is also accepted. Builders verify the exact SDK
-version and fail on missing dependencies. Windows offers approved WinGet setup
-as described below; Unix builders do not install system packages. Builders do
-not fall back to the old frontend.
+Run any script from any directory, for example:
 
-Every entry point prints its complete, script-specific requirements and setup
-guidance when a prerequisite or preflight/build command fails, alongside the
-original error. These lists are also available in `build-scripts/requirements/`.
-Printing setup commands does not execute them. Windows retains its explicit
-interactive installation prompt and noninteractive safeguards below.
-On Unix, `python3 scripts/test-build-requirements.py` checks missing-dependency
-reporting for all seven shell entry points and failure/cleanup propagation.
-On Windows, `pwsh -NoProfile -File scripts/test-build-requirements.ps1` checks
-the noninteractive/redirected-input safeguards and original error reporting.
+```sh
+bash /path/to/cords/build-scripts/linux-client-tar.sh
+bash /path/to/cords/build-scripts/linux-windows-client-crosscomp.sh
+bash /path/to/cords/build-scripts/linux-server-tar.sh
+bash /path/to/cords/build-scripts/linux-server-oci-img.sh
+CONTAINER_ENGINE=docker bash /path/to/cords/build-scripts/linux-client-tar.sh
+CONTAINER_ENGINE=docker bash /path/to/cords/build-scripts/linux-windows-client-crosscomp.sh
+CONTAINER_ENGINE=docker bash /path/to/cords/build-scripts/linux-server-tar.sh
+CONTAINER_ENGINE=docker bash /path/to/cords/build-scripts/linux-server-oci-img.sh
+```
+
+The first build downloads a versioned build image and, for Qt targets, the Qt
+SDK. Later runs reuse image layers. `build-scripts/lib/container.sh` stages the
+working tree under `.cords-build-cache/source` and mounts that copy read-only;
+this avoids relabeling the checkout under SELinux. It persists Cargo registry,
+Git, and tool caches under `.cords-build-cache/`, and compilation output under
+`target/`. `CORDS_BUILD_CACHE_DIR`, `CARGO_TARGET_DIR`, `CORDS_QT_BUILD_DIR`,
+`CORDS_DIST_DIR`, job controls, and Qt SDK overrides remain available. The
+source copy reflects uncommitted edits. Host UID/GID mapping keeps cache and
+artifacts writable by the invoking user. Temporary build containers are removed
+on success and failure; build images and caches persist. Do not share a cache
+folder between simultaneous builds.
+
+Output goes to `dist/` by default: native Linux client/server `.tar.gz` files,
+Windows x64 client `.zip`, and SHA-256 sidecars. The OCI builder loads the
+`cords-server:<workspace version>` image locally; `CORDS_IMAGE_NAME` and
+`CORDS_IMAGE_TAG` override its reference. Nothing is published by the scripts.
+
+On SELinux systems, the runner labels only its staged source and generated
+output/cache directories. If a mount fails, check that those directories are
+owned by your user and reside on a filesystem supporting SELinux labeling; use
+`CORDS_BUILD_CACHE_DIR` or output overrides to move them. For rootless Podman
+check `podman info` and the standard subordinate UID/GID mappings. Docker uses
+host UID/GID for bind-mounted outputs. CI runners with Docker should set
+`CONTAINER_ENGINE=docker`. When the Docker CLI runs inside a Forgejo job
+container, set `CORDS_CONTAINER_TRANSFER=copy`: the helper uses `docker cp` to
+transfer source and artifacts and Docker named volumes for persistent caches,
+so it does not rely on job-container paths being visible to the daemon.
+`.forgejo/workflows/ci.yml` invokes the same Linux client script with this
+mode. In copy mode, Cargo and Qt compilation caches live in Docker named
+volumes rather than the host `CARGO_TARGET_DIR` and `CORDS_QT_BUILD_DIR`
+folders. A Docker daemon/socket must be available to that runner. The
+inactive release workflow retains its existing publication gates.
+
+Linux Qt images currently bundle the x86_64 Qt SDK. ARM64 server tarballs and
+images use the native Rust base image; ARM64 Qt builds need a matching SDK image.
+Windows execution tests and final clean-machine desktop acceptance remain
+separate from cross-compilation.
+
+Unix scripts print script-specific requirements on failures. The requirement
+lists in `build-scripts/requirements/` describe the tools inside each build
+container. Windows and macOS continue using native build environments.
+
+## Return the checkout to source-only state
+
+Stop any active builds first. Preview or remove generated repository output:
+
+```sh
+bash build-scripts/linux-clean.sh --dry-run
+bash build-scripts/linux-clean.sh
+# On macOS:
+bash build-scripts/mac-clean.sh --dry-run
+bash build-scripts/mac-clean.sh
+```
+
+Both cleaners remove the repository's `target/`, `dist/`, `.cords-build-cache/`,
+CI-created `.qt-sdk/` and `.qt-tools/`, and the ignored frontend/legacy output
+folders listed in `.gitignore`. They refuse symlinked paths and directories
+containing tracked files, and work from any current directory. They leave
+untracked user data such as `.env` files and databases, custom output folders
+outside the checkout, installed SDKs outside the checkout, and container-engine
+images/volumes intact. The Linux builder will recreate its image and caches on
+the next build.
 
 ## Windows ZIP
 
@@ -107,66 +169,14 @@ $env:CORDS_DIST_DIR = 'E:\cords-build\dist'
 & .\build-scripts\windows-client.ps1
 ```
 
-## Linux tarball
+## Linux client archives
 
-```sh
-export CORDS_QT_PREFIX="$HOME/Qt/6.10.3/gcc_64"
-bash build-scripts/linux-client-tar.sh
-```
-
-Extract the complete folder and run `bin/Cords`. Qt libraries/plugins and
-migrations are deployed in the archive; it is no longer an AppImage. System
-C library, graphics, font and display-server compatibility depends on the build
-host and target distribution.
-X11, Wayland and the headless acceptance backend are included explicitly.
-
-## Linux-to-Windows ZIP (supported x64 cross-build)
-
-```sh
-export CORDS_QT_HOST_PREFIX="$HOME/Qt/6.10.3/gcc_64"
-export CORDS_QT_WINDOWS_PREFIX="$HOME/Qt/6.10.3/msvc2022_64"
-bash build-scripts/linux-windows-client-crosscomp.sh
-```
-
-Install Rust 1.97.1 with `x86_64-pc-windows-msvc`, cargo-xwin 0.23.1,
-CMake >=3.24, Ninja, Python >=3.9, and LLVM tools (`clang-cl`, `lld-link`,
-`llvm-lib`, `llvm-rc`, `llvm-mt`). Both Qt SDKs must be **6.10.3**, including
-the desktop components listed above. The Windows SDK is the x64 MSVC 2022
-edition; aqtinstall can download it on Linux. The Linux SDK supplies native
-MOC, RCC and QML tools, while the Windows SDK supplies headers and libraries.
-Put rustup's Cargo ahead of any distribution Cargo in PATH.
-
-The builder uses `cargo xwin env` and its generated CMake toolchain. cargo-xwin
-caches Microsoft's CRT and Windows SDK under the user's cache directory; its
-use is subject to the [Microsoft license described upstream](https://github.com/rust-cross/cargo-xwin#cargo-xwin).
-The builder does not install system packages or require Wine. It compiles the
-Rust bridge, Qt application and Windows test executables, then runs QML lint
-with the Linux host tools. Windows runtime tests must run separately on Windows;
-cross-build success alone does not mean those tests passed.
-
-To run the cross-built media/controller suites on Windows, set
-`CORDS_WINDOWS_TEST_SOURCE_ROOT` to the Windows checkout path and
-`CORDS_WINDOWS_TEST_OUTPUT_DIR` to an existing Windows capture directory before
-building (use forward slashes, for example `C:/work/cords`). Copy the three
-`Cords*Tests.exe` files from the build directory to a separate Windows test
-directory, use the deployed Qt DLL/plugin/QML paths, and run them there. Fixtures
-must match the source snapshot compiled on Linux. Without these overrides,
-fixture paths default to the build checkout, as they do for native builds.
-
-The ZIP uses the same name and directory layout as the native Windows builder.
-It includes the release Qt DLLs and complete release plugin/QML trees so dynamic
-imports and styles remain available without running Windows deployment tools
-on Linux. This makes the archive larger than a minimal native deployment.
-The target needs the Microsoft Visual C++ 2015-2022 x64 runtime. Optionally set
-`CORDS_VC_REDIST` to an existing redistributable installer to include it in the ZIP.
-No installer is executed. Extract the complete folder and run `Cords.exe`.
-
-`CORDS_QT_BUILD_DIR`, `CARGO_TARGET_DIR`, `CORDS_DIST_DIR`, `CORDS_QT_PROFILE`
-and job controls work as above. Cross output defaults to `target/qt-windows-cross`
-and two parallel jobs. Use a separate build directory from native builds.
-ARM64 cross-builds and clean-machine/signing acceptance are outside this path.
-The [October 20 validation report](../docs/reports/build-scripts-cross-validation-2026-10-20.md)
-records the `.54` build and Windows execution evidence.
+Extract the complete Linux tarball and run `bin/Cords`; preserve its deployed
+Qt libraries, plugins, QML modules and migrations. Extract the Windows ZIP and
+run `Cords.exe` on a Windows x64 machine with the Microsoft Visual C++
+2015–2022 runtime. `CORDS_VC_REDIST` can include an existing installer. The
+cross build compiles Windows test executables and uses Linux Qt tools for QML
+lint; it does not require Wine or PowerShell. Run those tests on Windows.
 
 ## macOS packages
 
@@ -204,20 +214,8 @@ separate acceptance evidence.
 
 ## Server artifacts
 
-```sh
-bash build-scripts/linux-server-tar.sh
-bash build-scripts/mac-server-tar.sh
-bash build-scripts/linux-server-oci-img.sh
-```
-
-Tarballs include the executable, PostgreSQL migrations, example config, README
-and license. Replace example origins, credentials and paths before use. No
-persistent data is packaged. OCI uses `deploy/Dockerfile`, prefers Docker over
-Podman, loads locally and never pushes. Override its name/tag using
-`CORDS_IMAGE_NAME` and `CORDS_IMAGE_TAG`. Docker copies the Qt Rust workspace
-member for manifest resolution; building the server does not need a Qt SDK.
-
-Server tarball builders honor `CARGO_TARGET_DIR` for compilation and staging.
-On Unix, run `python3 scripts/test-server-builders.py` to check custom target
-paths, archive contents, checksums and repeated packaging with a fake compiler.
-This regression check does not establish native compilation or runtime acceptance.
+Server tarballs contain the executable, PostgreSQL migrations, example config,
+README and license. Replace example origins, credentials and paths before use.
+The OCI image uses `deploy/Dockerfile` and the host engine; it retains its
+existing labels, nonroot runtime user, healthcheck, entrypoint, and configuration.
+No persistent data is packaged.

@@ -71,9 +71,12 @@ release payload, and the exact container digest to `firebadnofire/cords`.
 
 ## Current Qt desktop checks
 
-The active `ci.yml` now invokes the native Qt builders on `ubuntu-22.04`,
-`windows-latest` and `macos-latest`, with Qt 6.10.3, aqtinstall 3.3.0, CMake
-3.31.6 and Rust 1.97.1. Windows requires a native x64 MSVC 2022 C++ host;
+The active `ci.yml` invokes the Linux Qt builder through Docker on `ubuntu-22.04`,
+and the native Qt builders on `windows-latest`
+and `macos-latest`, with Qt 6.10.3, aqtinstall 3.3.0, CMake
+3.31.6 and Rust 1.97.1. The Linux job uses the same containerized script
+as local rootless Podman builds, with `CONTAINER_ENGINE=docker`, `CORDS_CONTAINER_TRANSFER=copy`, and the
+runner's existing Docker daemon. Windows requires a native x64 MSVC 2022 C++ host;
 macOS requires Xcode command-line tools. These are host requirements, not a
 claim that all runners are online. The previously offline Windows runner must
 be provisioned before its job can validate anything. No native Windows/macOS

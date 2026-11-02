@@ -1,14 +1,5 @@
-Host: Linux x64/ARM64; output: native server tarball. Qt is not required.
-Tools: Bash, Rust/Cargo 1.97.1 via rustup, native C compiler/linker and make,
-standard Unix utilities including awk, find, tar, install, mktemp, cp and mv,
-sha256sum or shasum. Development headers/libraries required by Cargo native
-dependencies must be available for the host architecture.
-
-Setup (run explicitly; this script does not install packages):
-Install Rust via https://rustup.rs/ if rustup is unavailable, then:
-  export PATH="$HOME/.cargo/bin:$PATH"
-  rustup toolchain install 1.97.1
-Install your distribution's C/C++ development toolchain, make and required
-development libraries using its package manager, or select existing tools in PATH.
-Build from the repository checkout so rust-toolchain.toml selects the pinned Rust.
-Use CARGO_TARGET_DIR and CORDS_DIST_DIR for custom build/artifact directories.
+Host: Linux x86_64 or ARM64 with rootless Podman or Docker, Bash, tar, and standard Unix utilities.
+Run podman info or docker info as your normal user. The container provides
+Rust 1.97.1 and all server build dependencies. Output: dist/cords-server-linux-<arch>-<version>.tar.gz and .sha256.
+Use CONTAINER_ENGINE to select an engine and CORDS_DIST_DIR, CARGO_TARGET_DIR,
+CORDS_BUILD_CACHE_DIR to override persistent output/cache paths.

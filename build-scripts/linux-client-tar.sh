@@ -2,6 +2,11 @@
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/lib/common.sh"
+if [[ "${CORDS_IN_CONTAINER:-}" != 1 ]]; then
+  source "${script_dir}/lib/container.sh"
+  container_run_script client "$@"
+  exit $?
+fi
 source "${script_dir}/lib/qt-client.sh"
 require_linux
 for command_name in tar install; do require_command "${command_name}"; done
